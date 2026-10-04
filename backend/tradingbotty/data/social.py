@@ -37,6 +37,8 @@ RSS_FEEDS = {
     "Cointelegraph": "https://cointelegraph.com/rss",
     "Yahoo Finance": "https://finance.yahoo.com/news/rssindex",
     "CNBC": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+    "Decrypt": "https://decrypt.co/feed",
+    "MarketWatch": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
 }
 
 ALIASES = {
@@ -102,6 +104,11 @@ class SocialFeed:
         self.headlines: list[Headline] = []
         self._seen_links: set[str] = set()
         self.healthy = {"reddit": False, "news": False}
+        # editable from the dashboard
+        self.subreddits: list[str] = list(SUBREDDITS)
+        self.feeds: dict[str, str] = dict(RSS_FEEDS)
+        # per-source health for the dashboard: name -> {ok, items, error, ts}
+        self.source_status: dict[str, dict] = {}
 
     # ----- hype -----
     async def poll_hype(self) -> None:
@@ -111,9 +118,11 @@ class SocialFeed:
         counts = {s: 0 for s in self.symbols}
         posts = []
         ok = False
-        for sub in SUBREDDITS:
+        for sub in list(self.subreddits):
             try:
-                for title, body, score in await self._reddit_posts(sub):
+                got = await self._reddit_posts(sub)
+                self._mark(f"r/{sub}", True, len(got))
+                for title, body, score in got:
                     hit = mentions(f"{title} {body[:500]}", self.symbols)
                     weight = 1 + min(score, 5000) / 1000  # popular posts count more
                     for s in hit:
@@ -122,6 +131,7 @@ class SocialFeed:
                         posts.append({"sub": sub, "title": title, "score": score, "symbols": hit})
                 ok = True
             except Exception as e:
+                self._mark(f"r/{sub}", False, 0, e)
                 self.log("Hype Scout", "warn", f"Reddit r/{sub} failed: {e}")
         self.healthy["reddit"] = ok
         if ok:
@@ -151,6 +161,27 @@ class SocialFeed:
         r.raise_for_status()
         return parse_atom(r.content)
 
+    def _mark(self, name: str, ok: bool, items: int, error=None) -> None:
+        self.source_status[name] = {"ok": ok, "items": items, "error": str(error)[:120] if error else None,
+                                    "ts": time.time()}
+
+    async def check_feed(self, url: str) -> str | None:
+        """None if the URL is a readable RSS feed, else a reason."""
+        try:
+            r = await self.client.get(url, headers=BROWSER_UA)
+            if not list(ET.fromstring(r.content).iter("item")):
+                return "no news items found at that address"
+            return None
+        except Exception as e:
+            return f"not a readable RSS feed ({e.__class__.__name__})"
+
+    async def check_subreddit(self, sub: str) -> str | None:
+        try:
+            await self._reddit_posts(sub)
+            return None
+        except Exception:
+            return f"r/{sub} couldn't be read"
+
     def _update_counts(self, counts: dict[str, float]) -> None:
         for s, c in counts.items():
             base = self.mention_baseline.get(s)
@@ -169,11 +200,13 @@ class SocialFeed:
             return self._sim_news()
         fresh: list[Headline] = []
         ok = False
-        for source, url in RSS_FEEDS.items():
+        for source, url in list(self.feeds.items()):
             try:
-                r = await self.client.get(url)
+                r = await self.client.get(url, headers=BROWSER_UA)
                 root = ET.fromstring(r.content)
-                for item in root.iter("item"):
+                items = list(root.iter("item"))
+                self._mark(source, bool(items), len(items), None if items else "no items in feed")
+                for item in items:
                     title = (item.findtext("title") or "").strip()
                     link = (item.findtext("link") or title).strip()
                     key = re.sub(r"\W+", " ", title.lower()).strip()
@@ -186,6 +219,7 @@ class SocialFeed:
                     fresh.append(Headline(source, title, link, published, mentions(title, self.symbols)))
                 ok = True
             except Exception as e:
+                self._mark(source, False, 0, e)
                 self.log("News Hunter", "warn", f"{source} feed failed: {e}")
         self.healthy["news"] = ok
         self.headlines = (fresh + self.headlines)[:200]
@@ -199,6 +233,10 @@ class SocialFeed:
         self.fear_greed = random.randint(20, 80)
         self.fear_greed_label = "Greed" if self.fear_greed > 55 else "Fear" if self.fear_greed < 45 else "Neutral"
         self.healthy["reddit"] = True
+        for sub in self.subreddits:
+            self._mark(f"r/{sub}", True, 50)
+        self.posts = [{"sub": random.choice(self.subreddits), "title": f"Is {s} about to move? (simulated post)",
+                       "score": random.randint(5, 3000), "symbols": [s]} for s in random.sample(self.symbols, 6)]
 
     def _sim_news(self) -> list[Headline]:
         s = random.choice(self.symbols)
@@ -206,4 +244,6 @@ class SocialFeed:
         h = Headline("Simulated", f"{s} {mood}", f"sim://{time.time()}", time.time(), [s])
         self.headlines = ([h] + self.headlines)[:200]
         self.healthy["news"] = True
+        for name in self.feeds:
+            self._mark(name, True, 20)
         return [h]

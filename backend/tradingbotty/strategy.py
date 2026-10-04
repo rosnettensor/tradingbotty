@@ -29,8 +29,10 @@ class StrategyConfig:
     max_positions: int = 4
     min_hold_minutes: float = 20.0
     cooldown_minutes: float = 60.0  # wait after selling before re-buying the same symbol
-    trade_stocks: bool = False      # stocks are watched for signals; trading them comes later
+    trade_stocks: bool = False      # paper-trade US stocks too (only while the US market is open)
     min_edge_pct: float = 0.0       # only buy coins expected to move at least this much (0 = off)
+    trade_crypto: bool = True
+    max_buys_per_hour: int = 6      # speed limit on new positions
 
     def weights(self) -> dict[str, float]:
         return {s: getattr(self, f"w_{s}") for s in SIGNALS}
@@ -53,20 +55,73 @@ class StrategyConfig:
             if isinstance(v, bool) or rng.random() > 0.5:
                 continue
             if k.startswith("w_"):
-                d[k] = round(max(-2.0, min(2.0, v + rng.gauss(0, strength))), 3)
+                d[k] = round(v + rng.gauss(0, strength), 3)
             elif k in ("entry_score", "exit_score"):  # thresholds can be negative: nudge, don't scale
                 d[k] = round(v + rng.gauss(0, strength * 0.4), 3)
             elif k == "min_edge_pct" and v == 0:
                 continue  # an off gate stays off unless a variant starts with one
             elif isinstance(v, int):
-                d[k] = max(1, min(6, v + rng.choice([-1, 1])))
+                d[k] = v + rng.choice([-1, 1])
             else:
                 d[k] = round(max(0.05, v * math.exp(rng.gauss(0, strength))), 3)
-        d["entry_score"] = min(0.9, max(0.1, d["entry_score"]))
-        d["exit_score"] = min(d["entry_score"] - 0.1, max(-0.9, d["exit_score"]))
-        d["position_pct"] = min(25.0, max(5.0, d["position_pct"]))
-        d["min_edge_pct"] = min(15.0, d["min_edge_pct"])
+        return StrategyConfig.from_dict(d).clamped()
+
+    def clamped(self) -> "StrategyConfig":
+        """Pull every setting back into its allowed range (used for mutations and for edits from the dashboard)."""
+        d = self.to_dict()
+        for k, meta in STRATEGY_FIELDS.items():
+            if "min" in meta and k in d and not isinstance(d[k], bool):
+                v = max(meta["min"], min(meta["max"], float(d[k])))
+                v = round(round(v / meta["step"]) * meta["step"], 4)  # snap to the slider's step
+                d[k] = int(round(v)) if meta.get("int") else v
+        d["exit_score"] = min(d["entry_score"] - 0.1, d["exit_score"])
+        if not d["trade_crypto"] and not d["trade_stocks"]:
+            d["trade_crypto"] = True
         return StrategyConfig.from_dict(d)
+
+
+# What each strategy setting means. The dashboard builds its sliders from this, and clamped() enforces the ranges.
+STRATEGY_FIELDS = {
+    "entry_score": {"label": "Buy threshold", "min": 0.1, "max": 0.9, "step": 0.01, "group": "When to buy",
+                    "help": "Buy when a coin's blended score is above this. Lower = buys more often, higher = pickier."},
+    "max_buys_per_hour": {"label": "Max buys per hour", "min": 1, "max": 20, "step": 1, "int": True, "group": "When to buy",
+                          "help": "Speed limit on new positions, so a noisy hour can't burn fees."},
+    "cooldown_minutes": {"label": "Cooldown after selling (min)", "min": 0, "max": 480, "step": 5, "group": "When to buy",
+                         "help": "Wait this long before buying the same coin again."},
+    "min_edge_pct": {"label": "Fee guard: min expected move (%)", "min": 0, "max": 15, "step": 0.5, "group": "When to buy",
+                     "help": "Only buy coins likely to move at least this much. 0 = off. About 2x the round-trip fee is sensible."},
+    "position_pct": {"label": "Position size (% of equity)", "min": 5, "max": 50, "step": 1, "group": "How much",
+                     "help": "How much of the account goes into each new buy. The Risk Officer's hard cap still applies."},
+    "max_positions": {"label": "Max open positions", "min": 1, "max": 10, "step": 1, "int": True, "group": "How much",
+                      "help": "How many coins it may hold at the same time."},
+    "exit_score": {"label": "Sell threshold", "min": -0.9, "max": 0.5, "step": 0.01, "group": "When to sell",
+                   "help": "Sell when the score falls below this (after the minimum hold time)."},
+    "take_profit_pct": {"label": "Take profit (%)", "min": 0.5, "max": 50, "step": 0.5, "group": "When to sell",
+                        "help": "Sell everything once the position is up this much."},
+    "stop_loss_pct": {"label": "Stop loss (%)", "min": 0.5, "max": 30, "step": 0.5, "group": "When to sell",
+                      "help": "Sell once the position is down this much. Smaller = less risk per trade, more fees."},
+    "trailing_stop_pct": {"label": "Trailing stop (%)", "min": 0.5, "max": 20, "step": 0.5, "group": "When to sell",
+                          "help": "Once in profit, sell if the price drops this much from its peak."},
+    "min_hold_minutes": {"label": "Min hold time (min)", "min": 0, "max": 720, "step": 5, "group": "When to sell",
+                         "help": "Don't sell on a weak score before this (stops and take-profit still work)."},
+    "w_momentum": {"label": "Momentum", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+                   "help": "Last 15 minutes' move compared with normal volatility."},
+    "w_trend": {"label": "Trend", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+                "help": "Fast vs slow moving average (20 vs 60 minutes)."},
+    "w_reversion": {"label": "Dip buying", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+                    "help": "RSI: positive when oversold. High weight = buys dips."},
+    "w_breakout": {"label": "Breakout", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+                   "help": "Price breaking above its last-hour high (or below its low)."},
+    "w_hype": {"label": "Social hype", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+               "help": "Reddit buzz and CoinGecko trending, corrected by the Hype vs Price Detective."},
+    "w_news": {"label": "News", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+               "help": "News Hunter's rating of recent headlines, fading over about 3 hours."},
+    "w_market": {"label": "Market mood", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+                 "help": "Is the whole market risk-on? Bitcoin trend plus Fear & Greed for coins, S&P and Nasdaq for stocks."},
+    "trade_crypto": {"label": "Trade crypto", "group": "Markets", "help": "Buy coins (24/7)."},
+    "trade_stocks": {"label": "Trade US stocks (paper)", "group": "Markets",
+                     "help": "Buy stocks and ETFs from your watchlist, only while the US market is open. Paper only for now."},
+}
 
 
 # A few hand-made starting personalities so experiments begin with real contrast
@@ -79,6 +134,8 @@ SEED_VARIANTS = {
     # The Professor's first research idea: only trade when the likely move beats 2x the ~3% round-trip fee
     "Fee Guard": StrategyConfig(min_edge_pct=6.0, entry_score=0.35, take_profit_pct=8, stop_loss_pct=5,
                                 min_hold_minutes=45),
+    "Stock Picker": StrategyConfig(trade_stocks=True, trade_crypto=False, w_hype=0.3, w_news=1.0, entry_score=0.3,
+                                   take_profit_pct=3, stop_loss_pct=2.5, trailing_stop_pct=1.5, min_hold_minutes=30),
     "Dip Buyer": StrategyConfig(w_momentum=-0.4, w_trend=0.3, w_reversion=1.6, w_breakout=-0.3, w_hype=0.2, w_news=0.5,
                                 entry_score=0.3, exit_score=-0.05, take_profit_pct=4, stop_loss_pct=6, min_hold_minutes=30),
 }

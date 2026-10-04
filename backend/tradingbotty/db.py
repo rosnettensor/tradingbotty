@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     output_tokens INTEGER NOT NULL,
     cost_usd REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS candles (
+    symbol TEXT NOT NULL,
+    ts INTEGER NOT NULL,          -- minute start, unix seconds
+    close REAL NOT NULL,
+    PRIMARY KEY (symbol, ts)
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -82,6 +88,11 @@ class DB:
     def query(self, sql: str, params: tuple = ()) -> list[dict]:
         with self.lock:
             return [dict(r) for r in self.conn.execute(sql, params).fetchall()]
+
+    def executemany(self, sql: str, rows: list[tuple]) -> None:
+        with self.lock:
+            self.conn.executemany(sql, rows)
+            self.conn.commit()
 
     # key/value state (mode, kill switch, budget counters)
     def get(self, key: str, default=None):

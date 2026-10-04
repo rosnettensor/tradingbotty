@@ -72,3 +72,27 @@ export const fmt = {
   price: (x) => (x == null ? "–" : x >= 100 ? x.toFixed(2) : x >= 1 ? x.toFixed(4) : x.toPrecision(4)),
   time: (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
 };
+
+// Fetch a GET endpoint now and every `every` ms. Returns [data, reload].
+export function usePoll(path, every = 30000, deps = []) {
+  const [data, setData] = useState(null);
+  const load = () => path && api(path).then(setData).catch(() => {});
+  useEffect(() => {
+    if (!path) return;
+    let alive = true;
+    const run = () => api(path).then((d) => alive && setData(d)).catch(() => {});
+    run();
+    const t = every ? setInterval(run, every) : null;
+    return () => { alive = false; if (t) clearInterval(t); };
+  }, [path, ...deps]);
+  return [data, load];
+}
+
+export const pctColor = (x) => (x > 0 ? "up" : x < 0 ? "down" : "dim");
+export const ago = (ts) => {
+  const s = Date.now() / 1000 - ts;
+  if (s < 60) return `${Math.max(0, Math.round(s))}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+};

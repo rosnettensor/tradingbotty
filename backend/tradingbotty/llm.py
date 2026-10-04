@@ -23,9 +23,19 @@ PRICES = {
 class Budget:
     def __init__(self, db, cfg: dict):
         self.db = db
-        self.total = float(cfg["total_usd"])
-        self.days = max(1, int(cfg["spread_over_days"]))
-        self.share = float(cfg["reinvest_profit_share"])
+        self.cfg = cfg  # read live, so dashboard changes apply at once
+
+    @property
+    def total(self) -> float:
+        return float(self.cfg["total_usd"])
+
+    @property
+    def days(self) -> int:
+        return max(1, int(self.cfg["spread_over_days"]))
+
+    @property
+    def share(self) -> float:
+        return float(self.cfg["reinvest_profit_share"])
 
     def spent_total(self) -> float:
         return self.db.query("SELECT COALESCE(SUM(cost_usd),0) s FROM llm_calls")[0]["s"]
@@ -76,11 +86,12 @@ class LLM:
         return inp / 1e6 * pin + out / 1e6 * pout
 
     async def json_call(self, agent: str, system: str, prompt: str, schema: dict, deep: bool = False,
-                        max_tokens: int = 1500) -> dict | None:
+                        max_tokens: int = 1500, model: str | None = None) -> dict | None:
         """Ask Claude for JSON matching `schema`. Returns None if unavailable, over budget or failed."""
         if not self.client:
             return None
-        model = self.deep_model if deep else self.fast_model
+        model = model or (self.deep_model if deep else self.fast_model)
+        deep = deep or model != self.fast_model
         # worst case estimate: prompt chars/3 tokens in, full max_tokens out (thinking included on deep)
         estimate = self._price(model, len(system + prompt) // 3, max_tokens)
         if not self.budget.can_spend(estimate):

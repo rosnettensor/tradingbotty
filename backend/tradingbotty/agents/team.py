@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import time
 
+from ..decisions import blend, entry_blocker, exit_reason, expected_move, risk_check
 from ..strategy import squash, technical_signals
 from .base import Agent, Blackboard
 
@@ -21,6 +22,10 @@ class CryptoAnalyst(Agent):
     name = "Crypto Analyst"
     role = "Momentum, trend, dips and breakouts for every coin, from 1-minute prices"
     inputs = ["src_kraken"]
+    explain = ("Pure math, no AI, free. Every tick it takes the last few hours of 1-minute prices for each coin and "
+               "computes four signals between -1 and +1: momentum (last 15 minutes vs normal volatility), trend "
+               "(20- vs 60-minute average), dip (RSI: oversold is positive) and breakout (above the last-hour high).")
+    outputs = "momentum, trend, dip, breakout and volatility per coin"
 
     async def run(self, bb: Blackboard) -> None:
         strongest = []
@@ -43,6 +48,14 @@ class MarketAnalyst(Agent):
     name = "Market Analyst"
     role = "S&P 500, Nasdaq and big tech: is the overall market risk-on or risk-off?"
     inputs = ["src_yahoo", "src_kraken", "src_feargreed"]
+    can_disable = True
+    explain = ("Pure math, free. Computes the same signals for your stock watchlist, then one market mood: Bitcoin's "
+               "trend plus a contrarian Fear & Greed tilt for coins (extreme fear counts as a buying chance), and the "
+               "S&P 500 and Nasdaq trend for stocks. Switched off, market mood counts as neutral.")
+    outputs = "market mood per symbol, stock signals, the regime shown in the cockpit"
+
+    def on_disable(self, bb: Blackboard) -> None:
+        bb.market = {}
 
     async def run(self, bb: Blackboard) -> None:
         for q in self.ctx.prices.stocks():
@@ -75,6 +88,14 @@ class HypeScout(Agent):
     name = "Hype Scout"
     role = "Counts buzz on Reddit and CoinGecko trending, and spots sudden spikes"
     inputs = ["src_reddit", "src_coingecko"]
+    can_disable = True
+    explain = ("Free. Counts how often each coin or stock is mentioned in hot posts of your subreddits (popular posts "
+               "count more) and compares that with its own recent average. Buzz well above normal is positive. Coins "
+               "trending on CoinGecko get a bonus. It needs a few polls before the average means anything.")
+    outputs = "hype score per symbol"
+
+    def on_disable(self, bb: Blackboard) -> None:
+        bb.hype = {}
 
     async def run(self, bb: Blackboard) -> None:
         social = self.ctx.social
@@ -84,7 +105,7 @@ class HypeScout(Agent):
             bb.hype[sym] = max(-1.0, min(1.0, squash(v) + trending))
         top = sorted(bb.hype.items(), key=lambda kv: -kv[1])[:3]
         self.summary = "buzz leaders: " + ", ".join(f"{s} {v:+.2f}" for s, v in top)
-        self.detail = {"mentions": social.mention_counts, "trending": social.trending[:7]}
+        self.detail = {"mentions": social.mention_counts, "trending": social.trending[:7], "posts": social.posts[:8]}
         for s, v in top:
             if v > 0.6 and self.detail.get("_said_" + s, 0) < time.time() - 1800:
                 self.detail["_said_" + s] = time.time()
@@ -96,6 +117,11 @@ class HypeDetective(Agent):
     name = "Hype vs Price Detective"
     role = "Compares buzz with price: early hype is a signal, late hype after a pump is a trap"
     inputs = ["hype", "crypto"]
+    can_disable = True
+    explain = ("Free. Checks hype against the last hour's price move. Buzz rising while the price is still flat is "
+               "boosted (early). Buzz after a pump of more than 4% is turned negative (you'd be buying from the people "
+               "who caused the hype).")
+    outputs = "corrected hype scores and findings"
 
     async def run(self, bb: Blackboard) -> None:
         findings = []
@@ -156,6 +182,23 @@ class NewsHunter(Agent):
     role = "Reads news feeds, rates each headline's direction and impact (mergers, ETFs, hacks, regulation, macro)"
     inputs = ["src_news"]
     uses_ai = True
+    can_disable = True
+    default_model = "fast"
+    explain = ("Collects new headlines from your news feeds (duplicates and anything older than 12 hours are skipped) "
+               "and sends them to Claude in batches of up to 25. Claude tags the affected tickers and rates direction "
+               "and impact. Without AI or budget it falls back to free keyword rules. A headline's effect fades over "
+               "about 3 hours.")
+    outputs = "news score per symbol, rated headlines"
+    default_prompt = (
+        "You are a sharp markets news analyst for a small trading bot. For each headline, list the affected "
+        "tickers from this set only: {symbols} (use SPY for broad US-market or macro news, BTC for "
+        "broad crypto news). sentiment is -1 (very bearish) to 1 (very bullish) for those tickers over the next "
+        "hours. impact is 0 (noise) to 1 (market-moving). event is one word: merger, etf, regulation, hack, "
+        "earnings, macro, partnership, listing, rumor, other. takeaway: one sentence on what matters most.")
+
+    def on_disable(self, bb: Blackboard) -> None:
+        bb.news = {}
+        self.pending = []
 
     def __init__(self, ctx):
         super().__init__(ctx)
@@ -167,7 +210,8 @@ class NewsHunter(Agent):
     async def run(self, bb: Blackboard) -> None:
         batch, self.pending = self.pending[:25], self.pending[25:]
         if batch:
-            scored = await self._score_ai(batch) or self._score_rules(batch)
+            use_ai = self.ctx.settings["ai"]["news_ai"]
+            scored = (await self._score_ai(batch) if use_ai else None) or self._score_rules(batch)
             bb.news_events = (scored + bb.news_events)[:150]
             for ev in scored:
                 if ev["impact"] >= 0.6 and ev["symbols"]:
@@ -183,19 +227,14 @@ class NewsHunter(Agent):
         bb.news = {s: squash(v) for s, v in agg.items()}
         top = sorted(bb.news.items(), key=lambda kv: -abs(kv[1]))[:3]
         self.summary = ("news tilt: " + ", ".join(f"{s} {v:+.2f}" for s, v in top)) if top else "no relevant news yet"
-        self.detail = {"recent": bb.news_events[:8]}
+        self.detail = {"recent": bb.news_events[:8], "queued": len(self.pending)}
 
     async def _score_ai(self, batch) -> list[dict] | None:
         symbols = list(self.ctx.prices.quotes)
         lines = "\n".join(f"{i}. [{h.source}] {h.title}" for i, h in enumerate(batch))
         res = await self.ctx.llm.json_call(
-            self.name,
-            "You are a sharp markets news analyst for a small trading bot. For each headline, list the affected "
-            f"tickers from this set only: {', '.join(symbols)} (use SPY for broad US-market or macro news, BTC for "
-            "broad crypto news). sentiment is -1 (very bearish) to 1 (very bullish) for those tickers over the next "
-            "hours. impact is 0 (noise) to 1 (market-moving). event is one word: merger, etf, regulation, hack, "
-            "earnings, macro, partnership, listing, rumor, other. takeaway: one sentence on what matters most.",
-            lines, NEWS_SCHEMA, max_tokens=2000,
+            self.name, self.prompt.replace("{symbols}", ", ".join(symbols)), lines, NEWS_SCHEMA, max_tokens=2000,
+            model=self.model,
         )
         if not res or res.get("_over_budget"):
             if res and res.get("_over_budget"):
@@ -248,12 +287,35 @@ class Professor(Agent):
     role = "Economics and trading-theory heavyweight: reviews the whole picture a few times a day, sets risk appetite"
     inputs = ["market", "news", "detective", "optimizer"]
     uses_ai = True
+    can_disable = True
+    default_model = "deep"
+    explain = ("The expensive brain, used rarely. Every few hours (you set how often) it gets a short brief: market "
+               "mood, top news, hype, coin moves and the strategy leaderboard. It returns a risk appetite between 0.5 "
+               "and 1.5 that scales every position size, a list of tickers to avoid for now, and one testable idea. "
+               "It can't place or force trades. Switched off, risk appetite is 1.0 and nothing is avoided.")
+    outputs = "risk appetite, avoid list, assessment and a research idea"
+    default_prompt = (
+        "You are a Stanford finance professor coaching a tiny, playful spot-only trading bot (about 100 USD, "
+        "fees about {fee}% per trade, no leverage, no shorting). Think in probabilities, base rates, Kelly sizing, "
+        "regime shifts and behavioral finance. Given the brief, return: assessment (2-3 sentences, plain words), "
+        "risk_appetite between 0.5 (defensive) and 1.5 (aggressive) that scales position sizes, avoid (tickers to "
+        "skip for now, may be empty), and idea (one concrete, testable strategy idea for the experiments).")
+
+    def on_disable(self, bb: Blackboard) -> None:
+        bb.risk_appetite, bb.avoid = 1.0, set()
+
+    def run_now(self) -> None:
+        self.next_due = 0
 
     def __init__(self, ctx):
         super().__init__(ctx)
         self.next_due = time.time() + 600  # let the feeds warm up first: a lecture on empty data wastes money
 
     async def run(self, bb: Blackboard) -> None:
+        if not self.ctx.settings["ai"]["professor_on"]:
+            self.on_disable(bb)
+            self.summary = "reviews paused in Controls; risk appetite 1.00"
+            return
         if time.time() < self.next_due:
             return
         if self.ctx.social.fear_greed is None or not bb.news_events or not bb.regime:
@@ -270,13 +332,8 @@ class Professor(Agent):
             "strategies": [{k: b[k] for k in ("name", "return_pct", "trades", "max_drawdown_pct")} for b in board],
         }
         res = await self.ctx.llm.json_call(
-            self.name,
-            "You are a Stanford finance professor coaching a tiny, playful spot-only crypto trading bot (about 100 USD, "
-            "fees about 1.5% per trade, no leverage, no shorting). Think in probabilities, base rates, Kelly sizing, "
-            "regime shifts and behavioral finance. Given the brief, return: assessment (2-3 sentences, plain words), "
-            "risk_appetite between 0.5 (defensive) and 1.5 (aggressive) that scales position sizes, avoid (tickers to "
-            "skip for now, may be empty), and idea (one concrete, testable strategy idea for the experiments).",
-            str(brief), PROF_SCHEMA, deep=True, max_tokens=3000,
+            self.name, self.prompt.replace("{fee}", str(self.ctx.settings["paper"]["fee_pct"])), str(brief),
+            PROF_SCHEMA, deep=True, max_tokens=3000, model=self.model,
         )
         if not res or res.get("_over_budget"):
             self.summary = "resting (no AI key or budget); risk appetite stays " + f"{bb.risk_appetite:.2f}"
@@ -285,7 +342,9 @@ class Professor(Agent):
         bb.risk_appetite = max(0.5, min(1.5, float(res.get("risk_appetite", 1.0))))
         bb.avoid = {s for s in res.get("avoid", []) if s in self.ctx.prices.quotes}
         self.summary = f"risk appetite {bb.risk_appetite:.2f}; avoid {', '.join(sorted(bb.avoid)) or 'nothing'}"
-        self.detail = {"assessment": res.get("assessment"), "idea": res.get("idea")}
+        self.detail = {"assessment": res.get("assessment"), "idea": res.get("idea"), "ts": time.time()}
+        self.ctx.db.set("professor_last", {"risk_appetite": bb.risk_appetite, "avoid": sorted(bb.avoid),
+                                           "detail": self.detail})
         self.say(f"Lecture: {res.get('assessment')}")
         if res.get("idea"):
             self.say(f"Research idea: {res['idea']}")
@@ -301,24 +360,27 @@ class Predictor(Agent):
     name = "Predictor"
     role = "Blends every signal into one score per coin, separately for each strategy variant"
     inputs = ["crypto", "market", "hype", "detective", "news", "professor"]
+    explain = ("Pure math, free. For every strategy it multiplies each signal by that strategy's weight and adds them "
+               "up, giving one score per symbol (about -1 to +1). A strategy buys when the score is above its buy "
+               "threshold and sells when it falls below its sell threshold. The weights are what the Optimizer and "
+               "your sliders change.")
+    outputs = "a score per symbol for every strategy, and the signal breakdown behind it"
 
     async def run(self, bb: Blackboard) -> None:
-        bb.scores = {}
+        bb.scores, bb.signals = {}, {}
+        for sym, q in self.ctx.prices.quotes.items():
+            t = bb.tech.get(sym, {})
+            bb.signals[sym] = {
+                "momentum": t.get("momentum", 0.0), "trend": t.get("trend", 0.0),
+                "reversion": t.get("reversion", 0.0), "breakout": t.get("breakout", 0.0),
+                "hype": bb.hype.get(sym, 0.0), "news": bb.news.get(sym, 0.0), "market": bb.market.get(sym, 0.0),
+            }
         for v in self.ctx.variants.values():
             w = v.config.weights()
-            norm = sum(abs(x) for x in w.values()) or 1.0
-            scores = {}
-            for sym, q in self.ctx.prices.quotes.items():
-                if q.kind == "stock" and not v.config.trade_stocks:
-                    continue
-                t = bb.tech.get(sym, {})
-                sig = {
-                    "momentum": t.get("momentum", 0.0), "trend": t.get("trend", 0.0),
-                    "reversion": t.get("reversion", 0.0), "breakout": t.get("breakout", 0.0),
-                    "hype": bb.hype.get(sym, 0.0), "news": bb.news.get(sym, 0.0), "market": bb.market.get(sym, 0.0),
-                }
-                scores[sym] = sum(w[k] * sig[k] for k in w) / norm * 2  # roughly -1..1
-            bb.scores[v.id] = scores
+            bb.scores[v.id] = {
+                sym: blend(w, sig) for sym, sig in bb.signals.items()
+                if (v.config.trade_stocks if self.ctx.prices.quotes[sym].kind == "stock" else v.config.trade_crypto)
+            }
         champ = self.ctx.champion()
         if champ and bb.scores.get(champ.id):
             ranked = sorted(bb.scores[champ.id].items(), key=lambda kv: -kv[1])
@@ -333,40 +395,37 @@ class RiskOfficer(Agent):
     role = "Hard safety gate in plain code: cash-only, spot-only, size caps, daily loss stop, kill switch"
     inputs = ["predictor"]
     kind = "gate"
+    explain = ("Plain code, no AI, so nothing can talk it into a bad trade. Every buy from every strategy passes "
+               "through it: it caps the size per position, the number of positions and the daily loss, keeps a cash "
+               "reserve, honors the kill switch, and never spends more cash than there is. There is no code path for "
+               "margin, leverage or short selling, so the account can't go below zero.")
+    outputs = "approved order size, or a reason for blocking"
 
     def __init__(self, ctx):
         super().__init__(ctx)
         self.blocked = 0
+        self.reasons: dict[str, int] = {}
 
     async def run(self, bb: Blackboard) -> None:
         r = self.ctx.settings["risk"]
         ks = " | KILL SWITCH ON" if self.ctx.kill_switch else ""
         self.summary = (f"max {r['max_position_pct']}%/position, {r['max_open_positions']} positions, "
                         f"daily stop -{r['max_daily_loss_pct']}%, blocked {self.blocked}{ks}")
+        self.detail = {"limits": {k: r[k] for k in ("max_position_pct", "max_open_positions", "max_daily_loss_pct",
+                                                     "min_cash_reserve_usd", "min_order_usd")},
+                       "blocked_by_reason": self.reasons}
 
     def check_buy(self, variant, symbol: str, usd: float, prices: dict) -> tuple[float, str | None]:
         """Returns (allowed_usd, reason_if_blocked)."""
-        r = self.ctx.settings["risk"]
-        b = variant.broker
-        if self.ctx.kill_switch:
-            return 0, "kill switch is on"
-        equity = b.equity(prices)
-        if variant.day_start_equity and equity < variant.day_start_equity * (1 - r["max_daily_loss_pct"] / 100):
-            return 0, "daily loss limit reached, no new buys today"
-        if len(b.positions) >= r["max_open_positions"] and symbol not in b.positions:
-            return 0, "too many open positions"
-        held = b.positions[symbol].value(prices.get(symbol, 0)) if symbol in b.positions else 0.0
-        cap = equity * r["max_position_pct"] / 100 - held
-        usd = min(usd, cap, b.cash - r["min_cash_reserve_usd"])
-        if usd < r["min_order_usd"]:
-            return 0, "order too small after limits"
-        return usd, None
+        allowed, why = risk_check(self.ctx.settings["risk"], variant.broker, variant.day_start_equity,
+                                  self.ctx.kill_switch, symbol, usd, prices)
+        if why:
+            self.reasons[why] = self.reasons.get(why, 0) + 1
+        return allowed, why
 
 
 def expected_move_pct(bb: Blackboard, quote) -> float:
-    """How much this coin plausibly moves: the bigger of its 24h change and its volatility projected over 4 hours."""
-    vol = bb.tech.get(quote.symbol, {}).get("vol", 0.0)
-    return max(abs(quote.change_24h_pct), vol * math.sqrt(240) * 100)
+    return expected_move(quote.change_24h_pct, bb.tech.get(quote.symbol, {}).get("vol", 0.0))
 
 
 class Buyer(Agent):
@@ -374,65 +433,65 @@ class Buyer(Agent):
     name = "Buyer"
     role = "Places the orders: paper for every strategy, and live money for the champion when the switch is on"
     inputs = ["risk"]
+    explain = ("Every tick, for every strategy: first checks exits on each open position (stop loss, take profit, "
+               "trailing stop, weak score after the minimum hold, or the Professor's avoid list). Then it walks the "
+               "best scores and buys while the strategy's rules allow: buy threshold, position limit, cooldown, "
+               "hourly buy limit and fee guard. Size = position % x equity x the Professor's risk appetite, then cut "
+               "by the Risk Officer. Stocks only trade while the US market is open. Live mode copies the champion.")
+    outputs = "orders, and why each symbol was or wasn't bought"
 
     async def run(self, bb: Blackboard) -> None:
-        prices = {s: q.price for s, q in self.ctx.prices.quotes.items() if q.price}
+        quotes = self.ctx.prices.quotes
+        prices = {s: q.price for s, q in quotes.items() if q.price}
         risk: RiskOfficer = self.ctx.agent("risk")
         now = time.time()
         made = 0
+        champ = self.ctx.champion()
+        why_not: dict[str, str] = {}
         for v in self.ctx.variants.values():
             cfg, b = v.config, v.broker
             scores = bb.scores.get(v.id, {})
             # 1) exits first
             for sym, pos in list(b.positions.items()):
-                price = prices.get(sym)
-                if not price:
-                    continue
-                pos.peak = max(pos.peak, price)
-                change = (price / pos.avg_price - 1) * 100
-                from_peak = (price / pos.peak - 1) * 100
-                held_min = (now - pos.opened) / 60
-                reason = None
-                if change <= -cfg.stop_loss_pct:
-                    reason = f"stop loss {change:.1f}%"
-                elif change >= cfg.take_profit_pct:
-                    reason = f"take profit {change:+.1f}%"
-                elif change > 1.0 and from_peak <= -cfg.trailing_stop_pct:
-                    reason = f"trailing stop ({from_peak:.1f}% from peak)"
-                elif held_min >= cfg.min_hold_minutes and scores.get(sym, 0) < cfg.exit_score:
-                    reason = f"score dropped to {scores.get(sym, 0):+.2f}"
-                elif sym in bb.avoid and held_min >= cfg.min_hold_minutes:
-                    reason = "Professor says avoid"
+                q = quotes.get(sym)
+                if not q or not q.price or not q.tradable:
+                    continue  # e.g. stock market closed: sell at the next open
+                reason = exit_reason(cfg, pos, q.price, scores.get(sym, 0.0), now, bb.avoid)
                 if reason:
-                    await self.ctx.execute(v, sym, "SELL", pos.qty, price, reason, fraction=1.0)
+                    await self.ctx.execute(v, sym, "SELL", pos.qty, q.price, reason, fraction=1.0)
                     made += 1
             # 2) entries, best score first
             if self.ctx.kill_switch:
+                if v is champ:
+                    why_not = {s: "kill switch is on" for s in scores}
                 continue
-            candidates = sorted(scores.items(), key=lambda kv: -kv[1])
-            for sym, score in candidates:
-                if score < cfg.entry_score or len(b.positions) >= cfg.max_positions:
-                    break
-                if sym in b.positions or sym in bb.avoid or not prices.get(sym):
+            buys_last_hour = self.ctx.buys_since(v.id, now - 3600)
+            for sym, score in sorted(scores.items(), key=lambda kv: -kv[1]):
+                q = quotes.get(sym)
+                if not q or not q.price:
                     continue
-                if now - b.last_sell.get(sym, 0) < cfg.cooldown_minutes * 60:
+                if not q.tradable:
+                    blocker = "US market closed"
+                else:
+                    blocker = entry_blocker(cfg, b, sym, score, now, bb.avoid, buys_last_hour, expected_move_pct(bb, q))
+                if blocker:
+                    if v is champ:
+                        why_not[sym] = blocker
                     continue
-                if cfg.min_edge_pct > 0 and expected_move_pct(bb, self.ctx.prices.quotes[sym]) < cfg.min_edge_pct:
-                    continue  # the Professor's fee guard: don't pay 3% round trip for a coin that barely moves
                 equity = b.equity(prices)
                 want = equity * cfg.position_pct / 100 * bb.risk_appetite
                 usd, why = risk.check_buy(v, sym, want, prices)
                 if why:
                     risk.blocked += 1
-                    if v.champion:
+                    if v is champ:
+                        why_not[sym] = why
                         self.ctx.throttled_say(risk, f"Blocked {v.name} buying {sym}: {why}.")
                     continue
-                await self.ctx.execute(v, sym, "BUY", usd, prices[sym], f"score {score:+.2f}",
+                await self.ctx.execute(v, sym, "BUY", usd, q.price, f"score {score:+.2f}",
                                        fraction=usd / equity if equity else 0)
+                buys_last_hour += 1
                 made += 1
-        champ = self.ctx.champion()
         if champ:
             eq = champ.broker.equity(prices)
             self.summary = f"champion {champ.name}: {eq:.2f} USD, {len(champ.broker.positions)} open"
-        if made:
-            self.detail = {"orders_this_tick": made}
+        self.detail = {"orders_this_tick": made, "why_not": why_not}

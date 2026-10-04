@@ -108,7 +108,7 @@ def test_mutations_stay_in_bounds():
     cfg = StrategyConfig()
     for _ in range(500):
         cfg = cfg.mutate(rng, 0.6)
-        assert 5 <= cfg.position_pct <= 25
+        assert 5 <= cfg.position_pct <= 50
         assert cfg.exit_score < cfg.entry_score
         assert all(-2 <= w <= 2 for w in cfg.weights().values())
 

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 import uuid
 from dataclasses import dataclass
 
+from . import backtest, controls
 from .agents.base import Blackboard, Source
 from .agents.optimizer import Optimizer
 from .agents.team import (Buyer, CryptoAnalyst, HypeDetective, HypeScout, MarketAnalyst, NewsHunter, Predictor,
@@ -15,11 +17,14 @@ from .brokers.bitpanda import BitpandaBroker
 from .brokers.paper import PaperBroker, Position
 from .bus import Bus
 from .config import Settings
-from .data.prices import PriceFeed
+from .data.prices import PriceFeed, us_market_open
 from .data.social import SocialFeed
 from .db import DB
 from .llm import LLM, Budget
-from .strategy import SEED_VARIANTS, StrategyConfig
+from .strategy import SEED_VARIANTS, STRATEGY_FIELDS, StrategyConfig
+
+HISTORY_DAYS = 7
+MAX_WATCHLIST = 25
 
 
 @dataclass
@@ -40,9 +45,21 @@ class Engine:
         self.settings = settings
         self.db = DB(settings.db_path)
         self.bus = Bus()
+        # dashboard changes are saved in the database and laid over config.toml
+        self._base_raw = copy.deepcopy(settings.raw)
+        controls.apply(settings.raw, self.db.get("controls", {}))
+        controls.apply(self._base_raw, {})
+        src = self.db.get("sources", {})
         m = settings["markets"]
-        self.prices = PriceFeed(m["crypto"], m["stocks"], settings.simulate, self._log)
-        self.social = SocialFeed(m["crypto"] + m["stocks"], settings.simulate, self._log)
+        crypto, stocks = src.get("crypto", m["crypto"]), src.get("stocks", m["stocks"])
+        self.prices = PriceFeed(crypto, stocks, settings.simulate, self._log)
+        self.social = SocialFeed(crypto + stocks, settings.simulate, self._log)
+        if src.get("subreddits"):
+            self.social.subreddits = src["subreddits"]
+        if src.get("feeds"):
+            self.social.feeds = src["feeds"]
+        self._load_candles()
+        self._dataset: tuple[float, float, backtest.Dataset] | None = None
         ab = settings["ai_budget"]
         self.budget = Budget(self.db, ab)
         self.llm = LLM(settings.anthropic_api_key, self.budget, self.db, ab["fast_model"], ab["deep_model"])
@@ -55,12 +72,21 @@ class Engine:
 
         h = lambda key, feed: (lambda: feed.healthy.get(key, False))  # noqa: E731
         self.sources = [
-            Source(self, "src_kraken", "Kraken prices", "Live crypto prices (free public API)", h("crypto", self.prices)),
-            Source(self, "src_yahoo", "Yahoo stocks", "US stock prices, 1-minute bars", h("stock", self.prices)),
-            Source(self, "src_reddit", "Reddit", "Hot posts from crypto and stock subreddits", h("reddit", self.social)),
-            Source(self, "src_coingecko", "CoinGecko trending", "Most searched coins", lambda: bool(self.social.trending)),
-            Source(self, "src_feargreed", "Fear & Greed", "Crypto market sentiment index", lambda: self.social.fear_greed is not None),
-            Source(self, "src_news", "News feeds", "CoinDesk, Cointelegraph, Yahoo Finance, CNBC", h("news", self.social)),
+            Source(self, "src_kraken", "Kraken prices", "Live crypto prices (free public API)", h("crypto", self.prices),
+                   "Kraken's free public API: last price every few seconds and 12 hours of 1-minute history at start. "
+                   "The bot also stores every minute itself (7 days) for the backtester."),
+            Source(self, "src_yahoo", "Yahoo stocks", "US stock prices, 1-minute bars", h("stock", self.prices),
+                   "Yahoo Finance's public chart API, polled every minute. Stocks only trade 9:30-16:00 New York time, "
+                   "Monday to Friday."),
+            Source(self, "src_reddit", "Reddit", "Hot posts from crypto and stock subreddits", h("reddit", self.social),
+                   "Hot posts from the subreddits in Controls > Sources, read through Reddit's public RSS feed."),
+            Source(self, "src_coingecko", "CoinGecko trending", "Most searched coins", lambda: bool(self.social.trending),
+                   "The coins people search most on CoinGecko right now."),
+            Source(self, "src_feargreed", "Fear & Greed", "Crypto market sentiment index",
+                   lambda: self.social.fear_greed is not None,
+                   "alternative.me's daily Crypto Fear & Greed index, 0 (extreme fear) to 100 (extreme greed)."),
+            Source(self, "src_news", "News feeds", "RSS headlines from crypto and finance news", h("news", self.social),
+                   "The RSS feeds in Controls > Sources. Add any feed you like."),
         ]
         self.team = [CryptoAnalyst(self), MarketAnalyst(self), HypeScout(self), HypeDetective(self), NewsHunter(self),
                      Professor(self), Predictor(self), RiskOfficer(self), Buyer(self), Optimizer(self)]
@@ -68,6 +94,10 @@ class Engine:
         # remember news across restarts so headlines aren't re-read (and re-paid for) after every restart
         self.social._seen_links = set(self.db.get("news_seen", []))
         self.bb.news_events = [e for e in self.db.get("news_events", []) if time.time() - e["ts"] < 24 * 3600]
+        prof = self.db.get("professor_last")
+        if prof and time.time() - prof["detail"].get("ts", 0) < settings["engine"]["professor_every_minutes"] * 90:
+            self.bb.risk_appetite, self.bb.avoid = prof["risk_appetite"], set(prof["avoid"])
+            self.agent("professor").detail = prof["detail"]
         self._load_variants()
 
     # ------------------------------------------------------------------ state
@@ -97,6 +127,205 @@ class Engine:
         if time.time() - self._last_said.get(message, 0) > every:
             self._last_said[message] = time.time()
             agent.say(message)
+
+    # ------------------------------------------------------------------ dashboard settings
+    def controls(self) -> dict:
+        overrides = self.db.get("controls", {})
+        return {"controls": controls.describe(self.settings.raw, overrides), "strategy_fields": STRATEGY_FIELDS}
+
+    def set_controls(self, changes: dict) -> dict:
+        overrides = self.db.get("controls", {})
+        for key, value in changes.items():
+            if value is None:  # reset this one to config.toml
+                overrides.pop(key, None)
+                section, name = key.split(".")
+                self.settings.raw[section][name] = controls.get(self._base_raw, key)
+            else:
+                overrides[key] = controls.coerce(key, value)
+        controls.apply(self.settings.raw, overrides)
+        self.db.set("controls", overrides)
+        for v in self.variants.values():  # fee changes apply to every paper account
+            v.broker.fee_pct = self.settings["paper"]["fee_pct"]
+            v.broker.slippage_pct = self.settings["paper"]["slippage_pct"]
+        self._log("Engine", "info", "Settings changed: " + ", ".join(
+            f"{controls.BY_KEY[k]['label']} = {'default' if v is None else controls.coerce(k, v)}" for k, v in changes.items()))
+        return self.controls()
+
+    def sources_info(self) -> dict:
+        held = {s for v in self.variants.values() for s in v.broker.positions}
+        return {
+            "crypto": [q.symbol for q in self.prices.crypto()], "stocks": [q.symbol for q in self.prices.stocks()],
+            "subreddits": self.social.subreddits, "feeds": self.social.feeds, "held": sorted(held),
+            "status": self.social.source_status,
+        }
+
+    def _save_sources(self) -> None:
+        self.db.set("sources", {k: v for k, v in self.sources_info().items() if k in ("crypto", "stocks", "subreddits", "feeds")})
+
+    async def add_source(self, kind: str, value: str, name: str = "") -> dict:
+        value = value.strip()
+        if kind in ("crypto", "stocks"):
+            sym = value.upper().lstrip("$")
+            if not sym.replace(".", "").replace("-", "").isalnum() or len(sym) > 10:
+                return {"ok": False, "error": "use a ticker like ARB or PLTR"}
+            if sym in self.prices.quotes:
+                return {"ok": False, "error": f"{sym} is already on the list"}
+            if len([q for q in self.prices.quotes.values() if q.kind == ("crypto" if kind == "crypto" else "stock")]) >= MAX_WATCHLIST:
+                return {"ok": False, "error": f"at most {MAX_WATCHLIST} per list, to keep the free APIs happy"}
+            qkind = "crypto" if kind == "crypto" else "stock"
+            why = await self.prices.validate(sym, qkind)
+            if why:
+                return {"ok": False, "error": why}
+            await self.prices.add_symbol(sym, qkind, self._history(sym, HISTORY_DAYS * 1440))
+            self.social.symbols = list(self.prices.quotes)
+        elif kind == "subreddits":
+            sub = value.removeprefix("r/").removeprefix("/r/").strip("/")
+            if not sub.replace("_", "").isalnum():
+                return {"ok": False, "error": "use a subreddit name like Bitcoin"}
+            if sub in self.social.subreddits:
+                return {"ok": False, "error": "already on the list"}
+            why = await self.social.check_subreddit(sub)
+            if why:
+                return {"ok": False, "error": why}
+            self.social.subreddits.append(sub)
+        elif kind == "feeds":
+            if not value.startswith(("http://", "https://")):
+                return {"ok": False, "error": "paste the full feed address, starting with https://"}
+            why = await self.social.check_feed(value)
+            if why:
+                return {"ok": False, "error": why}
+            label = name.strip() or value.split("/")[2].removeprefix("www.")
+            self.social.feeds[label] = value
+        else:
+            return {"ok": False, "error": "unknown list"}
+        self._save_sources()
+        self._log("Engine", "info", f"Added {value} to {kind}.")
+        return {"ok": True, **self.sources_info()}
+
+    def remove_source(self, kind: str, value: str) -> dict:
+        if kind in ("crypto", "stocks"):
+            held = self.sources_info()["held"]
+            if value in held:
+                return {"ok": False, "error": f"a strategy still holds {value}; it can be removed once it's sold"}
+            same = [q for q in self.prices.quotes.values() if q.kind == ("crypto" if kind == "crypto" else "stock")]
+            if len(same) <= 1 and kind == "crypto":
+                return {"ok": False, "error": "keep at least one coin"}
+            self.prices.remove_symbol(value)
+            self.social.symbols = list(self.prices.quotes)
+            for d in (self.bb.tech, self.bb.hype, self.bb.news, self.bb.market, self.bb.signals):
+                d.pop(value, None)
+        elif kind == "subreddits":
+            if value in self.social.subreddits:
+                self.social.subreddits.remove(value)
+        elif kind == "feeds":
+            self.social.feeds.pop(value, None)
+        else:
+            return {"ok": False, "error": "unknown list"}
+        self._save_sources()
+        self._log("Engine", "info", f"Removed {value} from {kind}.")
+        return {"ok": True, **self.sources_info()}
+
+    def set_agent(self, aid: str, enabled: bool | None = None, prompt: str | None = None, model: str | None = None,
+                  reset_prompt: bool = False, run_now: bool = False) -> dict:
+        a = self._by_id.get(aid)
+        if not a:
+            raise KeyError(aid)
+        if enabled is not None:
+            if not a.can_disable:
+                raise ValueError(f"{a.name} is essential and can't be switched off")
+            off = set(self.db.get("agents_off", []))
+            off.discard(aid) if enabled else off.add(aid)
+            self.db.set("agents_off", sorted(off))
+            self._log("Engine", "info", f"{a.name} switched {'on' if enabled else 'off'}.")
+        if a.uses_ai:
+            if reset_prompt:
+                self.db.execute("DELETE FROM kv WHERE key=?", (f"prompt:{aid}",))
+            elif prompt is not None:
+                if not prompt.strip():
+                    raise ValueError("the prompt can't be empty")
+                self.db.set(f"prompt:{aid}", prompt.strip()[:6000])
+                self._log("Engine", "info", f"{a.name}'s instructions were edited.")
+            if model is not None:
+                from .llm import PRICES
+                if model not in PRICES:
+                    raise ValueError("unknown model")
+                self.db.set(f"model:{aid}", model)
+        if run_now and hasattr(a, "run_now"):
+            a.run_now()
+        return a.node()
+
+    def set_variant_config(self, vid: str, changes: dict, as_new: bool = False, name: str = "") -> Variant:
+        v = self.variants.get(vid)
+        if not v:
+            raise KeyError(vid)
+        cfg = StrategyConfig.from_dict({**v.config.to_dict(), **changes}).clamped()
+        if as_new:
+            return self.add_variant(cfg, name=name.strip()[:40] or None, parent_id=vid, note="tuned by you")
+        v.config = cfg
+        self.db.execute("UPDATE variants SET config_json=? WHERE id=?", (json.dumps(cfg.to_dict()), vid))
+        self._board_cache = None
+        self._log("Engine", "info", f"{v.name}'s strategy settings were edited.")
+        return v
+
+    # ------------------------------------------------------------------ price history and backtests
+    def _load_candles(self) -> None:
+        since = time.time() - 86400
+        for q in self.prices.quotes.values():
+            q.merge(self._history(q.symbol, 1440, since))
+
+    def _history(self, symbol: str, limit: int, since: float = 0) -> list[tuple[float, float]]:
+        rows = self.db.query("SELECT ts, close FROM candles WHERE symbol=? AND ts>=? ORDER BY ts DESC LIMIT ?",
+                             (symbol, since, limit))
+        return [(r["ts"], r["close"]) for r in reversed(rows)]
+
+    def _save_candles(self) -> None:
+        rows = [(q.symbol, int(ts), c) for q in self.prices.quotes.values() for ts, c in list(q.candles)[-5:]]
+        self.db.executemany("INSERT OR REPLACE INTO candles(symbol, ts, close) VALUES(?,?,?)", rows)
+        if int(time.time()) % 3600 < 60:
+            self.db.execute("DELETE FROM candles WHERE ts<?", (time.time() - HISTORY_DAYS * 86400,))
+
+    def candles(self, symbol: str, minutes: int = 240) -> dict:
+        q = self.prices.quotes.get(symbol)
+        if not q:
+            raise KeyError(symbol)
+        since = time.time() - minutes * 60
+        rows = self._history(symbol, minutes + 5, since) if minutes > 1440 else [c for c in q.candles if c[0] >= since]
+        trades = self.db.query(
+            "SELECT t.ts,t.side,t.price,t.notional,t.pnl,t.reason,v.name variant,v.is_champion champion FROM trades t "
+            "JOIN variants v ON v.id=t.variant_id WHERE t.symbol=? AND t.ts>=? AND t.mode='paper' ORDER BY t.ts",
+            (symbol, since))
+        return {"symbol": symbol, "kind": q.kind, "candles": rows, "trades": trades, "tradable": q.tradable}
+
+    def dataset(self, hours: float) -> backtest.Dataset:
+        """Recorded history as a backtest dataset (cached for two minutes per window length)."""
+        if self._dataset and self._dataset[1] == hours and time.time() - self._dataset[0] < 120:
+            return self._dataset[2]
+        self._save_candles()
+        since = time.time() - (hours * 60 + backtest.LOOKBACK_MIN + 5) * 60
+        series = {q.symbol: self._history(q.symbol, 20000, since) for q in self.prices.quotes.values()}
+        for q in self.prices.quotes.values():  # include what's in memory but not saved yet (e.g. fresh backfill)
+            have = {int(ts) for ts, _ in series[q.symbol]}
+            series[q.symbol] = sorted(series[q.symbol] + [(ts, c) for ts, c in q.candles if ts >= since and int(ts) not in have])
+        kinds = {s: q.kind for s, q in self.prices.quotes.items()}
+        ds = backtest.build_dataset(series, kinds, hours, step=1 if hours <= 12 else 2 if hours <= 48 else 4)
+        if not ds:
+            raise ValueError("not enough price history yet: let the bot run a little longer")
+        self._dataset = (time.time(), hours, ds)
+        return ds
+
+    def backtest_sync(self, cfg: StrategyConfig, hours: float = 24) -> dict:
+        ds = self.dataset(hours)
+        res = backtest.run(ds, cfg, self.settings.raw, self.settings["money"]["starting_cash_usd"])
+        res["note"] = backtest.overfit_note(res)
+        return res
+
+    def autotune_sync(self, base: StrategyConfig, n: int = 40, hours: float = 24) -> list[dict]:
+        ds = self.dataset(hours)
+        return backtest.autotune(ds, base, self.settings.raw, n=n)
+
+    def buys_since(self, vid: str, ts: float) -> int:
+        return self.db.query("SELECT COUNT(*) n FROM trades WHERE variant_id=? AND side='BUY' AND mode='paper' AND ts>=?",
+                             (vid, ts))[0]["n"]
 
     # ------------------------------------------------------------------ variants
     def _load_variants(self) -> None:
@@ -210,8 +439,12 @@ class Engine:
                       fraction: float) -> None:
         """amount is USD for BUY and quantity for SELL. fraction is used to mirror the champion on live."""
         b = v.broker
+        q = self.prices.quotes.get(symbol)
+        is_stock = bool(q and q.kind == "stock")
+        fee = self.settings["paper"]["stock_fee_pct"] if is_stock else self.settings["paper"]["fee_pct"]
         try:
-            fill = b.buy(symbol, amount, price) if side == "BUY" else b.sell(symbol, amount, price)
+            fill = (b.buy(symbol, amount, price, fee_pct=fee) if side == "BUY"
+                    else b.sell(symbol, amount, price, fee_pct=fee))
         except ValueError as e:
             self._log("Risk Officer", "warn", f"Refused {v.name} {side} {symbol}: {e}")
             return
@@ -227,7 +460,10 @@ class Engine:
             pnl = f", P&L {fill.pnl:+.2f} USD" if fill.pnl is not None else ""
             self._log("Buyer", "trade", f"{side} {symbol} for {fill.notional:.2f} USD at {fill.price:.6g} ({reason}{pnl})")
             if self.mode == "live" and self.live:
-                await self._mirror_live(symbol, side, fraction)
+                if is_stock:
+                    self.throttled_say(self.agent("buyer"), "Stock trades stay on paper: live trading is crypto-only for now.", 3600)
+                else:
+                    await self._mirror_live(symbol, side, fraction)
 
     async def _mirror_live(self, symbol: str, side: str, fraction: float) -> None:
         try:
@@ -300,24 +536,27 @@ class Engine:
         self._log("Engine", "info", "Booting: loading price history" + (" (SIMULATED data)" if self.settings.simulate else ""))
         await self.prices.backfill()
         self._log("Engine", "info", f"Team online. AI {'on' if self.llm.available else 'off (no API key): free math mode'}.")
-        e = self.settings["engine"]
+        e = self.settings["engine"]  # read on every loop, so dashboard changes apply without a restart
         await asyncio.gather(
-            self._every(e["price_poll_seconds"], self.prices.poll_crypto),
-            self._every(e["stock_poll_seconds"], self.prices.poll_stocks),
-            self._every(e["hype_poll_seconds"], self.social.poll_hype),
-            self._every(e["news_poll_seconds"], self._poll_news),
-            self._every(e["tick_seconds"], self.tick),
-            self._every(60, self.snapshot_equity),
-            self._every(2, self.publish_prices),
+            self._every(lambda: e["price_poll_seconds"], self.prices.poll_crypto),
+            self._every(lambda: e["stock_poll_seconds"], self.prices.poll_stocks),
+            self._every(lambda: e["hype_poll_seconds"], self.social.poll_hype),
+            self._every(lambda: e["news_poll_seconds"], self._poll_news),
+            self._every(lambda: e["tick_seconds"], self.tick),
+            self._every(lambda: 60, self.snapshot_equity),
+            self._every(lambda: 2, self.publish_prices),
         )
 
-    async def _every(self, seconds: float, fn) -> None:
+    async def _every(self, seconds, fn) -> None:
         while True:
+            started = time.time()
             try:
                 await fn()
             except Exception as ex:
                 self._log("Engine", "error", f"{getattr(fn, '__name__', fn)} failed: {ex}")
-            await asyncio.sleep(seconds)
+            # sleep in short slices so a shorter interval set in the dashboard takes effect quickly
+            while time.time() - started < seconds():
+                await asyncio.sleep(min(1.0, max(0.05, seconds() - (time.time() - started))))
 
     async def _poll_news(self) -> None:
         fresh = await self.social.poll_news()
@@ -337,6 +576,7 @@ class Engine:
         prices = {s: q.price for s, q in self.prices.quotes.items() if q.price}
         if not prices:
             return
+        self._save_candles()
         now = time.time()
         for v in self.variants.values():
             eq = v.broker.equity(prices)
@@ -365,6 +605,20 @@ class Engine:
                                                 "start": champ.start_equity},
             "scores": self.bb.scores.get(champ.id, {}) if champ else {},
             "auto_promote": self.db.get("auto_promote", False),
+            "signals": {sym: {k: round(x, 3) for k, x in sig.items()} for sym, sig in self.bb.signals.items()},
+            "weights": champ.config.weights() if champ else {},
+            "champion_config": champ.config.to_dict() if champ else {},
+            "why_not": self.agent("buyer").detail.get("why_not", {}),
+            "avoid": sorted(self.bb.avoid),
+            "us_market_open": us_market_open(),
+            "stats": self.champion_stats(champ),
+            "news": [{k: e.get(k) for k in ("ts", "source", "title", "link", "symbols", "sentiment", "impact", "event", "ai")}
+                     for e in self.bb.news_events[:25]],
+            "hype": {"posts": self.social.posts[:10], "trending": self.social.trending[:7],
+                     "mentions": self.social.mention_counts, "scores": {k: round(v, 2) for k, v in self.bb.hype.items()}},
+            "professor": self.agent("professor").detail,
+            "next_professor": getattr(self.agent("professor"), "next_due", 0),
+            "variants": len(self.variants),
         }
         if not light:
             s["ticker"] = self.ticker()
@@ -372,6 +626,20 @@ class Engine:
             s["log"] = self.db.query("SELECT ts,agent,level,message FROM agent_log ORDER BY id DESC LIMIT 150")[::-1]
             s["trades"] = self.recent_trades()
         return s
+
+    def champion_stats(self, champ) -> dict:
+        if not champ:
+            return {}
+        t = self.db.query(
+            "SELECT COUNT(*) n, COALESCE(SUM(fee),0) fees, COALESCE(SUM(pnl),0) pnl, "
+            "SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END) wins, SUM(CASE WHEN side='SELL' THEN 1 ELSE 0 END) sells, "
+            "SUM(CASE WHEN ts>? THEN 1 ELSE 0 END) today FROM trades WHERE variant_id=? AND mode='paper'",
+            (time.time() - 86400, champ.id))[0]
+        prices = {s: q.price for s, q in self.prices.quotes.items() if q.price}
+        invested = sum(p.value(prices.get(s, p.avg_price)) for s, p in champ.broker.positions.items())
+        return {"trades": t["n"], "trades_24h": t["today"] or 0, "fees": round(t["fees"], 2),
+                "realized": round(t["pnl"], 2), "win_rate": round((t["wins"] or 0) / t["sells"] * 100, 1) if t["sells"] else None,
+                "invested": round(invested, 2), "buys_1h": self.buys_since(champ.id, time.time() - 3600)}
 
     def recent_trades(self, limit: int = 50) -> list[dict]:
         return self.db.query(

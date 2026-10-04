@@ -56,7 +56,7 @@ def test_news_hunter_with_ai(tmp_path):
         "takeaway": "SOL ETF news",
     }))
     ctx = SimpleNamespace(db=db, llm=llm, bus=SimpleNamespace(publish=lambda *a: None),
-                          prices=SimpleNamespace(quotes={"SOL": 1, "BTC": 1}))
+                          prices=SimpleNamespace(quotes={"SOL": 1, "BTC": 1}), settings={"ai": {"news_ai": True}})
     agent = NewsHunter(ctx)
     agent.queue([Headline("Test", "Solana ETF approved", "x", time.time(), ["SOL"])])
     bb = Blackboard()
@@ -139,7 +139,7 @@ def test_professor_waits_for_data(tmp_path):
     calls = []
     llm = SimpleNamespace(json_call=lambda *a, **k: calls.append(1))
     ctx = SimpleNamespace(db=DB(tmp_path / "p.db"), llm=llm, bus=SimpleNamespace(publish=lambda *a: None),
-                          social=SimpleNamespace(fear_greed=None))
+                          social=SimpleNamespace(fear_greed=None), settings={"ai": {"professor_on": True}})
     prof = Professor(ctx)
     prof.next_due = 0  # pretend warm-up is over
     asyncio.run(prof.step(Blackboard()))

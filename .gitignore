@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 frontend/node_modules/
 .pytest_cache/
+/media/*
+!/media/README.md

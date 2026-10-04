@@ -26,13 +26,30 @@ keyword rules, the Professor rests). Add keys in `.env` (created on first start 
 
 ## What you see
 
-- **Cockpit:** the pulsing sphere (color = profit, wobble = market energy, shockwave = a trade), the champion's
-  equity curve, open positions, the Predictor's scores per coin, the live agent feed and the trade list.
-- **Nodes:** every data source and agent as a node with wires showing what feeds what. Wires light up when data
-  flows. Click a node to see its last output. Drag nodes around; the layout is remembered.
-- **Experiments:** every strategy variant trades on paper with the same live data. Compare their return curves,
-  drawdown, fees and win rate. Promote a variant to champion, or mutate one to spawn a new experiment.
+Press 1-5 to switch tabs.
+
+- **Cockpit:** a stat strip (equity, cash, realized P&L, fees, trades, win rate, mood, Fear & Greed, risk appetite,
+  US market status), the sphere with the Professor's latest take, a price chart of the selected symbol with buy/sell
+  markers, the champion's equity, every score with its buy and sell lines, and a "why" breakdown showing which
+  signals push the selected score up or down and why it isn't buying. Below: positions and trades, the agent feed
+  (filter by trades, AI or problems) and rated news with social buzz. Click any symbol anywhere to focus it.
+- **Markets:** a tile per coin and stock: price, 24h move, 1-hour sparkline, score, all seven signals, buzz and news.
+  Sort and filter, click a tile for a big chart (1h to 7d) with every strategy's trades.
+- **Agents:** the node graph plus an inspector: each agent's job in plain words, what it reads and hands on, an
+  on/off switch for optional agents, and for the AI agents their Claude model and editable instructions.
+- **Lab:** backtest any strategy on recorded prices, auto-tune it (tries many variations and ranks them), adopt a
+  winner as a new paper strategy, and compare all running strategies on the live leaderboard.
+- **Controls:** sliders for every bot setting (risk limits, fees, speed, AI, Optimizer) and every strategy setting
+  (when to buy, how much, when to sell, signal weights, crypto/stocks), with a 24h backtest button. Plus your
+  sources: add or remove coins, stocks, subreddits and RSS feeds (each is tested before it's used).
 - **Top bar:** AI budget meter, PAPER/LIVE switch, KILL switch (stops all new buys instantly).
+
+Settings changed in the dashboard are saved in `data/` and win over `config.toml` until you reset them.
+
+## Your own visuals
+
+Drop a background video, a logo or agent portraits into the `media/` folder (see `media/README.md`) and reload the
+page. Image and video generators like Higgsfield are good for this.
 
 ## The team
 
@@ -79,9 +96,12 @@ your real account. Make the first live trade a tiny one and check it in the Bitp
 - Add an agent: subclass `Agent` in `backend/tradingbotty/agents/team.py`, set `inputs` to the nodes it reads, write
   to the `Blackboard`, and add it to the team list in `engine.py`. It appears in the node view automatically.
 - Run the safety tests after changes: `.venv/bin/python -m pytest tests`.
+- Stocks: strategies with "Trade US stocks" on paper-trade your watchlist during the US session (9:30-16:00 New York).
+  Live trading stays crypto-only.
 
 ## Data sources
 
 Kraken public API (crypto prices), Yahoo Finance chart API (US stocks), Reddit, CoinGecko trending,
-alternative.me Fear & Greed, and news RSS from CoinDesk, Cointelegraph, Yahoo Finance and CNBC. All free.
+alternative.me Fear & Greed, and news RSS from CoinDesk, Cointelegraph, Yahoo Finance, CNBC, Decrypt and
+MarketWatch. All free, and all editable in Controls > Sources.
 X (Twitter) is not used yet because reading posts costs about 0.005 USD each.

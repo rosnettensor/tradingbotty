@@ -1,36 +1,64 @@
 import { useEffect, useState } from "react";
-import { api, fmt, useBot } from "./useBot.js";
+import { api, fmt, useBot, usePoll } from "./useBot.js";
 import Cockpit from "./Cockpit.jsx";
-import Nodes from "./Nodes.jsx";
-import Experiments from "./Experiments.jsx";
+import Markets from "./Markets.jsx";
+import Agents from "./Agents.jsx";
+import Lab from "./Lab.jsx";
+import Controls from "./Controls.jsx";
 import { Sparkline } from "./charts.jsx";
 
-const TABS = ["cockpit", "nodes", "experiments"];
+const TABS = ["cockpit", "markets", "agents", "lab", "controls"];
 
 export default function App() {
   const { state, connected, pulse } = useBot();
+  const [media] = usePoll("media", 0);
   const [tab, setTab] = useState(() => {
     try { return localStorage.getItem("tb-tab") || "cockpit"; } catch { return "cockpit"; }
   });
+  const [focus, setFocus] = useState(() => {
+    try { return localStorage.getItem("tb-focus") || null; } catch { return null; }
+  });
   useEffect(() => { try { localStorage.setItem("tb-tab", tab); } catch { /* private mode */ } }, [tab]);
+  useEffect(() => { try { if (focus) localStorage.setItem("tb-focus", focus); } catch { /* private mode */ } }, [focus]);
+  useEffect(() => {  // keys 1-5 switch tabs
+    const onKey = (e) => {
+      if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+      const i = Number(e.key) - 1;
+      if (i >= 0 && i < TABS.length) setTab(TABS[i]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   if (!state) {
     return <div className="boot"><div className="boot-text">CONNECTING TO TRADINGBOTTY{connected ? "…" : " (is run.py running?)"}</div></div>;
   }
   return (
     <div className={`app ${state.mode === "live" ? "is-live" : ""}`}>
-      <TopBar state={state} connected={connected} tab={tab} setTab={setTab} />
-      <Ticker items={state.ticker || []} />
+      {media?.background && <Backdrop src={media.background} />}
+      <TopBar state={state} connected={connected} tab={tab} setTab={setTab} logo={media?.logo} />
+      <Ticker items={state.ticker || []} onPick={(s) => { setFocus(s); if (tab !== "markets") setTab("cockpit"); }} />
       <main>
-        {tab === "cockpit" && <Cockpit state={state} pulse={pulse} />}
-        {tab === "nodes" && <Nodes nodes={state.nodes || []} />}
-        {tab === "experiments" && <Experiments state={state} />}
+        {tab === "cockpit" && <Cockpit state={state} pulse={pulse} focus={focus} setFocus={setFocus} />}
+        {tab === "markets" && <Markets state={state} focus={focus} setFocus={setFocus} />}
+        {tab === "agents" && <Agents nodes={state.nodes || []} avatars={media?.avatars || {}} />}
+        {tab === "lab" && <Lab state={state} />}
+        {tab === "controls" && <Controls state={state} />}
       </main>
     </div>
   );
 }
 
-function TopBar({ state, connected, tab, setTab }) {
+function Backdrop({ src }) {
+  const video = /\.(mp4|webm)$/i.test(src);
+  return (
+    <div className="backdrop" aria-hidden>
+      {video ? <video src={src} autoPlay loop muted playsInline /> : <img src={src} alt="" />}
+    </div>
+  );
+}
+
+function TopBar({ state, connected, tab, setTab, logo }) {
   const [busy, setBusy] = useState(false);
   const b = state.budget || {};
   const toggleMode = async () => {
@@ -54,10 +82,10 @@ function TopBar({ state, connected, tab, setTab }) {
   const kill = () => api("kill", { on: !state.kill_switch });
   return (
     <header className="topbar">
-      <div className="logo">TRADING<span>BOTTY</span></div>
+      {logo ? <img className="logo-img" src={logo} alt="TradingBotty" /> : <div className="logo">TRADING<span>BOTTY</span></div>}
       <nav>
-        {TABS.map((t) => (
-          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>{t}</button>
+        {TABS.map((t, i) => (
+          <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)} title={`key ${i + 1}`}>{t}</button>
         ))}
       </nav>
       <div className="spacer" />
@@ -78,10 +106,10 @@ function TopBar({ state, connected, tab, setTab }) {
   );
 }
 
-function Ticker({ items }) {
+function Ticker({ items, onPick }) {
   if (!items.length) return <div className="ticker" />;
   const row = items.map((q) => (
-    <span className="tick" key={q.symbol}>
+    <span className="tick" key={q.symbol} onClick={() => onPick(q.symbol)}>
       <b>{q.symbol}</b> {fmt.price(q.price)}
       <i className={q.change >= 0 ? "up" : "down"}>{q.change >= 0 ? "▲" : "▼"} {Math.abs(q.change).toFixed(2)}%</i>
       <Sparkline values={q.spark} />
