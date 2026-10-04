@@ -41,8 +41,9 @@ CONTROLS = [
      "group": "Live money", "help": "Before every live buy the bot reads Fusion's order book. If the gap between buy and "
      "sell price is wider than this, the buy is skipped: you'd lose that gap the moment you buy."},
     {"key": "live.sell_orphans", "label": "Sell live coins the champion no longer holds", "bool": True, "group": "Live money",
-     "help": "When a new champion takes over, its predecessor's live coins are sold with their own exits instead of "
-     "staying forever. Only coins the bot bought; yours are never touched."},
+     "help": "When a new champion takes over, it first takes over the bot's real coins and sells them by its own "
+     "rules. This only sells what is left over after that (a coin the champion sold on paper, or one it couldn't "
+     "take over), so nothing sits unmanaged. Only coins the bot bought."},
     {"key": "live.use_my_coins", "label": "Bot may also use my existing coins", "bool": True, "group": "Live money",
      "help": "On = your whole Bitpanda account is the bot's money: when it needs cash for a buy, it sells coins the "
      "champion doesn't hold (biggest first). Worst case you lose what's in the account, never more: no debt is possible. "

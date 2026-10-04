@@ -264,3 +264,27 @@ def test_champion_is_judged_on_the_recent_window(tmp_path, monkeypatch):
     assert e.champion().id == champ.id and opt.challenger == rival.id       # first lead: wait
     asyncio.run(opt.evolve(e.leaderboard(max_age=0)))
     assert e.champion().id == rival.id                                      # second lead: takes over
+
+
+def test_new_champion_takes_over_live_coins_instead_of_selling(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    asyncio.run(e.prices.backfill())
+    old = e.champion()
+    price = e.prices.price("BTC")
+    asyncio.run(e.execute(old, "BTC", "BUY", 0.2 * old.broker.cash, price, "test", 0.2))
+    assert "BTC" in e.db.get("live_qty")
+    new = next(v for v in e.variants.values() if not v.champion and not v.config.hold)
+    prices = {s: q.price for s, q in e.prices.quotes.items() if q.price}
+    eq_before = new.broker.equity(prices)
+    e.promote(new.id)
+    assert "BTC" in new.broker.positions                               # adopted on paper, same share of money
+    share = new.broker.positions["BTC"].value(price) / new.broker.equity(prices)
+    assert abs(share - old.broker.positions["BTC"].value(price) / old.broker.equity(prices)) < 0.01
+    assert abs(new.broker.equity(prices) - eq_before) < 1e-6           # no fee, no change in its score
+    asyncio.run(e._reconcile_live())
+    assert f.sells == [] and "BTC" in e.db.get("live_qty")             # nothing sold at the switch
+    # the new champion sells by its own rules: the real coins follow
+    pos = new.broker.positions["BTC"]
+    asyncio.run(e.execute(new, "BTC", "SELL", pos.qty, price, "its own exit", 1.0))
+    assert f.sells and e.db.get("live_qty") == {}

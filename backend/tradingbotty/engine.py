@@ -483,12 +483,51 @@ class Engine:
     def promote(self, vid: str) -> None:
         if vid not in self.variants:
             raise KeyError(vid)
+        old = self.champion()
         self.db.execute("UPDATE variants SET is_champion=0")
         self.db.execute("UPDATE variants SET is_champion=1 WHERE id=?", (vid,))
         for v in self.variants.values():
             v.champion = v.id == vid
         self._board_cache = None
         self._log("Optimizer", "info", f"{self.variants[vid].name} is now the champion.")
+        if old and old.id != vid:
+            self._adopt_live_coins(old, self.variants[vid])
+
+    def _adopt_live_coins(self, old: Variant, new: Variant) -> None:
+        """The new champion takes over the coins the bot bought for real, instead of selling them at the switch.
+
+        Each coin goes into the new champion's paper account at the same share of its money as it has in the real
+        account, at today's price and without a fee (the real coins are already paid for). From then on the new
+        champion's own stops, take-profit and sell signals decide when they go, and its sells are copied to Fusion.
+        """
+        live = self.db.get("live_qty", {})
+        if not live:
+            return
+        prices = {s: q.price for s, q in self.prices.quotes.items() if q.price}
+        wallet_coins = {c["symbol"]: c.get("value") or 0 for c in (self.wallet or {}).get("coins", [])}
+        wallet_total = (self.wallet or {}).get("total") or 0
+        old_eq, new_eq = old.broker.equity(prices), new.broker.equity(prices)
+        adopted = []
+        for sym in live:
+            price = prices.get(sym)
+            if not price or sym in new.broker.positions:
+                continue
+            if sym in old.broker.positions and old_eq > 0:
+                share = old.broker.positions[sym].value(price) / old_eq   # what the live copy was sized from
+            elif wallet_total > 0 and wallet_coins.get(sym):
+                share = wallet_coins[sym] / wallet_total
+            else:
+                continue  # can't size it: the Live Desk sells it as before
+            usd = min(share * new_eq, new.broker.cash)
+            if usd < 0.5:
+                continue
+            new.broker.cash -= usd
+            new.broker.positions[sym] = Position(sym, usd / price, price, time.time(), price)
+            adopted.append(sym)
+        if adopted:
+            self._save_broker(new)
+            self._log("Live Desk", "info", f"{new.name} takes over the bot's real {', '.join(adopted)} and will sell "
+                                           f"by its own rules (no sale at the switch).")
 
     def leaderboard(self, max_age: float = 30) -> list[dict]:
         cached = getattr(self, "_board_cache", None)

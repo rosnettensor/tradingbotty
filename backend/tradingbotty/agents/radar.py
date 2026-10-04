@@ -85,8 +85,9 @@ class LiveDesk(Agent):
     explain = ("Plain code, no AI. Only acts when LIVE is on. It copies the champion's trades to Bitpanda Fusion with "
                "extra brakes: never more than your live cap in coins, never a bigger order than your order cap, and "
                "no buy when Fusion's order book shows a wide spread. It only ever sells coins the bot bought itself "
-               "(your own coins are never touched), and when a new champion takes over it sells the old champion's "
-               "leftovers. Three live errors in a row switch everything back to paper.")
+               "(your own coins only if you allow it), and when a new champion takes over, the new one takes "
+               "over the bot's coins and sells them by its own rules instead of selling them at the switch. "
+               "Three live errors in a row switch everything back to paper.")
     outputs = "real orders on Bitpanda Fusion, the live wallet in the cockpit"
 
     async def run(self, bb: Blackboard) -> None:
