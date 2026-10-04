@@ -31,7 +31,7 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
       <section className="panel core">
         <Sphere mood={ret / 5} energy={energy} pulse={pulse} label={
           <div className="core-label">
-            <div className="dim">{champ?.name || "–"} · {state.mode.toUpperCase()}</div>
+            <div className="dim">{champ?.name || "–"} · paper test account</div>
             <div className="equity">{fmt.usd(champ?.equity)}</div>
             <div className={ret >= 0 ? "up" : "down"}>{fmt.pct(ret)} since start</div>
           </div>
@@ -44,7 +44,7 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
       </section>
 
       <section className="panel equity-panel">
-        <h3>CHAMPION EQUITY (USD) <span className="dim">· dashed line = starting stake</span></h3>
+        <h3>CHAMPION TEST ACCOUNT (PAPER USD) <span className="dim">· dashed line = its virtual 100 USD start · real money: see LIVE MONEY</span></h3>
         <LineChart series={[{ id: "c", color: "var(--cyan)", bold: true, points }]} baseline={champ?.start} height={170} />
       </section>
 
@@ -131,7 +131,8 @@ function StatStrip({ state, ret }) {
   const nextProf = state.next_professor ? Math.max(0, Math.round((state.next_professor - Date.now() / 1000) / 60)) : null;
   return (
     <section className="panel stats">
-      <Stat label="Equity" value={fmt.usd(c.equity)} sub={<span className={pctColor(ret)}>{fmt.pct(ret)}</span>} />
+      <Stat label="Test account" value={fmt.usd(c.equity)} sub={<span className={pctColor(ret)}>{fmt.pct(ret)} · paper, not real</span>}
+        title="Every strategy is tested on its own virtual 100 USD paper account. Real money is in the LIVE MONEY panel below." />
       <Stat label="Cash" value={fmt.usd(c.cash)} sub={`${fmt.usd(s.invested)} invested`} />
       <Stat label="Realized P&L" value={fmt.usd(s.realized)} tone={pctColor(s.realized)} sub="closed trades" />
       <Stat label="Fees paid" value={fmt.usd(s.fees)} tone="down" sub={`${s.trades ?? 0} trades total`} />
