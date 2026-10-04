@@ -822,7 +822,8 @@ class Engine:
             a["bot"] = True
         self.wallet["all_coins"] = sorted(allc.values(), key=lambda c: -c["value"])
         self.wallet["coins_value"] = round(total - fiat, 2)
-        self.wallet.update(self._track_account(total))
+        held = {k: float(v or 0) for k, v in bal.items() if k not in ("FIAT", cur) and (v or 0) > 1e-12}
+        self.wallet.update(self._track_account(total, fiat, held, prices))
         if not self.db.get("paper_rebased") and total > 5:
             try:
                 usd = total * await self.prices._usd_rate(cur)
@@ -853,19 +854,38 @@ class Engine:
         self._log("Engine", "info", f"Test strategies now run at your real account size: {new_start:.2f} USD each "
                                     f"instead of {old:.2f}.")
 
-    def _track_account(self, total: float) -> dict:
-        """Remember your account total over time: start value, 24h change and a chart."""
+    def _bot_edge(self, total: float, fiat: float, held: dict | None, prices: dict | None) -> float | None:
+        """What the bot's trading added or lost: your account now minus what it would be worth if nobody had
+        traded (the cash and coins you had when measuring started, at today's prices). Coin price swings cancel out."""
+        if held is None or prices is None:
+            return None
+        start = self.db.get("hold_start")
+        if not start:
+            start = {"ts": time.time(), "fiat": fiat, "coins": held,
+                     "values": {k: q * prices.get(k, 0.0) for k, q in held.items()}}
+            self.db.set("hold_start", start)
+        untouched = start["fiat"] + sum(q * prices[k] if prices.get(k) else start["values"].get(k, 0.0)
+                                        for k, q in start["coins"].items())
+        return round(total - untouched, 2)
+
+    def _track_account(self, total: float, fiat: float = 0.0, held: dict | None = None,
+                       prices: dict | None = None) -> dict:
+        """Remember your account total over time: start value, 24h change, the bot's own gain or loss, a chart."""
         now = time.time()
+        edge = self._bot_edge(total, fiat, held, prices)
         hist = self.db.get("wallet_hist", [])
         if not hist or now - hist[-1][0] >= 300:
-            hist = (hist + [[now, round(total, 2)]])[-4000:]
+            hist = (hist + [[now, round(total, 2), edge]])[-4000:]
             self.db.set("wallet_hist", hist)
         start = self.db.get("account_start") or {"ts": now, "total": total}
         if not self.db.get("account_start"):
             self.db.set("account_start", start)
-        day = next((t for ts, t in hist if ts >= now - 86400), total)
+        day = next((h[1] for h in hist if h[0] >= now - 86400), total)
         step = max(1, len(hist) // 300)
-        return {"start_total": round(start["total"], 2), "start_ts": start["ts"],
+        hs = self.db.get("hold_start") or {}
+        return {"bot_edge": edge, "bot_edge_since": hs.get("ts"),
+                "bot_edge_pct": round(edge / (total - edge) * 100, 2) if edge is not None and total - edge else None,
+                "start_total": round(start["total"], 2), "start_ts": start["ts"],
                 "change": round(total - start["total"], 2),
                 "change_pct": round((total / start["total"] - 1) * 100, 2) if start["total"] else 0.0,
                 "change_24h": round(total - day, 2), "history": hist[::step] + ([hist[-1]] if hist and len(hist) % step else [])}

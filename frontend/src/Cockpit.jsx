@@ -80,6 +80,50 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
   );
 }
 
+/** A number that rolls to its new value and flashes green or red when it changes. */
+function Ticking({ value, digits = 2, signed = false }) {
+  const [shown, setShown] = useState(value ?? 0);
+  const [flash, setFlash] = useState("");
+  const prev = useRef(value ?? 0);
+  useEffect(() => {
+    if (value == null) return;
+    const from = prev.current, to = value;
+    prev.current = value;
+    if (from === to) return;
+    setFlash(to > from ? "flash-up" : "flash-down");
+    const t0 = performance.now(), dur = 900;
+    let raf;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur);
+      setShown(from + (to - from) * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    const off = setTimeout(() => setFlash(""), 1400);
+    return () => { cancelAnimationFrame(raf); clearTimeout(off); };
+  }, [value]);
+  const txt = `${signed && shown >= 0 ? "+" : ""}${Number(shown).toFixed(digits)}`;
+  return <span className={`ticking ${flash}`}>{txt}</span>;
+}
+
+function BotEdge({ w, cur }) {
+  const edge = w.bot_edge;
+  const pts = (w.history || []).filter((h) => h[2] != null).map((h) => [h[0], h[2]]);
+  if (edge != null) pts.push([Date.now() / 1000, edge]);
+  const tone = edge == null ? "" : edge > 0 ? "up" : edge < 0 ? "down" : "flat";
+  return (
+    <div className={`bot-edge ${tone}`} title="Your account now minus what it would be worth if nobody had traded: the cash and coins you had when this started, at today's prices. BTC and other price swings cancel out, so this is only what the bot's trades added or lost. Paying in or withdrawing money moves it too.">
+      <div className="edge-label">🤖 BOT'S OWN GAIN / LOSS</div>
+      <div className="edge-big">{edge == null ? "–" : <Ticking value={edge} signed />} <span className="unit">{cur}</span></div>
+      <div className="stat-sub">
+        {w.bot_edge_pct != null ? `${w.bot_edge_pct >= 0 ? "+" : ""}${w.bot_edge_pct.toFixed(2)}% · ` : ""}
+        vs doing nothing{w.bot_edge_since ? ` since ${new Date(w.bot_edge_since * 1000).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}
+      </div>
+      {pts.length > 1 && <div className="edge-spark"><LineChart series={[{ id: "e", color: edge >= 0 ? "var(--green)" : "var(--red)", bold: true, points: pts }]} baseline={0} height={54} /></div>}
+    </div>
+  );
+}
+
 function LiveWallet({ state, setFocus }) {
   const w = state.wallet;
   const caps = state.live_caps || {};
@@ -99,12 +143,13 @@ function LiveWallet({ state, setFocus }) {
       </div>
       <div className="wallet-top">
         <div className="wallet-total">
-          <div className="big">{total.toFixed(2)} <span>{cur}</span></div>
+          <div className="big"><Ticking value={total} /> <span className="unit">{cur}</span></div>
           <div className={`wallet-change ${pctColor(w.change)}`}>
             {sign(w.change)} {cur} ({sign(w.change_pct)}%) <span className="dim">since {w.start_ts ? new Date(w.start_ts * 1000).toLocaleDateString() : "start"}</span>
           </div>
           <div className={`stat-sub ${pctColor(w.change_24h)}`}>{sign(w.change_24h)} {cur} last 24h</div>
         </div>
+        <BotEdge w={w} cur={cur} />
         <div className="wallet-split">
           <div className="splitbar">
             <div className="seg-cash" style={{ width: part(w.fiat) }} title="cash" />

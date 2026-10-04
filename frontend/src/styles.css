@@ -400,9 +400,9 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
   .radar-view { grid-template-columns: 1fr; grid-template-areas: "stats" "scope" "list" "map"; }
 }
 
-.wallet-top { display: grid; grid-template-columns: minmax(200px, auto) 1fr; gap: 18px; align-items: center; }
+.wallet-top { display: grid; grid-template-columns: minmax(200px, auto) minmax(220px, auto) 1fr; gap: 18px; align-items: center; }
 .wallet-total .big { font-family: var(--display); font-size: 30px; color: #fff; text-shadow: 0 0 14px rgba(0,240,255,0.45); }
-.wallet-total .big span { font-size: 14px; color: var(--dim); }
+.wallet-total .big .unit { font-size: 14px; color: var(--dim); }
 .splitbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: rgba(255,255,255,0.05); margin-bottom: 6px; }
 .splitbar div { height: 100%; transition: width 0.6s; }
 .seg-cash { background: var(--cyan); } .seg-bot { background: var(--magenta); } .seg-own { background: var(--amber); }
@@ -410,6 +410,39 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .split-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
 .coin-own { border-color: rgba(255,176,32,0.5); }
 .coin-bot { border-color: rgba(255,43,214,0.6); }
-@media (max-width: 820px) { .wallet-top { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .wallet-top { grid-template-columns: 1fr 1fr; } .wallet-split { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .wallet-top { grid-template-columns: 1fr; } }
 .wallet-change { font-size: 15px; margin-top: 2px; }
 .wallet .wallet-total .big { font-size: 40px; }
+
+/* ---- bot's own gain / loss ---- */
+.bot-edge { position: relative; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: linear-gradient(135deg, rgba(0,240,255,0.06), rgba(255,43,214,0.05)); }
+.bot-edge::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.07) 50%, transparent 70%);
+  transform: translateX(-100%); animation: sheen 6s ease-in-out infinite; }
+.bot-edge.up { border-color: rgba(57,255,136,0.5); box-shadow: 0 0 18px rgba(57,255,136,0.15); }
+.bot-edge.down { border-color: rgba(255,59,92,0.5); box-shadow: 0 0 18px rgba(255,59,92,0.15); }
+.edge-label { font-size: 11px; letter-spacing: 0.18em; color: var(--dim); }
+.edge-big { font-family: var(--display); font-size: 40px; line-height: 1.1; color: #fff; }
+.edge-big .unit { font-size: 14px; color: var(--dim); }
+.bot-edge.up .edge-big { color: var(--green); text-shadow: 0 0 16px rgba(57,255,136,0.55); }
+.bot-edge.down .edge-big { color: var(--red); text-shadow: 0 0 16px rgba(255,59,92,0.55); }
+.edge-spark { margin-top: 4px; opacity: 0.9; }
+@keyframes sheen { 0%, 60% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+
+/* ---- motion ---- */
+.ticking { display: inline-block; transition: color 0.4s, text-shadow 0.4s; }
+.ticking.flash-up { color: var(--green) !important; text-shadow: 0 0 18px var(--green); animation: bump 0.5s ease-out; }
+.ticking.flash-down { color: var(--red) !important; text-shadow: 0 0 18px var(--red); animation: bump 0.5s ease-out; }
+@keyframes bump { 30% { transform: scale(1.06); } }
+.splitbar > div { background-size: 200% 100%; animation: flow 4s linear infinite; }
+.splitbar .seg-cash { background-image: linear-gradient(90deg, var(--cyan), #9ffcff, var(--cyan)); }
+.splitbar .seg-own { background-image: linear-gradient(90deg, var(--amber), #ffe39a, var(--amber)); }
+@keyframes flow { to { background-position: -200% 0; } }
+.panel { animation: rise 0.6s ease-out both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.wallet.is-live { animation: rise 0.6s ease-out both, livepulse 3s ease-in-out infinite; }
+@keyframes livepulse { 50% { box-shadow: 0 0 34px rgba(255,43,214,0.32); } }
+@media (prefers-reduced-motion: reduce) { .panel, .wallet.is-live, .splitbar > div, .bot-edge::after { animation: none; } }
+.edge-spark text { display: none; }

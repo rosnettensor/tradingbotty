@@ -288,3 +288,17 @@ def test_new_champion_takes_over_live_coins_instead_of_selling(tmp_path, monkeyp
     pos = new.broker.positions["BTC"]
     asyncio.run(e.execute(new, "BTC", "SELL", pos.qty, price, "its own exit", 1.0))
     assert f.sells and e.db.get("live_qty") == {}
+
+
+def test_bot_edge_ignores_coin_price_swings(tmp_path, monkeypatch):
+    monkeypatch.setenv("TB_SIMULATE", "1")
+    monkeypatch.setenv("TB_DB", str(tmp_path / "g.db"))
+    from tradingbotty.engine import Engine
+    e = Engine(load_settings())
+    t = e._track_account(130.0, 30.0, {"BTC": 0.001}, {"BTC": 100000.0})
+    assert t["bot_edge"] == 0 and t["bot_edge_since"]
+    t = e._track_account(140.0, 30.0, {"BTC": 0.001}, {"BTC": 110000.0})    # BTC up 10%, nobody traded
+    assert t["bot_edge"] == 0
+    # the bot sold the BTC at 110k and its new coin is now worth 120: +10 from trading
+    t = e._track_account(150.0, 30.0, {"SOL": 1.0}, {"BTC": 110000.0, "SOL": 120.0})
+    assert t["bot_edge"] == 10.0 and t["bot_edge_pct"] > 7
