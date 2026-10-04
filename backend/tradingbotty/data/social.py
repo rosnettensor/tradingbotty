@@ -8,6 +8,7 @@ import random
 import re
 import time
 import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field
 
 import httpx
@@ -48,6 +49,18 @@ ALIASES = {
 }
 # short tickers that are also common words only count in upper case ($DOT, DOT)
 CASE_SENSITIVE = {"dot", "link", "sol", "ada", "coin", "eth"}
+
+
+MAX_NEWS_AGE = 12 * 3600
+
+
+def parse_date(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return parsedate_to_datetime(value).timestamp()
+    except (TypeError, ValueError):
+        return None
 
 
 def mentions(text: str, symbols: list[str]) -> list[str]:
@@ -163,10 +176,14 @@ class SocialFeed:
                 for item in root.iter("item"):
                     title = (item.findtext("title") or "").strip()
                     link = (item.findtext("link") or title).strip()
-                    if not title or link in self._seen_links:
+                    key = re.sub(r"\W+", " ", title.lower()).strip()
+                    if not title or link in self._seen_links or key in self._seen_links:
                         continue
-                    self._seen_links.add(link)
-                    fresh.append(Headline(source, title, link, time.time(), mentions(title, self.symbols)))
+                    self._seen_links.update((link, key))
+                    published = parse_date(item.findtext("pubDate")) or time.time()
+                    if time.time() - published > MAX_NEWS_AGE:
+                        continue  # old news is already priced in
+                    fresh.append(Headline(source, title, link, published, mentions(title, self.symbols)))
                 ok = True
             except Exception as e:
                 self.log("News Hunter", "warn", f"{source} feed failed: {e}")

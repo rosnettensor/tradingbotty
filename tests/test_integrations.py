@@ -144,3 +144,20 @@ def test_professor_waits_for_data(tmp_path):
     prof.next_due = 0  # pretend warm-up is over
     asyncio.run(prof.step(Blackboard()))
     assert not calls and "waiting" in prof.summary
+
+
+def test_news_skips_stale_and_duplicate_headlines():
+    from email.utils import formatdate
+    from tradingbotty.data.social import SocialFeed
+
+    now, old = formatdate(time.time()), formatdate(time.time() - 3 * 86400)
+    rss = f"""<rss><channel>
+    <item><title>Bitcoin jumps 5%</title><link>a</link><pubDate>{now}</pubDate></item>
+    <item><title>Bitcoin jumps 5%!</title><link>b</link><pubDate>{now}</pubDate></item>
+    <item><title>Old Solana story</title><link>c</link><pubDate>{old}</pubDate></item>
+    </channel></rss>""".encode()
+    feed = SocialFeed(["BTC", "SOL"])
+    feed.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(200, content=rss)))
+    first = asyncio.run(feed.poll_news())
+    assert [h.title for h in first] == ["Bitcoin jumps 5%"]  # one copy, stale one dropped
+    assert asyncio.run(feed.poll_news()) == []  # nothing re-read on the next poll

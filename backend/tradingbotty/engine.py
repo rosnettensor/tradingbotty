@@ -65,6 +65,9 @@ class Engine:
         self.team = [CryptoAnalyst(self), MarketAnalyst(self), HypeScout(self), HypeDetective(self), NewsHunter(self),
                      Professor(self), Predictor(self), RiskOfficer(self), Buyer(self), Optimizer(self)]
         self._by_id = {a.id: a for a in self.sources + self.team}
+        # remember news across restarts so headlines aren't re-read (and re-paid for) after every restart
+        self.social._seen_links = set(self.db.get("news_seen", []))
+        self.bb.news_events = [e for e in self.db.get("news_events", []) if time.time() - e["ts"] < 24 * 3600]
         self._load_variants()
 
     # ------------------------------------------------------------------ state
@@ -319,11 +322,15 @@ class Engine:
     async def _poll_news(self) -> None:
         fresh = await self.social.poll_news()
         self.agent("news").queue(fresh)
+        self.db.set("news_seen", list(self.social._seen_links)[-3000:])
 
     async def tick(self) -> None:
+        before = len(self.bb.news_events) and self.bb.news_events[0]["ts"]
         for node in self.sources + self.team:
             await node.step(self.bb)
             self.bus.publish("node", node.node())
+        if self.bb.news_events and self.bb.news_events[0]["ts"] != before:
+            self.db.set("news_events", self.bb.news_events[:150])
         self.bus.publish("state", self.state(light=True))
 
     async def snapshot_equity(self) -> None:
