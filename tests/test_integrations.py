@@ -130,3 +130,17 @@ def test_reddit_rss_fallback():
     assert feed.healthy["reddit"]
     assert feed.mention_counts["SOL"] > 0 and feed.mention_counts["BTC"] > 0
     assert feed.trending == ["SOL"] and feed.fear_greed == 60
+
+
+def test_professor_waits_for_data(tmp_path):
+    from tradingbotty.agents.base import Blackboard
+    from tradingbotty.agents.team import Professor
+
+    calls = []
+    llm = SimpleNamespace(json_call=lambda *a, **k: calls.append(1))
+    ctx = SimpleNamespace(db=DB(tmp_path / "p.db"), llm=llm, bus=SimpleNamespace(publish=lambda *a: None),
+                          social=SimpleNamespace(fear_greed=None))
+    prof = Professor(ctx)
+    prof.next_due = 0  # pretend warm-up is over
+    asyncio.run(prof.step(Blackboard()))
+    assert not calls and "waiting" in prof.summary

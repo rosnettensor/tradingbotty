@@ -251,10 +251,13 @@ class Professor(Agent):
 
     def __init__(self, ctx):
         super().__init__(ctx)
-        self.next_due = 0.0
+        self.next_due = time.time() + 600  # let the feeds warm up first: a lecture on empty data wastes money
 
     async def run(self, bb: Blackboard) -> None:
         if time.time() < self.next_due:
+            return
+        if self.ctx.social.fear_greed is None or not bb.news_events or not bb.regime:
+            self.summary = "waiting for fresh market, news and sentiment data"
             return
         every = self.ctx.settings["engine"]["professor_every_minutes"] * 60
         self.next_due = time.time() + every
