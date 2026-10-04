@@ -33,7 +33,7 @@ slippage_pct = 0.05
 
 [live]
 broker = "fusion"              # "fusion" = Bitpanda Fusion order API (~0.25% fee), "bitpanda" = app quotes (~1.5%)
-currency = "EUR"               # the fiat wallet the bot trades from on Bitpanda (EUR or CHF)
+currency = "CHF"               # the fiat wallet the bot trades from on Bitpanda (CHF or EUR); only this cash is ever spent
 # Live mirrors the champion strategy: if the champion puts 20% of its equity into SOL, live does the same with live money.
 # Live trading also needs BITPANDA_FUSION_API_KEY (or BITPANDA_API_KEY for the app broker) in .env and the switch in the dashboard.
 fee_pct = 0.25                 # assumed cost per side on the live venue; check your own

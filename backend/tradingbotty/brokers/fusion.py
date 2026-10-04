@@ -104,11 +104,14 @@ class FusionBroker:
         step = float(p.get("amountIncrement") or 0.01)
         return await self._order({"pair": p["pair"], "side": "Buy", "type": "Market", "amount": _fmt(amount, step)})
 
-    async def sell_fraction(self, symbol: str, fraction: float) -> dict | None:
+    async def sell_fraction(self, symbol: str, fraction: float, owned: float | None = None) -> dict | None:
+        """Sell a fraction of what the bot owns. `owned` = the quantity the bot bought itself, so coins you held
+        before (or bought by hand) are never touched. None = fraction of the whole balance (tests only)."""
         p = self._pair(symbol)
         held = (await self.balances()).get(symbol.upper(), 0.0)
+        base = held if owned is None else min(held, max(0.0, owned))
         step = float(p.get("sizeIncrement") or 1e-8)
-        qty = _floor(held * max(0.0, min(1.0, fraction)), step)
+        qty = _floor(base * max(0.0, min(1.0, fraction)), step)
         if qty <= 0:
             return None  # nothing to sell, and never short
         return await self._order({"pair": p["pair"], "side": "Sell", "type": "Market", "quantity": _fmt(qty, step)})

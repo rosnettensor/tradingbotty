@@ -111,10 +111,12 @@ class BitpandaBroker:
             raise BitpandaError("not enough fiat for this buy")  # never borrow
         return await self._trade(symbol, "BUY", notional=fiat_amount)
 
-    async def sell_fraction(self, symbol: str, fraction: float) -> dict | None:
+    async def sell_fraction(self, symbol: str, fraction: float, owned: float | None = None) -> dict | None:
+        """Sell a fraction of what the bot owns (`owned`); coins you held yourself are never touched."""
         bal = await self.balances()
         held = bal.get(self.asset_ids.get(symbol.upper(), "?"), 0.0)
-        qty = held * max(0.0, min(1.0, fraction))
+        base = held if owned is None else min(held, max(0.0, owned))
+        qty = base * max(0.0, min(1.0, fraction))
         if qty <= 0:
             return None  # nothing to sell, and never short
         return await self._trade(symbol, "SELL", quantity=qty)

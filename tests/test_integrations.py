@@ -208,4 +208,51 @@ def test_fusion_buy_sell_flow():
             assert "minimum" in str(e)
         await b.sell_fraction("BTC", 1.0)
         assert sent[-1] == {"pair": "BTC-EUR", "side": "Sell", "type": "Market", "quantity": "0.00123"}
+        await b.sell_fraction("BTC", 1.0, owned=0.0002)  # the bot only bought 0.0002: your other BTC stays
+        assert sent[-1]["quantity"] == "0.00020"
+        n = len(sent)
+        assert await b.sell_fraction("BTC", 1.0, owned=0.0) is None and len(sent) == n
+    asyncio.run(run())
+
+
+def test_live_mirror_never_sells_your_own_coins():
+    from types import SimpleNamespace
+    from tradingbotty.engine import Engine
+
+    class FakeLive:
+        currency = "CHF"
+        def __init__(self):
+            self.bal = {"FIAT": 30.0, "BTC": 0.00345}  # 0.00345 BTC was yours before the bot
+            self.sells = []
+        async def balances(self):
+            return dict(self.bal)
+        async def buy(self, symbol, amount):
+            self.bal["FIAT"] -= amount
+            self.bal[symbol] = self.bal.get(symbol, 0) + 0.0001
+            return {"execution": {"quantity": 0.0001, "price": amount / 0.0001, "notional": amount, "fee": 0}}
+        async def sell_fraction(self, symbol, fraction, owned=None):
+            qty = min(self.bal.get(symbol, 0), owned) * fraction
+            self.sells.append(qty)
+            self.bal[symbol] -= qty
+            return {"execution": {"quantity": qty, "price": 1, "notional": qty, "fee": 0}}
+
+    store = {}
+    eng = Engine.__new__(Engine)
+    eng.live = FakeLive()
+    eng.live_errors = 0
+    eng.settings = {"risk": {"min_order_usd": 1}}
+    eng.db = SimpleNamespace(get=lambda k, d=None: store.get(k, d), set=store.__setitem__, execute=lambda *a: None)
+    eng.champion = lambda: SimpleNamespace(id="v1")
+    eng._log = lambda *a: None
+    eng.bus = SimpleNamespace(publish=lambda *a: None)
+
+    async def run():
+        await eng._mirror_live("BTC", "SELL", 1.0)  # bot owns no BTC yet: nothing sold
+        assert eng.live.sells == []
+        await eng._mirror_live("BTC", "BUY", 0.2)
+        await eng._mirror_live("BTC", "SELL", 1.0)
+        assert eng.live.sells == [0.0001]
+        assert abs(eng.live.bal["BTC"] - 0.00345) < 1e-12  # your own BTC untouched
+        await eng._mirror_live("BTC", "SELL", 1.0)
+        assert len(eng.live.sells) == 1
     asyncio.run(run())

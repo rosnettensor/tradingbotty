@@ -486,6 +486,10 @@ class Engine:
                 else:
                     await self._mirror_live(symbol, side, fraction)
 
+    def _live_held(self, bal: dict, symbol: str) -> float:
+        ids = getattr(self.live, "asset_ids", {})  # the app broker keys balances by asset id
+        return float(bal.get(symbol.upper(), bal.get(ids.get(symbol.upper(), "?"), 0.0)) or 0.0)
+
     async def _mirror_live(self, symbol: str, side: str, fraction: float) -> None:
         try:
             if side == "BUY":
@@ -495,14 +499,34 @@ class Engine:
                 amount = min(fiat, fraction * (fiat + invested))
                 if amount < self.settings["risk"]["min_order_usd"]:
                     return
+                before = self._live_held(bal, symbol)
                 res = await self.live.buy(symbol, amount)
+                got = float((res or {}).get("execution", {}).get("quantity", 0) or 0)
+                if got <= 0:  # venue didn't report the fill size: measure it from the balance
+                    got = max(0.0, self._live_held(await self.live.balances(), symbol) - before)
                 cost = self.db.get("live_cost", {})
                 cost[symbol] = cost.get(symbol, 0.0) + amount
                 self.db.set("live_cost", cost)
+                owned = self.db.get("live_qty", {})
+                owned[symbol] = owned.get(symbol, 0.0) + got
+                self.db.set("live_qty", owned)
             else:
-                res = await self.live.sell_fraction(symbol, fraction)
+                # Only ever sell what the bot bought itself: coins you already owned stay untouched.
+                owned = self.db.get("live_qty", {})
+                mine = owned.get(symbol, 0.0)
+                if mine <= 0:
+                    return
+                res = await self.live.sell_fraction(symbol, fraction, owned=mine)
+                sold = float((res or {}).get("execution", {}).get("quantity", 0) or 0)
+                left = mine - sold if fraction < 0.999 else 0.0
                 cost = self.db.get("live_cost", {})
-                cost.pop(symbol, None)
+                if left <= 1e-12:
+                    owned.pop(symbol, None)
+                    cost.pop(symbol, None)
+                else:
+                    owned[symbol] = left
+                    cost[symbol] = cost.get(symbol, 0.0) * left / mine
+                self.db.set("live_qty", owned)
                 self.db.set("live_cost", cost)
             if res:
                 ex = res.get("execution", {})
