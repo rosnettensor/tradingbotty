@@ -215,25 +215,26 @@ function Feed({ log }) {
   const shown = useMemo(() => log.filter((l) => filter === "all"
     || (filter === "trade" && (l.level === "trade" || l.level === "live"))
     || (filter === "ai" && ["News Hunter", "The Professor", "Optimizer"].includes(l.agent))
-    || (filter === "warn" && (l.level === "warn" || l.level === "error"))), [log, filter]);
+    || (filter === "warn" && (l.level === "warn" || l.level === "error"))).slice().reverse(), [log, filter]);
+  // newest on top: stay pinned to the top unless the reader scrolled down to read older lines
   useEffect(() => {
     const el = ref.current;
-    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 120) el.scrollTop = el.scrollHeight;
+    if (el && el.scrollTop < 120) el.scrollTop = 0;
   }, [shown.length]);
-  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [filter]);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = 0; }, [filter]);
   return (
     <>
       <div className="row-head">
-        <h3>AGENT FEED</h3>
+        <h3>AGENT FEED <span className="dim">· newest on top</span></h3>
         <Tabs value={filter} options={FEED_FILTERS} onChange={setFilter} />
       </div>
       <div className="feed" ref={ref}>
+        <div className="cursor">▋</div>
         {shown.map((l, i) => (
           <div key={i} className={`line ${l.level}`}>
             <span className="dim">{fmt.time(l.ts)}</span> <span className="who">{l.agent}</span> {l.message}
           </div>
         ))}
-        <div className="cursor">▋</div>
       </div>
     </>
   );
@@ -241,13 +242,13 @@ function Feed({ log }) {
 
 function News({ state, setFocus }) {
   const [tab, setTab] = useState("news");
-  const news = state.news || [];
+  const news = [...(state.news || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
   const hype = state.hype || {};
   const mentions = Object.entries(hype.mentions || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 8);
   return (
     <>
       <div className="row-head">
-        <h3>{tab === "news" ? "NEWS, RATED" : "SOCIAL BUZZ"}</h3>
+        <h3>{tab === "news" ? "NEWS, RATED" : "SOCIAL BUZZ"} <span className="dim">· newest on top</span></h3>
         <Tabs value={tab} options={[["news", "news"], ["hype", "buzz"]]} onChange={setTab} />
       </div>
       <div className="scroll" style={{ maxHeight: 330 }}>
