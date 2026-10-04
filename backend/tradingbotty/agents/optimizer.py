@@ -53,7 +53,8 @@ class Optimizer(Agent):
 
     async def evolve(self, board: list[dict]) -> None:
         c = self.cfg
-        mature = [b for b in board if b["age_h"] >= c["min_age_to_judge_h"]]
+        # the buy & hold benchmark is the yardstick: never bred from, never retired
+        mature = [b for b in board if b["age_h"] >= c["min_age_to_judge_h"] and not b.get("benchmark")]
         champ = next((b for b in board if b["champion"]), None)
 
         # retire the weakest mature non-champion when the lab is full
@@ -66,7 +67,7 @@ class Optimizer(Agent):
             self.say(f"Retired {worst['name']} ({worst['return_pct']:+.2f}% after {worst['age_h']:.0f}h).")
 
         # breed: mutate the best mature variant (or the champion while nothing is mature yet)
-        parent = max(mature, key=lambda b: b["fitness"], default=champ)
+        parent = max(mature, key=lambda b: b["fitness"], default=None if champ and champ.get("benchmark") else champ)
         if parent and len(self.ctx.variants) < c["max_variants"]:
             pv = self.ctx.variants[parent["id"]]
             child, note = await self._screened_child(pv)
@@ -76,7 +77,7 @@ class Optimizer(Agent):
         # promotion
         if champ:
             rivals = [b for b in board if not b["champion"] and b["age_h"] >= c["min_age_to_promote_h"]
-                      and b["id"] in self.ctx.variants]
+                      and b["id"] in self.ctx.variants and not b.get("benchmark")]
             best = max(rivals, key=lambda b: b["fitness"], default=None)
             if best and best["fitness"] > champ["fitness"] + PROMOTE_MARGIN_PCT:
                 if self.ctx.db.get("auto_promote", False):

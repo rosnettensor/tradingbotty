@@ -17,9 +17,11 @@ CONTROLS = [
      "group": "Risk limits", "help": "This much cash is never invested."},
     # ---- costs
     {"key": "paper.fee_pct", "label": "Crypto fee per trade (%)", "min": 0, "max": 3, "step": 0.05,
-     "group": "Costs", "help": "Paper fee for each buy and each sell. 1.5 matches the Bitpanda app; about 0.1 matches Bitpanda Fusion."},
+     "group": "Costs", "help": "Paper fee for each buy and each sell. 0.25 = Bitpanda Fusion, 0.4-0.8 = Kraken Pro, 1.5 = Bitpanda app."},
     {"key": "paper.stock_fee_pct", "label": "Stock fee per trade (%)", "min": 0, "max": 2, "step": 0.05,
      "group": "Costs", "help": "Paper fee for stocks. About 0.05 to 0.1 matches a cheap broker like Interactive Brokers."},
+    {"key": "paper.stock_min_fee_usd", "label": "Minimum stock fee per trade (USD)", "min": 0, "max": 10, "step": 0.05,
+     "group": "Costs", "help": "Brokers charge a minimum per order (Interactive Brokers: about 0.35 USD in the US, 1.5 CHF on SIX). On tiny orders this matters more than the percentage."},
     {"key": "paper.slippage_pct", "label": "Slippage (%)", "min": 0, "max": 1, "step": 0.01,
      "group": "Costs", "help": "How much worse than the quoted price each order fills."},
     # ---- speed
@@ -53,7 +55,8 @@ CONTROLS = [
 ]
 
 DEFAULTS = {
-    "paper.stock_fee_pct": 0.1,
+    "paper.stock_fee_pct": 0.05,
+    "paper.stock_min_fee_usd": 1.0,
     "ai.news_ai": True,
     "ai.professor_on": True,
     "optimizer.max_variants": 8,

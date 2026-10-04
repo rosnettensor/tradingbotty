@@ -1,4 +1,6 @@
-"""Live prices. Crypto from Kraken's free public API, US stocks from Yahoo's public chart API.
+"""Live prices. Crypto from Kraken's free public API, stocks (US, Swiss, German, ...) from Yahoo's public chart API.
+
+All prices are kept in USD: Swiss and European stocks are converted at the live exchange rate.
 
 Everything here is real market data. Simulation mode (TB_SIMULATE=1) swaps in random-walk prices,
 only for offline tests and demos; the dashboard shows a SIMULATED badge when it's on.
@@ -23,20 +25,45 @@ UA = {"User-Agent": "Mozilla/5.0 TradingBotty/0.1"}
 KRAKEN_PAIR = {"BTC": "XBTUSD", "DOGE": "XDGUSD"}
 
 
-try:
-    from zoneinfo import ZoneInfo
-    NEW_YORK = ZoneInfo("America/New_York")
-except Exception:  # no tz database: fall back to US daylight time
-    NEW_YORK = timezone(timedelta(hours=-4))
+def _tz(name: str, fallback_hours: int):
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:  # no tz database: fixed summer-time offset
+        return timezone(timedelta(hours=fallback_hours))
+
+
+NEW_YORK = _tz("America/New_York", -4)
+# Yahoo ticker suffix -> (exchange name, time zone, open minute, close minute)
+EXCHANGES = {
+    "": ("US", NEW_YORK, 9 * 60 + 30, 16 * 60),
+    ".SW": ("SIX Swiss", _tz("Europe/Zurich", 2), 9 * 60, 17 * 60 + 30),
+    ".DE": ("Xetra", _tz("Europe/Berlin", 2), 9 * 60, 17 * 60 + 30),
+    ".F": ("Frankfurt", _tz("Europe/Berlin", 2), 8 * 60, 22 * 60),
+    ".PA": ("Euronext Paris", _tz("Europe/Paris", 2), 9 * 60, 17 * 60 + 30),
+    ".AS": ("Euronext Amsterdam", _tz("Europe/Amsterdam", 2), 9 * 60, 17 * 60 + 30),
+    ".MI": ("Borsa Italiana", _tz("Europe/Rome", 2), 9 * 60, 17 * 60 + 30),
+    ".MC": ("Madrid", _tz("Europe/Madrid", 2), 9 * 60, 17 * 60 + 30),
+    ".L": ("London", _tz("Europe/London", 1), 8 * 60, 16 * 60 + 30),
+}
+
+
+def exchange_of(symbol: str) -> tuple:
+    suffix = "." + symbol.rsplit(".", 1)[1] if "." in symbol else ""
+    return EXCHANGES.get(suffix, EXCHANGES[""])
+
+
+def market_open(symbol: str = "SPY", ts: float | None = None) -> bool:
+    """Regular session of the symbol's exchange, Monday to Friday. Holidays are caught by the stale-price check."""
+    _, tz, start, end = exchange_of(symbol)
+    t = datetime.fromtimestamp(ts or time.time(), tz)
+    if t.weekday() >= 5:
+        return False
+    return start <= t.hour * 60 + t.minute < end
 
 
 def us_market_open(ts: float | None = None) -> bool:
-    """Regular US session, Monday to Friday 9:30-16:00 New York time. Holidays are caught by the stale-price check."""
-    t = datetime.fromtimestamp(ts or time.time(), NEW_YORK)
-    if t.weekday() >= 5:
-        return False
-    minutes = t.hour * 60 + t.minute
-    return 9 * 60 + 30 <= minutes < 16 * 60
+    return market_open("SPY", ts)
 
 
 def kraken_pair(symbol: str) -> str:
@@ -60,6 +87,8 @@ class Quote:
     # 1-minute closes, newest last
     candles: deque = field(default_factory=lambda: deque(maxlen=1440))
     always_open: bool = False     # simulation only: stocks trade around the clock
+    # hourly closes for the multi-day trend signal (about 40 days)
+    hourly: deque = field(default_factory=lambda: deque(maxlen=24 * 40))
 
     def push(self, ts: float, price: float) -> None:
         minute = int(ts // 60) * 60
@@ -67,8 +96,25 @@ class Quote:
             self.candles[-1] = (minute, price)
         else:
             self.candles.append((minute, price))
+        hour = int(ts // 3600) * 3600
+        if self.hourly and self.hourly[-1][0] == hour:
+            self.hourly[-1] = (hour, price)
+        elif not self.hourly or self.hourly[-1][0] < hour:
+            self.hourly.append((hour, price))
         self.price = price
         self.updated = ts
+
+    def hourly_closes(self) -> list[float]:
+        return [c[1] for c in self.hourly]
+
+    def merge_hourly(self, rows: list[tuple[float, float]]) -> None:
+        merged = {int(ts // 3600 * 3600): c for ts, c in rows if c}
+        merged.update(dict(self.hourly))
+        self.hourly = deque(sorted(merged.items())[-self.hourly.maxlen:], maxlen=self.hourly.maxlen)
+
+    @property
+    def exchange(self) -> str:
+        return "Crypto 24/7" if self.kind == "crypto" else exchange_of(self.symbol)[0]
 
     def closes(self) -> list[float]:
         return [c[1] for c in self.candles]
@@ -84,10 +130,10 @@ class Quote:
 
     @property
     def tradable(self) -> bool:
-        """Crypto trades 24/7. Stocks only in the US session, and only with a fresh price."""
+        """Crypto trades 24/7. Stocks only in their exchange's session, and only with a fresh price."""
         if self.kind == "crypto":
             return self.price > 0
-        return self.always_open or (us_market_open() and time.time() - self.updated < 600)
+        return self.always_open or (market_open(self.symbol) and time.time() - self.updated < 600)
 
 
 class PriceFeed:
@@ -99,6 +145,7 @@ class PriceFeed:
         self.healthy = {"crypto": False, "stock": False}
         self.client = httpx.AsyncClient(timeout=10, headers=UA)
         self._sim_state: dict[str, float] = {}
+        self.fx: dict[str, float] = {"USD": 1.0}  # currency -> USD per unit
 
     def crypto(self) -> list[Quote]:
         return [q for q in self.quotes.values() if q.kind == "crypto"]
@@ -122,12 +169,51 @@ class PriceFeed:
                 self.log("Data", "warn", f"No history for {q.symbol}: {e}")
             await asyncio.sleep(1.1)  # Kraken public rate limit
         await self.poll_stocks("5d")
+        await self.poll_hourly()
 
-    async def _backfill_crypto(self, q: Quote) -> None:
-        r = await self.client.get(f"{KRAKEN}/OHLC", params={"pair": kraken_pair(q.symbol), "interval": 1})
+    async def _kraken_ohlc(self, symbol: str, interval: int) -> list[tuple[float, float]]:
+        r = await self.client.get(f"{KRAKEN}/OHLC", params={"pair": kraken_pair(symbol), "interval": interval})
         result = r.json().get("result", {})
         rows = next((v for k, v in result.items() if k != "last"), [])
-        q.merge([(float(row[0]), float(row[4])) for row in rows])
+        return [(float(row[0]), float(row[4])) for row in rows]
+
+    async def _backfill_crypto(self, q: Quote) -> None:
+        q.merge(await self._kraken_ohlc(q.symbol, 1))
+
+    async def poll_hourly(self) -> None:
+        """30+ days of hourly closes for the multi-day trend signal. Runs at start and every few hours."""
+        if self.simulate:
+            return
+        for q in list(self.quotes.values()):
+            try:
+                if q.kind == "crypto":
+                    q.merge_hourly(await self._kraken_ohlc(q.symbol, 60))
+                    await asyncio.sleep(1.1)
+                else:
+                    r = await self.client.get(f"{YAHOO}/{q.symbol}", params={"interval": "60m", "range": "2mo"})
+                    res = r.json()["chart"]["result"][0]
+                    rate = await self._usd_rate(res["meta"].get("currency", "USD"))
+                    closes = (res.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
+                    q.merge_hourly([(float(t), float(c) * rate) for t, c in zip(res.get("timestamp") or [], closes) if c])
+            except Exception as e:
+                self.log("Data", "warn", f"No hourly history for {q.symbol}: {e}")
+
+    async def _usd_rate(self, currency: str) -> float:
+        """USD per unit of `currency` (GBp = pence). Cached for 10 minutes."""
+        cur = currency or "USD"
+        scale = 0.01 if cur in ("GBp", "GBX") else 1.0
+        cur = "GBP" if scale != 1.0 else cur.upper()
+        if cur == "USD":
+            return scale
+        cached = self.fx.get(cur)
+        if cached and time.time() - self.fx.get(f"{cur}_ts", 0) < 600:
+            return cached * scale
+        r = await self.client.get(f"{YAHOO}/{cur}USD=X", params={"interval": "1d", "range": "5d"})
+        rate = float(r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"])
+        if not rate:
+            raise RuntimeError(f"no exchange rate for {cur}")
+        self.fx[cur], self.fx[f"{cur}_ts"] = rate, time.time()
+        return rate * scale
 
     # ---------- live polling ----------
     async def poll_crypto(self) -> None:
@@ -173,11 +259,12 @@ class PriceFeed:
         r = await self.client.get(f"{YAHOO}/{q.symbol}", params={"interval": "1m", "range": history})
         res = r.json()["chart"]["result"][0]
         meta = res["meta"]
+        rate = await self._usd_rate(meta.get("currency", "USD"))  # Swiss/European stocks: convert to USD
         ts = res.get("timestamp") or []
         closes = (res.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
-        q.merge([(float(t), float(c)) for t, c in zip(ts, closes) if c is not None])
-        price = float(meta.get("regularMarketPrice") or q.price)
-        prev = float(meta.get("chartPreviousClose") or meta.get("previousClose") or price)
+        q.merge([(float(t), float(c) * rate) for t, c in zip(ts, closes) if c is not None])
+        price = float(meta.get("regularMarketPrice") or 0) * rate or q.price
+        prev = float(meta.get("chartPreviousClose") or meta.get("previousClose") or 0) * rate or price
         q.change_24h_pct = (price - prev) / prev * 100 if prev else 0.0
         # stamp the price with the exchange's own trade time, so a closed market doesn't look fresh
         q.push(float(meta.get("regularMarketTime") or time.time()), price)
@@ -209,6 +296,7 @@ class PriceFeed:
         try:
             if kind == "crypto":
                 await self._backfill_crypto(q)
+                q.merge_hourly(await self._kraken_ohlc(symbol, 60))
             else:
                 await self._poll_stock(q, "5d")
         except Exception as e:
@@ -223,6 +311,12 @@ class PriceFeed:
         for q in quotes or list(self.quotes.values()):
             base = {"BTC": 62000, "ETH": 2500, "SOL": 140, "SPY": 570, "NVDA": 120}.get(q.symbol, random.uniform(0.5, 300))
             p = base
+            hourly, hp = [], p
+            for i in range(24 * 30, 0, -1):
+                hp *= math.exp(random.gauss(0.0002, 0.012 if q.kind == "crypto" else 0.004))
+                hourly.append((now - 86400 - i * 3600, hp))
+            q.merge_hourly(hourly)
+            p = hp
             for i in range(1440, 0, -1):
                 p *= math.exp(random.gauss(0, 0.002 if q.kind == "crypto" else 0.0006))
                 q.push(now - i * 60, p)

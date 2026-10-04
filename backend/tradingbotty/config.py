@@ -26,6 +26,7 @@ class Settings:
     raw: dict
     anthropic_api_key: str | None = None
     bitpanda_api_key: str | None = None
+    fusion_api_key: str | None = None
     simulate: bool = False  # offline mode: synthetic prices, for tests and demos
     db_path: Path = field(default_factory=lambda: DATA_DIR / "tradingbotty.db")
 
@@ -42,6 +43,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
         raw=raw,
         anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
         bitpanda_api_key=os.environ.get("BITPANDA_API_KEY") or None,
+        fusion_api_key=os.environ.get("BITPANDA_FUSION_API_KEY") or None,
         simulate=os.environ.get("TB_SIMULATE", "0") == "1",
         db_path=Path(os.environ.get("TB_DB", DATA_DIR / "tradingbotty.db")),
     )

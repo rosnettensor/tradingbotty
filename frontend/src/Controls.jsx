@@ -16,6 +16,8 @@ export default function Controls({ state }) {
   );
 }
 
+const FEE_PRESETS = [["Bitpanda Fusion", 0.25], ["Kraken Pro", 0.8], ["Bitpanda app", 1.5]];
+
 function groupBy(list, key) {
   const out = {};
   for (const x of list) (out[x[key]] ||= []).push(x);
@@ -37,6 +39,15 @@ function BotSettings() {
       {Object.entries(groups).map(([g, items]) => (
         <div key={g} className="group">
           <h4>{g.toUpperCase()}</h4>
+          {g === "Costs" && (
+            <div className="presets">
+              <span className="dim small">crypto fee preset:</span>
+              {FEE_PRESETS.map(([label, v]) => (
+                <button key={label} className={`mini ${items.find((c) => c.key === "paper.fee_pct")?.value === v ? "on" : ""}`}
+                  onClick={() => set("paper.fee_pct", v)}>{label} {v}%</button>
+              ))}
+            </div>
+          )}
           {items.map((c) => c.bool
             ? <Toggle key={c.key} label={c.label} help={c.help} checked={!!c.value} onChange={(v) => set(c.key, v)} />
             : <Slider key={c.key} {...c} value={c.value} onCommit={(v) => set(c.key, v)} onReset={() => set(c.key, null)} />)}
@@ -131,7 +142,7 @@ function Explainer({ state }) {
         <dt>What it believes</dt>
         <dd>The <b>signal weights</b>. A weight of 0 ignores a signal; a negative weight bets against it.</dd>
         <dt>The hard truth</dt>
-        <dd>With a 1.5% fee per side, a trade must gain about 3% just to break even. Try the fee slider and the backtester to see how much cheaper trading (Bitpanda Fusion) would change things.</dd>
+        <dd>Every trade pays the fee twice (buy and sell). At the Bitpanda app's 1.5% a trade must gain about 3% just to break even; on Bitpanda Fusion (0.25%) about 0.5%. A strategy only earns its keep if it beats the <b>Buy & Hold</b> yardstick in the Lab after fees.</dd>
       </dl>
     </section>
   );
@@ -147,8 +158,8 @@ function Sources() {
       <h3>SOURCES <span className="dim">· every addition is tested before it's used</span></h3>
       <h4>COINS (KRAKEN)</h4>
       <ChipList items={s.crypto} locked={s.held} onAdd={add("crypto")} onRemove={remove("crypto")} placeholder="ticker, e.g. ARB" />
-      <h4>STOCKS & ETFS (YAHOO)</h4>
-      <ChipList items={s.stocks} locked={s.held} onAdd={add("stocks")} onRemove={remove("stocks")} placeholder="ticker, e.g. PLTR" />
+      <h4>STOCKS & ETFS (YAHOO · SWISS .SW · GERMAN .DE)</h4>
+      <ChipList items={s.stocks} locked={s.held} onAdd={add("stocks")} onRemove={remove("stocks")} placeholder="e.g. PLTR, ROG.SW, SIE.DE" />
       <h4>SUBREDDITS</h4>
       <ChipList items={s.subreddits} status={s.status} statusKey={(x) => `r/${x}`} onAdd={add("subreddits")} onRemove={remove("subreddits")} placeholder="e.g. Bitcoin" />
       <h4>NEWS FEEDS (RSS)</h4>

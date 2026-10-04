@@ -1,24 +1,27 @@
-"""Checks your Bitpanda API key without trading: `python -m tradingbotty.live_check` from backend/."""
+"""Checks your live trading key without trading: `python run.py --check-live`."""
 import asyncio
 
-from .brokers.bitpanda import BitpandaBroker
 from .config import load_settings
+from .engine import make_live_broker
 
 
 async def main() -> None:
     s = load_settings()
-    if not s.bitpanda_api_key:
-        print("No BITPANDA_API_KEY in .env")
+    try:
+        b = make_live_broker(s)
+    except ValueError as e:
+        print(e)
         return
-    b = BitpandaBroker(s.bitpanda_api_key, s["live"]["currency"])
     info = await b.connect()
-    print(f"Connected. {info['assets']} assets, {s['live']['currency']} id {info['currency_id']}")
+    cur = s["live"]["currency"]
+    print(f"Connected to {b.name}. {info['assets']} tradable assets in {cur}.")
+    known = getattr(b, "pairs", None) or getattr(b, "asset_ids", {})
     wanted = s["markets"]["crypto"]
-    print("Tradable from our list:", [c for c in wanted if c in b.asset_ids])
-    print("Missing:", [c for c in wanted if c not in b.asset_ids])
+    print("Tradable from our list:", [c for c in wanted if c in known])
+    print("Missing:", [c for c in wanted if c not in known])
     bal = await b.balances()
-    print(f"Fiat available: {bal.get('FIAT', 0):.2f} {s['live']['currency']}")
-    held = {sym: bal[aid] for sym, aid in b.asset_ids.items() if bal.get(aid)}
+    print(f"Fiat available: {bal.get('FIAT', 0):.2f} {cur}")
+    held = {k: v for k, v in bal.items() if v and k not in ("FIAT", cur)}
     print("Holdings:", held or "none")
 
 

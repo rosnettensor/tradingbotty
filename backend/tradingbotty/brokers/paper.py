@@ -39,12 +39,15 @@ class PaperBroker:
     def equity(self, prices: dict[str, float]) -> float:
         return self.cash + sum(p.value(prices.get(s, p.avg_price)) for s, p in self.positions.items())
 
-    def buy(self, symbol: str, usd: float, price: float, fee_pct: float | None = None, now: float | None = None) -> Fill:
+    def buy(self, symbol: str, usd: float, price: float, fee_pct: float | None = None, now: float | None = None,
+            min_fee: float = 0.0) -> Fill:
         # Spend at most the cash we have. No borrowing: this is the "never owe money" rule at the broker level.
         if usd <= 0 or usd > self.cash + 1e-9:
             raise ValueError(f"buy {usd:.2f} exceeds cash {self.cash:.2f}")
         exec_price = price * (1 + self.slippage_pct / 100)
-        fee = usd * (self.fee_pct if fee_pct is None else fee_pct) / 100
+        fee = max(usd * (self.fee_pct if fee_pct is None else fee_pct) / 100, min_fee)
+        if fee >= usd:
+            raise ValueError(f"fee {fee:.2f} would eat the whole {usd:.2f} order")
         qty = (usd - fee) / exec_price
         cost_per_unit = usd / qty  # cost basis includes the buy fee, so P&L is honest
         self.cash -= usd
@@ -57,14 +60,15 @@ class PaperBroker:
             self.positions[symbol] = Position(symbol, qty, cost_per_unit, now or time.time(), price)
         return Fill(symbol, "BUY", qty, exec_price, usd, fee)
 
-    def sell(self, symbol: str, qty: float, price: float, fee_pct: float | None = None, now: float | None = None) -> Fill:
+    def sell(self, symbol: str, qty: float, price: float, fee_pct: float | None = None, now: float | None = None,
+             min_fee: float = 0.0) -> Fill:
         pos = self.positions.get(symbol)
         if not pos or qty <= 0 or qty > pos.qty * (1 + 1e-9):
             raise ValueError(f"can't sell {qty} {symbol}: not held")  # no short selling, ever
         qty = min(qty, pos.qty)
         exec_price = price * (1 - self.slippage_pct / 100)
         gross = qty * exec_price
-        fee = gross * (self.fee_pct if fee_pct is None else fee_pct) / 100
+        fee = min(gross, max(gross * (self.fee_pct if fee_pct is None else fee_pct) / 100, min_fee))
         # avg_price already includes the buy fee
         pnl = gross - fee - qty * pos.avg_price
         self.cash += gross - fee

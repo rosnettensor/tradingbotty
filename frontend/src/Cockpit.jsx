@@ -85,8 +85,9 @@ function StatStrip({ state, ret }) {
       <Stat label="Fear & Greed" value={r.fear_greed ?? "…"} sub={r.fear_greed_label} />
       <Stat label="Risk appetite" value={state.risk_appetite?.toFixed(2)} sub={nextProf == null ? "" : `Professor in ${nextProf}m`}
         title="Set by the Professor: scales every position size (0.5 defensive to 1.5 aggressive)" />
-      <Stat label="US stocks" value={state.us_market_open ? "OPEN" : "CLOSED"} tone={state.us_market_open ? "up" : "dim"}
-        sub="9:30–16:00 New York" />
+      <Stat label="Stock markets" value={Object.entries(state.markets_open || {}).filter(([k, v]) => v && k !== "Crypto").map(([k]) => k).join(", ") || "all closed"}
+        tone={Object.entries(state.markets_open || {}).some(([k, v]) => v && k !== "Crypto") ? "up" : "dim"}
+        sub="crypto trades 24/7" title={Object.entries(state.markets_open || {}).map(([k, v]) => `${k}: ${v ? "open" : "closed"}`).join("\n")} />
     </section>
   );
 }

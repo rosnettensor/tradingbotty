@@ -14,10 +14,11 @@ from .agents.optimizer import Optimizer
 from .agents.team import (Buyer, CryptoAnalyst, HypeDetective, HypeScout, MarketAnalyst, NewsHunter, Predictor,
                           Professor, RiskOfficer)
 from .brokers.bitpanda import BitpandaBroker
+from .brokers.fusion import FusionBroker
 from .brokers.paper import PaperBroker, Position
 from .bus import Bus
 from .config import Settings
-from .data.prices import PriceFeed, us_market_open
+from .data.prices import PriceFeed, market_open, us_market_open
 from .data.social import SocialFeed
 from .db import DB
 from .llm import LLM, Budget
@@ -25,6 +26,21 @@ from .strategy import SEED_VARIANTS, STRATEGY_FIELDS, StrategyConfig
 
 HISTORY_DAYS = 7
 MAX_WATCHLIST = 25
+
+
+def make_live_broker(settings: Settings):
+    """The live venue from config.toml [live] broker: "fusion" (Bitpanda Fusion, ~0.25% fees) or "bitpanda" (app quotes)."""
+    kind = settings["live"].get("broker", "fusion")
+    currency = settings["live"]["currency"]
+    if kind == "fusion":
+        if not settings.fusion_api_key:
+            raise ValueError("Add BITPANDA_FUSION_API_KEY to .env and restart first.")
+        return FusionBroker(settings.fusion_api_key, currency)
+    if kind == "bitpanda":
+        if not settings.bitpanda_api_key:
+            raise ValueError("Add BITPANDA_API_KEY to .env and restart first.")
+        return BitpandaBroker(settings.bitpanda_api_key, currency)
+    raise ValueError(f"unknown live broker {kind!r} in config.toml")
 
 
 @dataclass
@@ -65,7 +81,7 @@ class Engine:
         self.llm = LLM(settings.anthropic_api_key, self.budget, self.db, ab["fast_model"], ab["deep_model"])
         self.bb = Blackboard()
         self.variants: dict[str, Variant] = {}
-        self.live: BitpandaBroker | None = None
+        self.live: FusionBroker | BitpandaBroker | None = None
         self.live_errors = 0
         self._last_said: dict[str, float] = {}
         self.started = time.time()
@@ -307,7 +323,9 @@ class Engine:
             have = {int(ts) for ts, _ in series[q.symbol]}
             series[q.symbol] = sorted(series[q.symbol] + [(ts, c) for ts, c in q.candles if ts >= since and int(ts) not in have])
         kinds = {s: q.kind for s, q in self.prices.quotes.items()}
-        ds = backtest.build_dataset(series, kinds, hours, step=1 if hours <= 12 else 2 if hours <= 48 else 4)
+        hourly = {s: list(q.hourly) for s, q in self.prices.quotes.items()}
+        ds = backtest.build_dataset(series, kinds, hours, step=1 if hours <= 12 else 2 if hours <= 48 else 4,
+                                    hourly=hourly)
         if not ds:
             raise ValueError("not enough price history yet: let the bot run a little longer")
         self._dataset = (time.time(), hours, ds)
@@ -430,6 +448,7 @@ class Engine:
                 "max_drawdown_pct": round(dd, 2), "fitness": round(ret - 0.5 * dd, 2), "trades": t["n"],
                 "fees": round(t["fees"], 2), "win_rate": round((t["wins"] or 0) / t["sells"] * 100, 1) if t["sells"] else None,
                 "age_h": round((time.time() - v.created) / 3600, 1), "config": v.config.to_dict(),
+                "benchmark": v.config.hold,
                 "positions": len(v.broker.positions),
             })
         return sorted(out, key=lambda b: -b["fitness"])
@@ -441,10 +460,12 @@ class Engine:
         b = v.broker
         q = self.prices.quotes.get(symbol)
         is_stock = bool(q and q.kind == "stock")
-        fee = self.settings["paper"]["stock_fee_pct"] if is_stock else self.settings["paper"]["fee_pct"]
+        paper = self.settings["paper"]
+        fee = paper["stock_fee_pct"] if is_stock else paper["fee_pct"]
+        min_fee = paper["stock_min_fee_usd"] if is_stock else 0.0
         try:
-            fill = (b.buy(symbol, amount, price, fee_pct=fee) if side == "BUY"
-                    else b.sell(symbol, amount, price, fee_pct=fee))
+            fill = (b.buy(symbol, amount, price, fee_pct=fee, min_fee=min_fee) if side == "BUY"
+                    else b.sell(symbol, amount, price, fee_pct=fee, min_fee=min_fee))
         except ValueError as e:
             self._log("Risk Officer", "warn", f"Refused {v.name} {side} {symbol}: {e}")
             return
@@ -507,10 +528,11 @@ class Engine:
             return {"ok": True, "mode": "paper"}
         if mode != "live":
             return {"ok": False, "error": "unknown mode"}
-        if not self.settings.bitpanda_api_key:
-            return {"ok": False, "error": "Add BITPANDA_API_KEY to .env and restart first."}
         try:
-            self.live = BitpandaBroker(self.settings.bitpanda_api_key, self.settings["live"]["currency"])
+            self.live = make_live_broker(self.settings)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        try:
             info = await self.live.connect()
             bal = await self.live.balances()
         except Exception as e:
@@ -518,7 +540,7 @@ class Engine:
             return {"ok": False, "error": f"Bitpanda connection failed: {e}"}
         self.db.set("mode", "live")
         self.live_errors = 0
-        self._log("Risk Officer", "live", f"LIVE trading ON. {bal.get('FIAT', 0):.2f} {self.live.currency} available, "
+        self._log("Risk Officer", "live", f"LIVE trading ON via {self.live.name}. {bal.get('FIAT', 0):.2f} {self.live.currency} available, "
                                           f"{info['assets']} assets. The champion's next trades use real money.")
         return {"ok": True, "mode": "live", "fiat": bal.get("FIAT", 0)}
 
@@ -540,6 +562,7 @@ class Engine:
         await asyncio.gather(
             self._every(lambda: e["price_poll_seconds"], self.prices.poll_crypto),
             self._every(lambda: e["stock_poll_seconds"], self.prices.poll_stocks),
+            self._every(lambda: 4 * 3600, self._poll_hourly),
             self._every(lambda: e["hype_poll_seconds"], self.social.poll_hype),
             self._every(lambda: e["news_poll_seconds"], self._poll_news),
             self._every(lambda: e["tick_seconds"], self.tick),
@@ -557,6 +580,10 @@ class Engine:
             # sleep in short slices so a shorter interval set in the dashboard takes effect quickly
             while time.time() - started < seconds():
                 await asyncio.sleep(min(1.0, max(0.05, seconds() - (time.time() - started))))
+
+    async def _poll_hourly(self) -> None:
+        if time.time() - self.started > 600:  # the boot backfill already loaded it
+            await self.prices.poll_hourly()
 
     async def _poll_news(self) -> None:
         fresh = await self.social.poll_news()
@@ -611,6 +638,7 @@ class Engine:
             "why_not": self.agent("buyer").detail.get("why_not", {}),
             "avoid": sorted(self.bb.avoid),
             "us_market_open": us_market_open(),
+            "markets_open": self.markets_open(),
             "stats": self.champion_stats(champ),
             "news": [{k: e.get(k) for k in ("ts", "source", "title", "link", "symbols", "sentiment", "impact", "event", "ai")}
                      for e in self.bb.news_events[:25]],
@@ -626,6 +654,13 @@ class Engine:
             s["log"] = self.db.query("SELECT ts,agent,level,message FROM agent_log ORDER BY id DESC LIMIT 150")[::-1]
             s["trades"] = self.recent_trades()
         return s
+
+    def markets_open(self) -> dict:
+        """Open/closed per stock exchange on the watchlist, plus crypto."""
+        out = {"Crypto": True}
+        for q in self.prices.stocks():
+            out[q.exchange] = market_open(q.symbol)
+        return out
 
     def champion_stats(self, champ) -> dict:
         if not champ:

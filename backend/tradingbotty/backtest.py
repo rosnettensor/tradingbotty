@@ -10,7 +10,9 @@ from dataclasses import dataclass, field
 
 from .brokers.paper import PaperBroker
 from .decisions import blend, entry_blocker, exit_reason, expected_move, risk_check
-from .strategy import StrategyConfig, technical_signals
+import bisect
+
+from .strategy import StrategyConfig, swing_signal, technical_signals
 
 LOOKBACK_MIN = 240  # indicator warm-up before the tested window starts
 
@@ -24,6 +26,7 @@ class Dataset:
     start_index: int                          # first minute that is traded (after warm-up)
     signals: dict[int, dict[str, dict]] = field(default_factory=dict)  # step index -> symbol -> signals
     step: int = 2
+    hourly: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
 
     @property
     def hours(self) -> float:
@@ -31,7 +34,7 @@ class Dataset:
 
 
 def build_dataset(series: dict[str, list[tuple[float, float]]], kinds: dict[str, str], hours: float,
-                  step: int = 2) -> Dataset | None:
+                  step: int = 2, hourly: dict[str, list[tuple[float, float]]] | None = None) -> Dataset | None:
     """series: symbol -> [(ts, close)] of 1-minute candles."""
     crypto_ends = [s[-1][0] for sym, s in series.items() if s and kinds.get(sym) == "crypto"]
     ends = crypto_ends or [s[-1][0] for s in series.values() if s]
@@ -64,7 +67,8 @@ def build_dataset(series: dict[str, list[tuple[float, float]]], kinds: dict[str,
         if any(v is not None for v in col):
             closes[sym], fresh[sym] = col, real
     warm = min(LOOKBACK_MIN, max(60, len(minutes) // 4))
-    ds = Dataset(minutes, closes, fresh, {s: kinds.get(s, "crypto") for s in closes}, warm, step=step)
+    ds = Dataset(minutes, closes, fresh, {s: kinds.get(s, "crypto") for s in closes}, warm, step=step,
+                 hourly={s: sorted(h) for s, h in (hourly or {}).items() if h})
     _precompute(ds)
     return ds
 
@@ -74,6 +78,8 @@ def _precompute(ds: Dataset) -> None:
     def mood(sig):
         return 0.0 if not sig else 0.6 * sig["trend"] + 0.4 * sig["momentum"]
 
+    hourly_ts = {s: [t for t, _ in h] for s, h in ds.hourly.items()}
+    swing_cache: dict[tuple[str, int], float] = {}
     for i in range(ds.start_index, len(ds.minutes), ds.step):
         row = {}
         for sym, col in ds.closes.items():
@@ -83,6 +89,13 @@ def _precompute(ds: Dataset) -> None:
             sig = technical_signals(window)
             back = col[max(0, i - 1440)] or window[0]
             sig["change_24h"] = (col[i] / back - 1) * 100 if back else 0.0
+            sig["swing"] = 0.0
+            if sym in ds.hourly:  # multi-day trend from hourly closes known at that time (no peeking ahead)
+                k = bisect.bisect_right(hourly_ts[sym], ds.minutes[i] - 3600)
+                if (sym, k) not in swing_cache:
+                    h = ds.hourly[sym][max(0, k - 24 * 25):k]
+                    swing_cache[(sym, k)] = swing_signal([c for _, c in h] + [col[i]])
+                sig["swing"] = swing_cache[(sym, k)]
             row[sym] = sig
         crypto_mood = 0.7 * mood(row.get("BTC"))
         stock_moods = [mood(row.get(s)) for s in ("SPY", "QQQ") if s in row]
@@ -95,7 +108,8 @@ def _precompute(ds: Dataset) -> None:
 def run(ds: Dataset, cfg: StrategyConfig, settings: dict, start_cash: float = 100.0, keep_trades: int = 60) -> dict:
     r, p = settings["risk"], settings["paper"]
     broker = PaperBroker(start_cash, p["fee_pct"], p["slippage_pct"])
-    fees = {"crypto": p["fee_pct"], "stock": p.get("stock_fee_pct", 0.1)}
+    fees = {"crypto": p["fee_pct"], "stock": p.get("stock_fee_pct", 0.05)}
+    min_fees = {"crypto": 0.0, "stock": p.get("stock_min_fee_usd", 0.0)}
     weights = cfg.weights()
     trades, curve, buys = [], [], []
     wins = sells = 0
@@ -112,6 +126,19 @@ def run(ds: Dataset, cfg: StrategyConfig, settings: dict, start_cash: float = 10
         last_prices = prices
         if now - day_start_t >= 86400:
             day_start_t, day_start_eq = now, broker.equity(prices)
+        if cfg.hold:
+            if not trades:
+                for sym in [s for s in ds.closes if ds.kinds[s] == "crypto" and prices.get(s)][:4]:
+                    usd = min(broker.equity(prices) * 0.24, broker.cash - 0.01)
+                    fill = broker.buy(sym, usd, prices[sym], fee_pct=fees["crypto"], now=now)
+                    fee_total += fill.fee
+                    trades.append({"ts": now, "symbol": sym, "side": "BUY", "price": fill.price,
+                                   "notional": round(usd, 2), "pnl": None, "reason": "buy & hold benchmark"})
+            eq = broker.equity(prices)
+            peak = max(peak, eq)
+            max_dd = max(max_dd, (peak - eq) / peak * 100 if peak else 0)
+            curve.append((now, round(eq, 3)))
+            continue
         scores = {s: blend(weights, {**sig, "hype": 0.0, "news": 0.0}) for s, sig in row.items()
                   if tradable_kind.get(ds.kinds[s])}
         # exits
@@ -120,7 +147,8 @@ def run(ds: Dataset, cfg: StrategyConfig, settings: dict, start_cash: float = 10
                 continue  # stock market closed: can't sell
             why = exit_reason(cfg, pos, prices[sym], scores.get(sym, 0.0), now, set())
             if why:
-                fill = broker.sell(sym, pos.qty, prices[sym], fee_pct=fees[ds.kinds[sym]], now=now)
+                fill = broker.sell(sym, pos.qty, prices[sym], fee_pct=fees[ds.kinds[sym]], now=now,
+                                   min_fee=min_fees[ds.kinds[sym]])
                 fee_total += fill.fee
                 sells += 1
                 wins += fill.pnl > 0
@@ -140,7 +168,11 @@ def run(ds: Dataset, cfg: StrategyConfig, settings: dict, start_cash: float = 10
             usd, why = risk_check(r, broker, day_start_eq, False, sym, want, prices)
             if why:
                 continue
-            fill = broker.buy(sym, usd, prices[sym], fee_pct=fees[ds.kinds[sym]], now=now)
+            try:
+                fill = broker.buy(sym, usd, prices[sym], fee_pct=fees[ds.kinds[sym]], now=now,
+                                  min_fee=min_fees[ds.kinds[sym]])
+            except ValueError:
+                continue  # minimum fee bigger than the order
             fee_total += fill.fee
             buys.append(now)
             trades.append({"ts": now, "symbol": sym, "side": "BUY", "price": fill.price,

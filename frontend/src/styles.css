@@ -218,7 +218,7 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .sigbar .track div { position: absolute; top: 0; height: 100%; border-radius: 3px; }
 .sigbar .pos { background: var(--green); } .sigbar .neg { background: var(--red); }
 .sig-val { text-align: right; }
-.sigbars.compact { grid-template-columns: repeat(7, 1fr); gap: 3px; margin: 6px 0 4px; }
+.sigbars.compact { grid-template-columns: repeat(8, 1fr); gap: 3px; margin: 6px 0 4px; }
 .sigbars.compact .sigbar { display: block; }
 .sigbars.compact .track { height: 4px; }
 .news-item { padding: 6px 0; border-bottom: 1px dashed rgba(27,36,64,0.6); font-size: 12px; }
@@ -349,3 +349,8 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
   .topbar { gap: 8px; padding: 8px 10px; }
   .panel { overflow-x: auto; }
 }
+
+.bench { color: var(--violet); font-size: 11px; }
+.presets { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-bottom: 4px; }
+.presets button { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 7px; }
+.presets button.on { border-color: var(--cyan); color: var(--cyan); }

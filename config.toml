@@ -27,19 +27,21 @@ allow_margin = false
 allow_short = false
 
 [paper]
-fee_pct = 1.5                  # cost per side, percent. Matches Bitpanda app quotes so paper results are honest. Lower to ~0.1 once live trading moves to Bitpanda Fusion.
+fee_pct = 0.25                 # cost per side, percent, matching the live venue so paper results are honest.
+                               # Bitpanda Fusion 0.25 · Kraken Pro 0.4-0.8 · Bitpanda app ~1.5
 slippage_pct = 0.05
 
 [live]
-broker = "bitpanda"
+broker = "fusion"              # "fusion" = Bitpanda Fusion order API (~0.25% fee), "bitpanda" = app quotes (~1.5%)
 currency = "EUR"               # the fiat wallet the bot trades from on Bitpanda (EUR or CHF)
 # Live mirrors the champion strategy: if the champion puts 20% of its equity into SOL, live does the same with live money.
-# Live trading also needs BITPANDA_API_KEY in .env and the switch in the dashboard.
-fee_pct = 1.5                  # assumed cost per side on Bitpanda app quotes; check your own
+# Live trading also needs BITPANDA_FUSION_API_KEY (or BITPANDA_API_KEY for the app broker) in .env and the switch in the dashboard.
+fee_pct = 0.25                 # assumed cost per side on the live venue; check your own
 
 [markets]
 crypto = ["BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "PEPE"]
-stocks = ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "MSFT", "AMD", "COIN"]
+# US tickers as on Yahoo; Swiss end in .SW (SIX), German in .DE (Xetra). Prices are converted to USD.
+stocks = ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "MSFT", "AMD", "COIN", "NESN.SW", "NOVN.SW", "UBSG.SW", "SAP.DE", "RHM.DE"]
 
 [engine]
 tick_seconds = 15              # how often the agent pipeline runs

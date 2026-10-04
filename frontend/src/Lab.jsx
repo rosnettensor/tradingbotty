@@ -58,7 +58,7 @@ export default function Lab({ state }) {
               <Fragment key={b.id}>
                 <tr className={b.champion ? "champ" : ""} onClick={() => setOpen(open === b.id ? null : b.id)}>
                   <td><i className="swatch" style={{ background: color(b.id) }} /></td>
-                  <td><b>{b.name}</b>{b.champion && <span className="crown"> ★ champion</span>}</td>
+                  <td><b>{b.name}</b>{b.champion && <span className="crown"> ★ champion</span>}{b.benchmark && <span className="bench"> yardstick</span>}</td>
                   <td>{fmt.usd(b.equity)}</td>
                   <td className={b.return_pct >= 0 ? "up" : "down"}>{fmt.pct(b.return_pct)}</td>
                   <td className="down">{b.max_drawdown_pct.toFixed(2)}%</td>
@@ -69,8 +69,8 @@ export default function Lab({ state }) {
                   <td className="dim">{b.age_h}h</td>
                   <td className="actions" onClick={(e) => e.stopPropagation()}>
                     {!b.champion && <button onClick={() => promote(b.id)}>promote</button>}
-                    <button onClick={() => clone(b.id)}>mutate</button>
-                    {!b.champion && <button onClick={() => retire(b.id)}>retire</button>}
+                    {!b.benchmark && <button onClick={() => clone(b.id)}>mutate</button>}
+                    {!b.champion && !b.benchmark && <button onClick={() => retire(b.id)}>retire</button>}
                   </td>
                 </tr>
                 {open === b.id && (

@@ -48,9 +48,11 @@ ALIASES = {
     "PEPE": ["pepe"], "SPY": ["s&p", "s&p 500", "spy", "sp500"], "QQQ": ["nasdaq", "qqq"],
     "NVDA": ["nvidia", "nvda"], "TSLA": ["tesla", "tsla"], "AAPL": ["apple", "aapl"],
     "MSFT": ["microsoft", "msft"], "AMD": ["amd"], "COIN": ["coinbase"],
+    "NESN.SW": ["nestle", "nestlé"], "NOVN.SW": ["novartis"], "UBSG.SW": ["ubs"], "ROG.SW": ["roche"],
+    "SAP.DE": ["sap"], "RHM.DE": ["rheinmetall"], "SIE.DE": ["siemens"], "ALV.DE": ["allianz"],
 }
 # short tickers that are also common words only count in upper case ($DOT, DOT)
-CASE_SENSITIVE = {"dot", "link", "sol", "ada", "coin", "eth"}
+CASE_SENSITIVE = {"dot", "link", "sol", "ada", "coin", "eth", "sap", "ubs"}
 
 
 MAX_NEWS_AGE = 12 * 3600

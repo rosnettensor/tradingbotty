@@ -37,7 +37,7 @@ export default function Markets({ state, focus, setFocus }) {
             <button key={t.symbol} className={`tile ${t.symbol === sel?.symbol ? "sel" : ""} ${t.held ? "is-held" : ""}`} onClick={() => setFocus(t.symbol)}>
               <div className="tile-head">
                 <b>{t.symbol}</b>
-                <span className="kind">{t.kind}</span>
+                <span className="kind">{t.kind === "crypto" ? "crypto" : t.symbol.includes(".SW") ? "SIX" : t.symbol.includes(".DE") ? "Xetra" : "US"}</span>
                 {t.held && <span className="held-badge">HELD</span>}
                 <span className={`chg ${pctColor(t.change)}`}>{fmt.pct(t.change)}</span>
               </div>

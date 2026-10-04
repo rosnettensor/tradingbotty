@@ -7,7 +7,7 @@ import math
 import random
 from dataclasses import asdict, dataclass, fields
 
-SIGNALS = ["momentum", "trend", "reversion", "breakout", "hype", "news", "market"]
+SIGNALS = ["momentum", "trend", "reversion", "breakout", "swing", "hype", "news", "market"]
 
 
 @dataclass
@@ -20,6 +20,7 @@ class StrategyConfig:
     w_hype: float = 0.5
     w_news: float = 0.7
     w_market: float = 0.5
+    w_swing: float = 0.0            # multi-day trend (hourly candles over 1-3 weeks)
     entry_score: float = 0.35       # buy when score is above this
     exit_score: float = -0.15       # sell when score falls below this
     take_profit_pct: float = 6.0
@@ -33,6 +34,7 @@ class StrategyConfig:
     min_edge_pct: float = 0.0       # only buy coins expected to move at least this much (0 = off)
     trade_crypto: bool = True
     max_buys_per_hour: int = 6      # speed limit on new positions
+    hold: bool = False              # benchmark: buy a basket once and never sell
 
     def weights(self) -> dict[str, float]:
         return {s: getattr(self, f"w_{s}") for s in SIGNALS}
@@ -112,6 +114,8 @@ STRATEGY_FIELDS = {
                     "help": "RSI: positive when oversold. High weight = buys dips."},
     "w_breakout": {"label": "Breakout", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
                    "help": "Price breaking above its last-hour high (or below its low)."},
+    "w_swing": {"label": "Multi-day trend", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+                "help": "Price trend over 1 to 3 weeks from hourly candles. Slow, so it trades rarely and pays fewer fees."},
     "w_hype": {"label": "Social hype", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
                "help": "Reddit buzz and CoinGecko trending, corrected by the Hype vs Price Detective."},
     "w_news": {"label": "News", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
@@ -134,8 +138,17 @@ SEED_VARIANTS = {
     # The Professor's first research idea: only trade when the likely move beats 2x the ~3% round-trip fee
     "Fee Guard": StrategyConfig(min_edge_pct=6.0, entry_score=0.35, take_profit_pct=8, stop_loss_pct=5,
                                 min_hold_minutes=45),
-    "Stock Picker": StrategyConfig(trade_stocks=True, trade_crypto=False, w_hype=0.3, w_news=1.0, entry_score=0.3,
-                                   take_profit_pct=3, stop_loss_pct=2.5, trailing_stop_pct=1.5, min_hold_minutes=30),
+    # Stocks cost a minimum fee per order (about 1 USD), so it trades rarely, in bigger slices, leaning on the slow trend
+    "Stock Picker": StrategyConfig(trade_stocks=True, trade_crypto=False, w_hype=0.3, w_news=1.0, w_swing=1.0,
+                                   entry_score=0.45, take_profit_pct=6, stop_loss_pct=4, trailing_stop_pct=3,
+                                   min_hold_minutes=180, cooldown_minutes=1440, max_buys_per_hour=1, position_pct=25),
+    # Trades the slow multi-day trend: few trades, wide stops. Research on crypto trend-following favors days over minutes.
+    "Swing Trader": StrategyConfig(w_momentum=0.1, w_trend=0.3, w_reversion=0.0, w_breakout=0.2, w_swing=2.0, w_hype=0.1,
+                                   w_news=0.3, w_market=0.6, entry_score=0.35, exit_score=-0.1, take_profit_pct=20,
+                                   stop_loss_pct=8, trailing_stop_pct=7, min_hold_minutes=720, cooldown_minutes=1440,
+                                   max_buys_per_hour=2, position_pct=24),
+    # The yardstick: buy the four biggest coins once and do nothing. A strategy is only good if it beats this.
+    "Buy & Hold": StrategyConfig(hold=True),
     "Dip Buyer": StrategyConfig(w_momentum=-0.4, w_trend=0.3, w_reversion=1.6, w_breakout=-0.3, w_hype=0.2, w_news=0.5,
                                 entry_score=0.3, exit_score=-0.05, take_profit_pct=4, stop_loss_pct=6, min_hold_minutes=30),
 }
@@ -181,6 +194,23 @@ def volatility(values: list[float]) -> float:
 def squash(x: float) -> float:
     """Map any number into -1..1."""
     return math.tanh(x)
+
+
+def swing_signal(hourly: list[float]) -> float:
+    """Multi-day trend in -1..1 from hourly closes: 7- and 20-day returns scaled by daily volatility."""
+    if len(hourly) < 24 * 8:
+        return 0.0
+    daily = hourly[::-24][::-1]
+    rets = [math.log(b / a) for a, b in zip(daily[:-1], daily[1:]) if a > 0 and b > 0][-20:]
+    if len(rets) < 5:
+        return 0.0
+    m = sum(rets) / len(rets)
+    vol = math.sqrt(sum((r - m) ** 2 for r in rets) / (len(rets) - 1)) or 0.02
+    last = hourly[-1]
+    r7 = math.log(last / hourly[-1 - 24 * 7])
+    days = min(20, (len(hourly) - 1) // 24)
+    r_long = math.log(last / hourly[-1 - 24 * days])
+    return squash(0.5 * r7 / (vol * math.sqrt(7)) + 0.5 * r_long / (vol * math.sqrt(days)))
 
 
 def technical_signals(closes: list[float]) -> dict[str, float]:

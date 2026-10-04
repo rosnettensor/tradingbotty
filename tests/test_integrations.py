@@ -161,3 +161,51 @@ def test_news_skips_stale_and_duplicate_headlines():
     first = asyncio.run(feed.poll_news())
     assert [h.title for h in first] == ["Bitcoin jumps 5%"]  # one copy, stale one dropped
     assert asyncio.run(feed.poll_news()) == []  # nothing re-read on the next poll
+
+
+def test_fusion_buy_sell_flow():
+    from tradingbotty.brokers.fusion import FusionBroker
+
+    sent = []
+    state = {"polls": 0}
+
+    def handler(req: httpx.Request):
+        p = req.url.path
+        if p == "/v1/pairs":
+            return httpx.Response(200, json=[
+                {"pair": "BTC-EUR", "baseAsset": "BTC", "quoteAsset": "EUR", "sizeIncrement": "0.00001",
+                 "amountIncrement": "0.01", "minOrderAmount": "1"},
+                {"pair": "BTC-USD", "baseAsset": "BTC", "quoteAsset": "USD"}])
+        if p == "/v1/account/balances":
+            return httpx.Response(200, json=[{"symbol": "EUR", "available": "50", "locked": "0"},
+                                             {"symbol": "BTC", "available": "0.0012345", "locked": "0"}])
+        if p == "/v1/account/orders" and req.method == "POST":
+            sent.append(json.loads(req.content))
+            return httpx.Response(202, json={"id": "o1", "status": "new"})
+        if p == "/v1/account/orders/o1":
+            state["polls"] += 1
+            return httpx.Response(200, json={"id": "o1", "status": "filled", "filledQuantity": "0.0002",
+                                             "filledAveragePrice": "50000", "fee": {"amount": "0.03", "currency": "EUR"}})
+        return httpx.Response(404)
+
+    b = FusionBroker("key", "EUR")
+    b.client = httpx.AsyncClient(base_url="https://api.fusion.bitpanda.com", transport=httpx.MockTransport(handler))
+
+    async def run():
+        assert (await b.connect())["assets"] == 1  # only EUR pairs
+        r = await b.buy("BTC", 10.009)
+        assert sent[-1] == {"pair": "BTC-EUR", "side": "Buy", "type": "Market", "amount": "10.00"}
+        assert r["execution"]["notional"] == 10.0 and r["execution"]["fee"] == 0.03
+        try:
+            await b.buy("BTC", 60)  # more than the 50 EUR available
+            assert False, "should refuse"
+        except Exception as e:
+            assert "not enough fiat" in str(e)
+        try:
+            await b.buy("BTC", 0.5)  # below the pair minimum
+            assert False, "should refuse"
+        except Exception as e:
+            assert "minimum" in str(e)
+        await b.sell_fraction("BTC", 1.0)
+        assert sent[-1] == {"pair": "BTC-EUR", "side": "Sell", "type": "Market", "quantity": "0.00123"}
+    asyncio.run(run())

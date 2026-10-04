@@ -20,6 +20,7 @@ class BitpandaError(RuntimeError):
 
 
 class BitpandaBroker:
+    name = "Bitpanda app quotes"
     def __init__(self, api_key: str, currency: str = "EUR", log=None):
         self.client = httpx.AsyncClient(base_url=BASE, timeout=20, headers={"x-api-key": api_key})
         self.currency = currency.upper()

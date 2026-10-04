@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 
 export const SIGNAL_LABELS = {
-  momentum: "Momentum", trend: "Trend", reversion: "Dip", breakout: "Breakout",
+  momentum: "Momentum", trend: "Trend", reversion: "Dip", breakout: "Breakout", swing: "Multi-day",
   hype: "Hype", news: "News", market: "Market",
 };
 

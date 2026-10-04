@@ -111,3 +111,48 @@ def test_engine_controls_sources_and_backtest(tmp_path, monkeypatch):
     e.set_agent("hype", enabled=False)
     asyncio.run(e.tick())
     assert e.agent("hype").status == "off" and e.bb.hype == {}
+
+
+def test_buy_and_hold_benchmark_never_sells():
+    raw = load_settings().raw
+    controls.apply(raw, {})
+    ds = backtest.build_dataset(_series(), {s: "crypto" for s in ("BTC", "ETH", "SOL", "DOGE")}, hours=10)
+    res = backtest.run(ds, SEED_VARIANTS["Buy & Hold"], raw, keep_trades=100)
+    assert [t["side"] for t in res["trade_list"]] == ["BUY"] * 4 and res["open_positions"] == 4
+
+
+def test_swing_signal_follows_multi_day_trend():
+    from tradingbotty.strategy import swing_signal
+    up = [100 * math.exp(0.0008 * i + 0.003 * math.sin(i)) for i in range(24 * 25)]
+    down = [100 * math.exp(-0.0008 * i + 0.003 * math.sin(i)) for i in range(24 * 25)]
+    assert swing_signal(up) > 0.3 and swing_signal(down) < -0.3 and swing_signal(up[:50]) == 0.0
+
+
+def test_swiss_and_german_market_hours():
+    from tradingbotty.data.prices import exchange_of, market_open
+    wed_10_zurich = 1790755200 + 3600 * 0  # 2026-09-30 08:00 UTC = 10:00 Zurich
+    assert exchange_of("NESN.SW")[0] == "SIX Swiss" and exchange_of("SAP.DE")[0] == "Xetra"
+    assert market_open("NESN.SW", wed_10_zurich) and market_open("SAP.DE", wed_10_zurich)
+    assert not market_open("AAPL", wed_10_zurich)  # 04:00 in New York
+
+
+def test_minimum_fee_and_fx_conversion():
+    from tradingbotty.brokers.paper import PaperBroker
+    from tradingbotty.data.prices import PriceFeed
+    import httpx
+    b = PaperBroker(100, 0.05, 0)
+    fill = b.buy("NESN.SW", 10, 100, min_fee=1.0)
+    assert fill.fee == 1.0  # the minimum beats 0.05% of 10 USD
+    with pytest.raises(ValueError):
+        b.buy("NOVN.SW", 0.8, 100, min_fee=1.0)  # fee would eat the order
+
+    def handler(req):
+        if "CHFUSD" in req.url.path:
+            return httpx.Response(200, json={"chart": {"result": [{"meta": {"regularMarketPrice": 1.25}}]}})
+        return httpx.Response(200, json={"chart": {"result": [{"meta": {"currency": "CHF", "regularMarketPrice": 80,
+            "chartPreviousClose": 79, "regularMarketTime": time.time()}, "timestamp": [time.time() - 60],
+            "indicators": {"quote": [{"close": [79.5]}]}}]}})
+    feed = PriceFeed([], ["NESN.SW"])
+    feed.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    asyncio.run(feed.poll_stocks())
+    assert feed.quotes["NESN.SW"].price == pytest.approx(100.0)  # 80 CHF at 1.25 USD

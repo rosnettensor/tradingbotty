@@ -9,7 +9,7 @@ import math
 import time
 
 from ..decisions import blend, entry_blocker, exit_reason, expected_move, risk_check
-from ..strategy import squash, technical_signals
+from ..strategy import squash, swing_signal, technical_signals
 from .base import Agent, Blackboard
 
 # --------------------------------------------------------------------------------------------
@@ -24,7 +24,8 @@ class CryptoAnalyst(Agent):
     inputs = ["src_kraken"]
     explain = ("Pure math, no AI, free. Every tick it takes the last few hours of 1-minute prices for each coin and "
                "computes four signals between -1 and +1: momentum (last 15 minutes vs normal volatility), trend "
-               "(20- vs 60-minute average), dip (RSI: oversold is positive) and breakout (above the last-hour high).")
+               "(20- vs 60-minute average), dip (RSI: oversold is positive) and breakout (above the last-hour high). "
+               "From hourly candles it adds the multi-day trend (1 to 3 weeks), the slow signal swing traders use.")
     outputs = "momentum, trend, dip, breakout and volatility per coin"
 
     async def run(self, bb: Blackboard) -> None:
@@ -32,6 +33,7 @@ class CryptoAnalyst(Agent):
         for q in self.ctx.prices.crypto():
             closes = q.closes()
             sig = technical_signals(closes)
+            sig["swing"] = swing_signal(q.hourly_closes())
             bb.tech[q.symbol] = sig
             strongest.append((sig["momentum"] + sig["trend"], q.symbol, q.change_24h_pct))
         strongest.sort(reverse=True)
@@ -59,7 +61,7 @@ class MarketAnalyst(Agent):
 
     async def run(self, bb: Blackboard) -> None:
         for q in self.ctx.prices.stocks():
-            bb.tech[q.symbol] = technical_signals(q.closes())
+            bb.tech[q.symbol] = {**technical_signals(q.closes()), "swing": swing_signal(q.hourly_closes())}
 
         def regime(sym: str) -> float:
             t = bb.tech.get(sym)
@@ -372,7 +374,7 @@ class Predictor(Agent):
             t = bb.tech.get(sym, {})
             bb.signals[sym] = {
                 "momentum": t.get("momentum", 0.0), "trend": t.get("trend", 0.0),
-                "reversion": t.get("reversion", 0.0), "breakout": t.get("breakout", 0.0),
+                "reversion": t.get("reversion", 0.0), "breakout": t.get("breakout", 0.0), "swing": t.get("swing", 0.0),
                 "hype": bb.hype.get(sym, 0.0), "news": bb.news.get(sym, 0.0), "market": bb.market.get(sym, 0.0),
             }
         for v in self.ctx.variants.values():
@@ -450,6 +452,9 @@ class Buyer(Agent):
         why_not: dict[str, str] = {}
         for v in self.ctx.variants.values():
             cfg, b = v.config, v.broker
+            if cfg.hold:
+                made += await self._hold(v, quotes, prices)
+                continue
             scores = bb.scores.get(v.id, {})
             # 1) exits first
             for sym, pos in list(b.positions.items()):
@@ -495,3 +500,20 @@ class Buyer(Agent):
             eq = champ.broker.equity(prices)
             self.summary = f"champion {champ.name}: {eq:.2f} USD, {len(champ.broker.positions)} open"
         self.detail = {"orders_this_tick": made, "why_not": why_not}
+
+    async def _hold(self, v, quotes, prices) -> int:
+        """Benchmark: buy the first four coins once, about a quarter each, then never trade again."""
+        if self.ctx.buys_since(v.id, 0) or v.broker.positions:
+            return 0
+        basket = hold_basket(quotes)
+        made = 0
+        for sym in basket:
+            usd = min(v.broker.equity(prices) * 0.24, v.broker.cash - 0.01)
+            if usd > 1:
+                await self.ctx.execute(v, sym, "BUY", usd, prices[sym], "buy & hold benchmark", fraction=0.24)
+                made += 1
+        return made
+
+
+def hold_basket(quotes) -> list[str]:
+    return [s for s, q in quotes.items() if q.kind == "crypto" and q.price][:4]

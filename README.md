@@ -46,6 +46,15 @@ Press 1-5 to switch tabs.
 
 Settings changed in the dashboard are saved in `data/` and win over `config.toml` until you reset them.
 
+## Live trading venue
+
+The default live broker is **Bitpanda Fusion** (same Bitpanda account, order API, about 0.25% per trade instead of
+about 1.5% in the app). Put `BITPANDA_FUSION_API_KEY` in `.env` (Read + Trade only, never withdrawals) and run
+`python run.py --check-live`. To use the old app-quote broker set `broker = "bitpanda"` in `config.toml`.
+
+Stocks (US, Swiss `.SW`, German `.DE`, and other European suffixes) are paper-only: Bitpanda has no stock trading
+API. Every strategy is measured against the **Buy & Hold** yardstick in the Lab.
+
 ## Your own visuals
 
 Drop a background video, a logo or agent portraits into the `media/` folder (see `media/README.md`) and reload the
