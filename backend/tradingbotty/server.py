@@ -150,6 +150,11 @@ def get_sources():
     return engine.sources_info()
 
 
+@app.get("/api/radar")
+def get_radar():
+    return engine.radar()
+
+
 @app.post("/api/sources/add")
 async def add_source(body: SourceIn):
     return await engine.add_source(body.kind, body.value, body.name)

@@ -58,8 +58,30 @@ class FusionBroker:
             if str(p.get("quoteAsset", "")).upper() == self.currency:
                 self.pairs[str(p.get("baseAsset", "")).upper()] = p
         if not self.pairs:
-            raise FusionError(f"no {self.currency} pairs on Fusion: try currency EUR in config.toml")
+            quotes = sorted({str(p.get("quoteAsset", "")).upper() for p in items} - {""})
+            raise FusionError(f"no {self.currency} pairs on Fusion (it has {', '.join(quotes[:8])}): "
+                              f"set currency in config.toml [live]")
         return {"assets": len(self.pairs)}
+
+    async def spread_pct(self, symbol: str) -> float:
+        """Gap between best ask and best bid, in % of the middle. Wide gaps make market orders expensive."""
+        book = await self._req("GET", f"/v1/orderbook/{self._pair(symbol)['pair']}", params={"depth": 5})
+        bids, asks = book.get("bids") or [], book.get("asks") or []
+        if not bids or not asks:
+            return 99.0
+        bid, ask = float(bids[0]["price"]), float(asks[0]["price"])
+        return (ask - bid) / ((ask + bid) / 2) * 100 if ask > 0 and bid > 0 else 99.0
+
+    async def prices(self) -> dict[str, float]:
+        """Current price of every coin in our currency (one request)."""
+        body = await self._req("GET", "/v1/tickers")
+        items = body if isinstance(body, list) else body.get("data", [])
+        out = {}
+        for t in items:
+            base, _, quote = str(t.get("pair", "")).upper().partition("-")
+            if quote == self.currency and t.get("price"):
+                out[base] = float(t["price"])
+        return out
 
     async def balances(self) -> dict[str, float]:
         """Available amount per symbol, plus fiat under 'FIAT'."""

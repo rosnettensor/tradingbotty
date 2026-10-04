@@ -23,6 +23,7 @@ UA = {"User-Agent": "Mozilla/5.0 TradingBotty/0.1"}
 
 # Kraken uses its own names for a few coins
 KRAKEN_PAIR = {"BTC": "XBTUSD", "DOGE": "XDGUSD"}
+PAIR_KEYS: dict[str, str] = {}  # Kraken pair key or altname -> our symbol, filled by the Market Radar
 
 
 def _tz(name: str, fallback_hours: int):
@@ -229,7 +230,7 @@ class PriceFeed:
                 raise RuntimeError(body["error"])
             now = time.time()
             for key, t in body["result"].items():
-                q = pairs.get(key) or pairs.get(_norm_kraken_key(key))
+                q = pairs.get(key) or pairs.get(_norm_kraken_key(key)) or self.quotes.get(PAIR_KEYS.get(key, ""))
                 if not q:
                     continue
                 last, open_ = float(t["c"][0]), float(t["o"])

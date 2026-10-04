@@ -176,7 +176,8 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 
 /* cockpit v2 */
 .cockpit2 { display: grid; gap: 12px; grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.6fr) minmax(300px, 1fr);
-  grid-template-areas: "stats stats stats" "core focus why" "core equity why" "pos log news"; }
+  grid-template-areas: "stats stats stats" "wallet wallet wallet" "core focus why" "core equity why" "pos log news"; }
+.cockpit2 .wallet { grid-area: wallet; }
 .cockpit2 .stats { grid-area: stats; display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 4px 10px; padding: 10px 14px; }
 .cockpit2 .core { grid-area: core; min-height: 0; }
 .cockpit2 .focus { grid-area: focus; }
@@ -320,13 +321,13 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .lab .board td { white-space: nowrap; }
 
 @media (max-width: 1250px) {
-  .cockpit2 { grid-template-columns: 1fr 1fr; grid-template-areas: "stats stats" "core why" "focus focus" "equity equity" "pos news" "log log"; }
+  .cockpit2 { grid-template-columns: 1fr 1fr; grid-template-areas: "stats stats" "wallet wallet" "core why" "focus focus" "equity equity" "pos news" "log log"; }
   .controls { grid-template-columns: 1fr 1fr; }
   .controls .col { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 820px) {
   main { padding: 10px; }
-  .cockpit2 { grid-template-columns: 1fr; grid-template-areas: "stats" "core" "why" "focus" "equity" "pos" "news" "log"; }
+  .cockpit2 { grid-template-columns: 1fr; grid-template-areas: "stats" "wallet" "core" "why" "focus" "equity" "pos" "news" "log"; }
   .controls, .controls .col { grid-template-columns: 1fr; }
   .nodes-view { grid-template-columns: 1fr; height: auto; }
   .flow { height: 70vh; }
@@ -354,3 +355,59 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .presets { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-bottom: 4px; }
 .presets button { text-transform: none; letter-spacing: 0; font-size: 11px; padding: 1px 7px; }
 .presets button.on { border-color: var(--cyan); color: var(--cyan); }
+
+/* live wallet */
+.wallet.is-live { border-color: rgba(255,43,214,0.6); box-shadow: 0 0 22px rgba(255,43,214,0.18); }
+.wallet.is-live::before { background: var(--magenta); box-shadow: 0 0 10px var(--magenta); }
+.wallet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 10px; }
+.capbar { height: 8px; margin: 7px 0 4px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
+.capbar div { height: 100%; background: linear-gradient(90deg, var(--cyan), var(--magenta)); box-shadow: 0 0 8px var(--magenta); }
+.wallet-coins { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* market radar */
+.radar-view { display: grid; gap: 12px; grid-template-columns: minmax(320px, 1.1fr) minmax(320px, 1fr);
+  grid-template-areas: "stats stats" "scope list" "map map"; }
+.radar-stats { grid-area: stats; display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 4px 10px; }
+.radar-scope { grid-area: scope; } .radar-list { grid-area: list; } .radar-map { grid-area: map; }
+.scope { width: 100%; max-height: 470px; display: block; margin: 0 auto; }
+.scope text { fill: var(--text); font: 9px var(--mono); pointer-events: none; }
+.sweep { animation: sweep 6s linear infinite; transform-origin: 0 0; }
+@keyframes sweep { to { transform: rotate(360deg); } }
+.blip { cursor: pointer; }
+.blip:hover circle { stroke: #fff; stroke-width: 1.5; }
+.blip-ring { animation: ping 2.4s ease-in-out infinite; }
+@keyframes ping { 50% { opacity: 0.35; } }
+.scope-info { min-height: 20px; text-align: center; font-size: 12px; }
+.heatbar { width: 80px; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+.heatbar .pos { height: 100%; background: linear-gradient(90deg, var(--cyan), var(--green)); }
+.heatbar .neg { height: 100%; background: var(--red); }
+.chip-s { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+.chip-s.st-watch { color: var(--cyan); border-color: var(--cyan); }
+.chip-s.st-mine { color: var(--text); }
+.chip-s.st-held { color: var(--amber); border-color: var(--amber); }
+.chip-s.st-live { color: var(--magenta); border-color: var(--magenta); }
+.heatmap { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.hm { text-transform: none; letter-spacing: 0; padding: 4px 6px; display: flex; flex-direction: column; align-items: flex-start;
+  line-height: 1.2; border-color: rgba(255,255,255,0.06); min-width: 62px; }
+.hm b { color: #fff; font-size: 11px; } .hm span { font-size: 10px; color: rgba(255,255,255,0.75); }
+.hm.s2 { min-width: 82px; } .hm.s2 b { font-size: 12px; }
+.hm.s3 { min-width: 104px; padding: 6px 8px; } .hm.s3 b { font-size: 14px; }
+.hm.st-out { opacity: 0.35; }
+.hm.st-watch, .hm.st-mine { border-color: var(--cyan); }
+.hm.st-held { border-color: var(--amber); } .hm.st-live { border-color: var(--magenta); box-shadow: 0 0 8px rgba(255,43,214,0.4); }
+.radar-badge { font-size: 9px; color: var(--cyan); border: 1px solid var(--cyan); border-radius: 3px; padding: 0 4px; }
+@media (max-width: 820px) {
+  .radar-view { grid-template-columns: 1fr; grid-template-areas: "stats" "scope" "list" "map"; }
+}
+
+.wallet-top { display: grid; grid-template-columns: minmax(200px, auto) 1fr; gap: 18px; align-items: center; }
+.wallet-total .big { font-family: var(--display); font-size: 30px; color: #fff; text-shadow: 0 0 14px rgba(0,240,255,0.45); }
+.wallet-total .big span { font-size: 14px; color: var(--dim); }
+.splitbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: rgba(255,255,255,0.05); margin-bottom: 6px; }
+.splitbar div { height: 100%; transition: width 0.6s; }
+.seg-cash { background: var(--cyan); } .seg-bot { background: var(--magenta); } .seg-own { background: var(--amber); }
+.split-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; margin-bottom: 4px; }
+.split-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+.coin-own { border-color: rgba(255,176,32,0.5); }
+.coin-bot { border-color: rgba(255,43,214,0.6); }
+@media (max-width: 820px) { .wallet-top { grid-template-columns: 1fr; } }

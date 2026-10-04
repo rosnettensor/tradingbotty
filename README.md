@@ -52,6 +52,16 @@ The default live broker is **Bitpanda Fusion** (same Bitpanda account, order API
 about 1.5% in the app). Put `BITPANDA_FUSION_API_KEY` in `.env` (Read + Trade only, never withdrawals) and run
 `python run.py --check-live`. To use the old app-quote broker set `broker = "bitpanda"` in `config.toml`.
 
+**Market Radar** (tab 2): every few minutes one Kraken request reads the 24h stats of every coin with a USD market,
+keeps what Fusion can trade, filters out thin, wide-spread and already-pumped coins, and adds the hottest to the
+watchlist so every strategy can trade them. Your own coin list always stays; radar coins leave again once they
+cool off, unless a strategy holds them.
+
+**Live money brakes** (Controls → Live money): a cap on how much is in coins at once, a cap per order, a spread check
+on Fusion's order book before every buy, and leftover coins of an old champion get sold. By default the bot only
+sells coins it bought itself. Switch on "Bot may also use my existing coins" to let it sell your other coins for cash
+when it needs it; worst case you lose what's in the account, never more, because nothing can borrow.
+
 Stocks (US, Swiss `.SW`, German `.DE`, and other European suffixes) are paper-only: Bitpanda has no stock trading
 API. Every strategy is measured against the **Buy & Hold** yardstick in the Lab.
 
@@ -88,12 +98,11 @@ page. Image and video generators like Higgsfield are good for this.
 ## Going live (do this together the first time)
 
 1. Let it run on paper for at least a few days and watch the Experiments tab.
-2. Put the stake you're willing to lose (e.g. 100 EUR) in your Bitpanda EUR wallet. Set `currency` in `config.toml`
-   if you use CHF.
-3. Add `BITPANDA_API_KEY` to `.env`, then check it without trading: `start.bat --check-live` or
+2. Fusion uses the same wallet as the Bitpanda app. The bot trades from `currency` in `config.toml` (CHF by default).
+3. Add `BITPANDA_FUSION_API_KEY` to `.env`, then check it without trading: `start.bat --check-live` or
    `./start.sh --check-live`. It lists your balance and which coins are tradable.
-4. Click PAPER, type `REAL MONEY`. From then on the champion's trades are copied to Bitpanda in the same
-   proportions (if the champion puts 20% of its equity into SOL, live does the same with your EUR).
+4. Set the live caps in Controls → Live money, then click PAPER and type `REAL MONEY`. From then on the champion's
+   trades are copied to Fusion in the same proportions, inside your caps.
 5. Three live errors in a row switch it back to paper automatically.
 
 The Bitpanda connector is built from Bitpanda's public API docs and tested against a fake server, not yet against

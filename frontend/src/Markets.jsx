@@ -38,6 +38,7 @@ export default function Markets({ state, focus, setFocus }) {
               <div className="tile-head">
                 <b>{t.symbol}</b>
                 <span className="kind">{t.kind === "crypto" ? "crypto" : t.symbol.includes(".SW") ? "SIX" : t.symbol.includes(".DE") ? "Xetra" : "US"}</span>
+                {state.radar?.watching?.includes(t.symbol) && <span className="radar-badge" title="Added by the Market Radar">RADAR</span>}
                 {t.held && <span className="held-badge">HELD</span>}
                 <span className={`chg ${pctColor(t.change)}`}>{fmt.pct(t.change)}</span>
               </div>

@@ -23,6 +23,10 @@ async def main() -> None:
     print(f"Fiat available: {bal.get('FIAT', 0):.2f} {cur}")
     held = {k: v for k, v in bal.items() if v and k not in ("FIAT", cur)}
     print("Holdings:", held or "none")
+    if hasattr(b, "prices"):
+        px = await b.prices()
+        coins = sum(v * px.get(k, 0) for k, v in held.items())
+        print(f"Account total: {bal.get('FIAT', 0) + coins:.2f} {cur} ({bal.get('FIAT', 0):.2f} cash + {coins:.2f} in coins)")
 
 
 if __name__ == "__main__":

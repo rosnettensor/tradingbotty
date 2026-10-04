@@ -26,6 +26,7 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
   return (
     <div className="cockpit2">
       <StatStrip state={state} ret={ret} />
+      {state.wallet && <LiveWallet state={state} setFocus={setFocus} />}
 
       <section className="panel core">
         <Sphere mood={ret / 5} energy={energy} pulse={pulse} label={
@@ -63,6 +64,62 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
         <News state={state} setFocus={setFocus} />
       </section>
     </div>
+  );
+}
+
+function LiveWallet({ state, setFocus }) {
+  const w = state.wallet;
+  const caps = state.live_caps || {};
+  const live = state.mode === "live";
+  if (w.error) {
+    return <section className="panel wallet"><h3>BITPANDA FUSION</h3><div className="err">Can't read your account: {w.error}</div></section>;
+  }
+  const cur = w.currency;
+  const total = w.total || w.fiat + w.bot_value + w.yours_value;
+  const part = (x) => `${total ? (x / total) * 100 : 0}%`;
+  const used = Math.min(100, ((w.bot_cost || 0) / (caps.max_invest || 1)) * 100);
+  return (
+    <section className={`panel wallet ${live ? "is-live" : ""}`}>
+      <div className="row-head">
+        <h3>{live ? "● LIVE MONEY" : "REAL ACCOUNT"} <span className="dim">· {w.venue} · {live ? "the champion's trades are copied here" : "watching only, switch to LIVE to trade"} · {ago(w.ts)}</span></h3>
+      </div>
+      <div className="wallet-top">
+        <div className="wallet-total">
+          <div className="stat-label">Account total</div>
+          <div className="big">{total.toFixed(2)} <span>{cur}</span></div>
+          <div className="stat-sub">worst case you lose this, never more: no debt possible</div>
+        </div>
+        <div className="wallet-split">
+          <div className="splitbar">
+            <div className="seg-cash" style={{ width: part(w.fiat) }} title="cash" />
+            <div className="seg-bot" style={{ width: part(w.bot_value) }} title="bot's coins" />
+            <div className="seg-own" style={{ width: part(w.yours_value) }} title="your coins" />
+          </div>
+          <div className="split-legend">
+            <span><i className="seg-cash" />Cash {w.fiat.toFixed(2)}</span>
+            <span><i className="seg-bot" />Bot's coins {w.bot_value.toFixed(2)} <b className={pctColor(w.bot_pnl)}>{w.bot_pnl >= 0 ? "+" : ""}{w.bot_pnl.toFixed(2)}</b></span>
+            <span><i className="seg-own" />Your coins {w.yours_value.toFixed(2)}</span>
+          </div>
+          <div className="stat-sub">
+            Live cap {w.bot_cost.toFixed(2)} of {caps.max_invest} {cur} used · max {caps.max_order}/order · spread ≤ {caps.max_spread_pct}% ·{" "}
+            {caps.use_my_coins ? <b className="up">bot may use your coins</b> : <span>your coins stay untouched</span>}
+          </div>
+          <div className="capbar"><div style={{ width: `${used}%` }} /></div>
+        </div>
+      </div>
+      <div className="wallet-coins">
+        {w.coins.map((c) => (
+          <button key={`b${c.symbol}`} className="tag coin-bot" onClick={() => setFocus(c.symbol)} title="bought by the bot">
+            🤖 {c.symbol} {c.value.toFixed(2)} <span className={pctColor(c.pnl)}>{c.pnl == null ? "" : `${c.pnl >= 0 ? "+" : ""}${c.pnl.toFixed(2)}`}</span>
+          </button>
+        ))}
+        {(w.own_coins || []).map((c) => (
+          <span key={`o${c.symbol}`} className="tag coin-own" title={c.tradable ? "your coin" : "your coin, not tradable on Fusion in this currency"}>
+            {c.symbol} {c.price ? `${c.value.toFixed(2)} ${cur}` : `${c.qty} (no price)`}
+          </span>
+        ))}
+      </div>
+    </section>
   );
 }
 

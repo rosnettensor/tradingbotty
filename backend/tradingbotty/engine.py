@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from . import backtest, controls
 from .agents.base import Blackboard, Source
 from .agents.optimizer import Optimizer
+from .agents.radar import LiveDesk, MarketRadar
 from .agents.team import (Buyer, CryptoAnalyst, HypeDetective, HypeScout, MarketAnalyst, NewsHunter, Predictor,
                           Professor, RiskOfficer)
 from .brokers.bitpanda import BitpandaBroker
@@ -20,6 +21,7 @@ from .bus import Bus
 from .config import Settings
 from .data.prices import PriceFeed, market_open, us_market_open
 from .data.social import SocialFeed
+from .data.universe import Universe
 from .db import DB
 from .llm import LLM, Budget
 from .strategy import SEED_VARIANTS, STRATEGY_FIELDS, StrategyConfig
@@ -68,8 +70,14 @@ class Engine:
         src = self.db.get("sources", {})
         m = settings["markets"]
         crypto, stocks = src.get("crypto", m["crypto"]), src.get("stocks", m["stocks"])
-        self.prices = PriceFeed(crypto, stocks, settings.simulate, self._log)
-        self.social = SocialFeed(crypto + stocks, settings.simulate, self._log)
+        # coins the Market Radar added on top of your own list (they come back after a restart)
+        self.scanned: list[str] = [c for c in self.db.get("scanned", []) if c not in crypto]
+        self.prices = PriceFeed(crypto + self.scanned, stocks, settings.simulate, self._log)
+        self.social = SocialFeed(crypto + self.scanned + stocks, settings.simulate, self._log)
+        self.universe = Universe(settings.simulate, self._log)
+        self.fusion_coins: set[str] | None = None  # what Fusion can trade in our currency, once the key is checked
+        self.wallet: dict | None = None            # the real Bitpanda account, refreshed every 30 seconds
+        self._viewer = None                        # read-only Fusion connection while in paper mode
         if src.get("subreddits"):
             self.social.subreddits = src["subreddits"]
         if src.get("feeds"):
@@ -103,9 +111,14 @@ class Engine:
                    "alternative.me's daily Crypto Fear & Greed index, 0 (extreme fear) to 100 (extreme greed)."),
             Source(self, "src_news", "News feeds", "RSS headlines from crypto and finance news", h("news", self.social),
                    "The RSS feeds in Controls > Sources. Add any feed you like."),
+            Source(self, "src_fusion", "Bitpanda Fusion", "Your real account: balance, prices, which coins trade",
+                   lambda: bool(self.wallet and not self.wallet.get("error")),
+                   "Read every 30 seconds with your Fusion key (Read + Trade, never withdrawal): cash, coins, prices "
+                   "and the list of coins Fusion can trade, which the Market Radar uses."),
         ]
-        self.team = [CryptoAnalyst(self), MarketAnalyst(self), HypeScout(self), HypeDetective(self), NewsHunter(self),
-                     Professor(self), Predictor(self), RiskOfficer(self), Buyer(self), Optimizer(self)]
+        self.team = [MarketRadar(self), CryptoAnalyst(self), MarketAnalyst(self), HypeScout(self), HypeDetective(self),
+                     NewsHunter(self), Professor(self), Predictor(self), RiskOfficer(self), Buyer(self), LiveDesk(self),
+                     Optimizer(self)]
         self._by_id = {a.id: a for a in self.sources + self.team}
         # remember news across restarts so headlines aren't re-read (and re-paid for) after every restart
         self.social._seen_links = set(self.db.get("news_seen", []))
@@ -170,10 +183,53 @@ class Engine:
     def sources_info(self) -> dict:
         held = {s for v in self.variants.values() for s in v.broker.positions}
         return {
-            "crypto": [q.symbol for q in self.prices.crypto()], "stocks": [q.symbol for q in self.prices.stocks()],
+            "crypto": self.core_crypto(), "stocks": [q.symbol for q in self.prices.stocks()], "scanned": self.scanned,
             "subreddits": self.social.subreddits, "feeds": self.social.feeds, "held": sorted(held),
             "status": self.social.source_status,
         }
+
+    def core_crypto(self) -> list[str]:
+        """Your own coin list, without the radar's additions."""
+        return [q.symbol for q in self.prices.crypto() if q.symbol not in self.scanned]
+
+    def held_anywhere(self, symbol: str) -> bool:
+        return (any(symbol in v.broker.positions for v in self.variants.values())
+                or self.db.get("live_qty", {}).get(symbol, 0) > 0)
+
+    def _forget_symbol(self, symbol: str) -> None:
+        self.prices.remove_symbol(symbol)
+        for d in (self.bb.tech, self.bb.hype, self.bb.news, self.bb.market, self.bb.signals):
+            d.pop(symbol, None)
+
+    async def set_scanned(self, want: list[str], keep: set[str]) -> tuple[list[str], list[str]]:
+        """Radar watchlist: add `want`, drop radar coins outside `keep` that nobody holds."""
+        dropped = [s for s in self.scanned if s not in want and s not in keep and not self.held_anywhere(s)]
+        for s in dropped:
+            self.scanned.remove(s)
+            self._forget_symbol(s)
+        added = []
+        for s in want:
+            if s in self.prices.quotes:
+                continue
+            await self.prices.add_symbol(s, "crypto", self._history(s, HISTORY_DAYS * 1440))
+            if not self.prices.quotes[s].candles:  # no price history at all: not worth watching
+                self.prices.remove_symbol(s)
+                continue
+            self.scanned.append(s)
+            added.append(s)
+            if not self.settings.simulate:
+                await asyncio.sleep(1.2)  # Kraken's public rate limit
+        if added or dropped:
+            self.social.symbols = list(self.prices.quotes)
+            self.db.set("scanned", self.scanned)
+        return added, dropped
+
+    def radar(self) -> dict:
+        r = self.agent("radar")
+        return {"ts": self.universe.ts, "rows": r.ranked, "watching": self.scanned, "core": self.core_crypto(),
+                "fusion": len(self.fusion_coins) if self.fusion_coins else None, "error": r.error,
+                "held": sorted({s for v in self.variants.values() for s in v.broker.positions}),
+                "live": sorted(self.db.get("live_qty", {}))}
 
     def _save_sources(self) -> None:
         self.db.set("sources", {k: v for k, v in self.sources_info().items() if k in ("crypto", "stocks", "subreddits", "feeds")})
@@ -184,9 +240,15 @@ class Engine:
             sym = value.upper().lstrip("$")
             if not sym.replace(".", "").replace("-", "").isalnum() or len(sym) > 10:
                 return {"ok": False, "error": "use a ticker like ARB or PLTR"}
+            if sym in self.scanned:  # the radar found it first: now it's on your own list for good
+                self.scanned.remove(sym)
+                self.db.set("scanned", self.scanned)
+                self._save_sources()
+                return {"ok": True, **self.sources_info()}
             if sym in self.prices.quotes:
                 return {"ok": False, "error": f"{sym} is already on the list"}
-            if len([q for q in self.prices.quotes.values() if q.kind == ("crypto" if kind == "crypto" else "stock")]) >= MAX_WATCHLIST:
+            mine = self.core_crypto() if kind == "crypto" else [q.symbol for q in self.prices.stocks()]
+            if len(mine) >= MAX_WATCHLIST:
                 return {"ok": False, "error": f"at most {MAX_WATCHLIST} per list, to keep the free APIs happy"}
             qkind = "crypto" if kind == "crypto" else "stock"
             why = await self.prices.validate(sym, qkind)
@@ -223,13 +285,10 @@ class Engine:
             held = self.sources_info()["held"]
             if value in held:
                 return {"ok": False, "error": f"a strategy still holds {value}; it can be removed once it's sold"}
-            same = [q for q in self.prices.quotes.values() if q.kind == ("crypto" if kind == "crypto" else "stock")]
-            if len(same) <= 1 and kind == "crypto":
+            if kind == "crypto" and len(self.core_crypto()) <= 1:
                 return {"ok": False, "error": "keep at least one coin"}
-            self.prices.remove_symbol(value)
+            self._forget_symbol(value)
             self.social.symbols = list(self.prices.quotes)
-            for d in (self.bb.tech, self.bb.hype, self.bb.news, self.bb.market, self.bb.signals):
-                d.pop(value, None)
         elif kind == "subreddits":
             if value in self.social.subreddits:
                 self.social.subreddits.remove(value)
@@ -493,12 +552,40 @@ class Engine:
     async def _mirror_live(self, symbol: str, side: str, fraction: float) -> None:
         try:
             if side == "BUY":
+                lv = self.settings["live"]
+                pairs = getattr(self.live, "pairs", None)
+                if pairs is not None and symbol not in pairs:
+                    self.throttled_say(self.agent("livedesk"), f"{symbol} isn't tradable on {self.live.name}: paper only.", 3600)
+                    return
                 bal = await self.live.balances()
                 fiat = bal.get("FIAT", 0.0)
                 invested = sum(self.db.get("live_cost", {}).values())
-                amount = min(fiat, fraction * (fiat + invested))
+                spare = await self._spare_coins(bal) if lv.get("use_my_coins") else {}
+                # same share of the live account as the champion used, inside your caps
+                base = min(fiat + invested + sum(v for _, v in spare.values()), lv["max_invest"])
+                amount = min(fiat + sum(v for _, v in spare.values()), fraction * base, lv["max_order"],
+                             lv["max_invest"] - invested)
                 if amount < self.settings["risk"]["min_order_usd"]:
+                    self.throttled_say(self.agent("livedesk"), f"Skipped live BUY {symbol}: "
+                                       + ("live cap reached." if lv["max_invest"] - invested < 1 else "order would be too small."), 1800)
                     return
+                min_amt = float(((pairs or {}).get(symbol) or {}).get("minOrderAmount") or 0)
+                if amount < min_amt:
+                    self.throttled_say(self.agent("livedesk"), f"Skipped live BUY {symbol}: {amount:.2f} is below Fusion's "
+                                       f"minimum of {min_amt:g} {self.live.currency}.", 1800)
+                    return
+                if hasattr(self.live, "spread_pct"):
+                    spread = await self.live.spread_pct(symbol)
+                    if spread > lv["max_spread_pct"]:
+                        self.agent("livedesk").say(f"Skipped live BUY {symbol}: spread {spread:.2f}% is above your "
+                                                   f"{lv['max_spread_pct']}% limit.", "warn")
+                        return
+                if amount > fiat:  # not enough cash: sell some of your other coins first (you allowed it)
+                    fiat = await self._raise_cash(amount - fiat, spare, pairs or {})
+                    amount = min(amount, fiat)
+                    if amount < max(min_amt, self.settings["risk"]["min_order_usd"]):
+                        return
+                    bal = await self.live.balances()
                 before = self._live_held(bal, symbol)
                 res = await self.live.buy(symbol, amount)
                 got = float((res or {}).get("execution", {}).get("quantity", 0) or 0)
@@ -568,6 +655,108 @@ class Engine:
                                           f"{info['assets']} assets. The champion's next trades use real money.")
         return {"ok": True, "mode": "live", "fiat": bal.get("FIAT", 0)}
 
+    async def _spare_coins(self, bal: dict) -> dict[str, tuple[float, float]]:
+        """Your coins the bot may sell for cash: tradable, not held by the champion, not bought by the bot.
+        symbol -> (quantity, value in account currency)."""
+        if not hasattr(self.live, "prices"):
+            return {}
+        prices = await self.live.prices()
+        champ = self.champion()
+        mine = self.db.get("live_qty", {})
+        pairs = getattr(self.live, "pairs", {}) or {}
+        out = {}
+        for sym, qty in bal.items():
+            if sym in ("FIAT", self.live.currency) or sym in mine or sym not in pairs or not qty:
+                continue
+            if champ and sym in champ.broker.positions:
+                continue
+            value = qty * prices.get(sym, 0.0)
+            if value >= 1:
+                out[sym] = (qty, value)
+        return out
+
+    async def _raise_cash(self, need: float, spare: dict, pairs: dict) -> float:
+        """Sell spare coins, biggest first, until `need` more cash is there. Returns the new cash balance."""
+        for sym, (qty, value) in sorted(spare.items(), key=lambda kv: -kv[1][1]):
+            if need <= 0:
+                break
+            frac = min(1.0, need * 1.01 / value)
+            if value * frac < float((pairs.get(sym) or {}).get("minOrderAmount") or 1):
+                frac = min(1.0, float((pairs.get(sym) or {}).get("minOrderAmount") or 1) * 1.05 / value)
+            res = await self.live.sell_fraction(sym, frac)
+            got = float(((res or {}).get("execution") or {}).get("notional", 0) or 0) - \
+                float(((res or {}).get("execution") or {}).get("fee", 0) or 0)
+            self.agent("livedesk").say(f"Sold {frac * 100:.0f}% of your {sym} for {got:.2f} {self.live.currency} "
+                                       f"to fund a buy (you allowed the bot to use your coins).", "live")
+            need -= got
+        return (await self.live.balances()).get("FIAT", 0.0)
+
+    async def _reconcile_live(self) -> None:
+        """Sell live coins the champion doesn't hold any more (e.g. after a new champion took over)."""
+        if self.mode != "live" or not self.live or not self.settings["live"]["sell_orphans"]:
+            return
+        champ = self.champion()
+        if not champ:
+            return
+        for sym in list(self.db.get("live_qty", {})):
+            if sym not in champ.broker.positions:
+                self.agent("livedesk").say(f"{champ.name} doesn't hold {sym}: selling the bot's live {sym}.")
+                await self._mirror_live(sym, "SELL", 1.0)
+
+    async def _poll_wallet(self) -> None:
+        """The real account, read-only: cash, the bot's coins with value and P&L, what Fusion can trade."""
+        if self.settings.simulate:
+            return
+        b = self.live or self._viewer
+        if b is None:
+            try:
+                b = make_live_broker(self.settings)
+            except ValueError:
+                return  # no key: nothing to show
+            try:
+                await b.connect()
+            except Exception as ex:
+                self.wallet = {"error": str(ex), "ts": time.time()}
+                return
+            self._viewer = b
+        try:
+            bal = await b.balances()
+            prices = await b.prices() if hasattr(b, "prices") else {}
+        except Exception as ex:
+            self.wallet = {"error": str(ex), "ts": time.time()}
+            return
+        if getattr(b, "pairs", None):
+            self.fusion_coins = set(b.pairs)
+        qty, cost = self.db.get("live_qty", {}), self.db.get("live_cost", {})
+        coins = []
+        for sym, q in qty.items():
+            px = prices.get(sym, 0.0)
+            coins.append({"symbol": sym, "qty": q, "cost": round(cost.get(sym, 0.0), 2), "price": px,
+                          "value": round(q * px, 2), "pnl": round(q * px - cost.get(sym, 0.0), 2) if px else None})
+        cur = b.currency
+        yours = {}
+        for k, v in bal.items():
+            left = (v or 0) - qty.get(k, 0.0)  # your part: whatever the bot didn't buy
+            if k not in ("FIAT", cur) and left > 1e-12:
+                yours[k] = left
+        own = [{"symbol": k, "qty": round(v, 8), "price": prices.get(k), "value": round(v * prices.get(k, 0), 2),
+                "tradable": k in (getattr(b, "pairs", None) or {})} for k, v in yours.items()]
+        own.sort(key=lambda c: -c["value"])
+        bot_value = sum(c["value"] for c in coins)
+        yours_value = sum(c["value"] for c in own)
+        fiat = bal.get("FIAT", 0.0)
+        self.wallet = {
+            "venue": b.name, "currency": cur, "fiat": round(fiat, 2), "coins": coins,
+            "bot_value": round(bot_value, 2), "bot_cost": round(sum(cost.values()), 2),
+            "bot_pnl": round(bot_value - sum(cost.get(c["symbol"], 0) for c in coins if c["price"]), 2),
+            "yours": {c["symbol"]: c["qty"] for c in own}, "own_coins": own, "yours_value": round(yours_value, 2),
+            "total": round(fiat + bot_value + yours_value, 2), "use_my_coins": self.settings["live"]["use_my_coins"],
+            "max_invest": self.settings["live"]["max_invest"], "ts": time.time(),
+        }
+
+    async def _scan(self) -> None:
+        await self.agent("radar").scan()
+
     def set_kill_switch(self, on: bool) -> None:
         self.db.set("kill_switch", on)
         self._log("Risk Officer", "error" if on else "info",
@@ -580,6 +769,12 @@ class Engine:
             if not r["ok"]:
                 self.db.set("mode", "paper")
         self._log("Engine", "info", "Booting: loading price history" + (" (SIMULATED data)" if self.settings.simulate else ""))
+        try:
+            if not self.settings.simulate:
+                await self.universe._load_pairs()  # exact Kraken pair names for radar coins
+        except Exception as ex:
+            self._log("Data", "warn", f"Kraken pair list failed: {ex}")
+        await self._poll_wallet()
         await self.prices.backfill()
         self._log("Engine", "info", f"Team online. AI {'on' if self.llm.available else 'off (no API key): free math mode'}.")
         e = self.settings["engine"]  # read on every loop, so dashboard changes apply without a restart
@@ -592,6 +787,9 @@ class Engine:
             self._every(lambda: e["tick_seconds"], self.tick),
             self._every(lambda: 60, self.snapshot_equity),
             self._every(lambda: 2, self.publish_prices),
+            self._every(lambda: self.settings["scanner"]["every_minutes"] * 60, self._scan),
+            self._every(lambda: 30, self._poll_wallet),
+            self._every(lambda: 60, self._reconcile_live),
         )
 
     async def _every(self, seconds, fn) -> None:
@@ -671,6 +869,12 @@ class Engine:
             "professor": self.agent("professor").detail,
             "next_professor": getattr(self.agent("professor"), "next_due", 0),
             "variants": len(self.variants),
+            "wallet": self.wallet,
+            "radar": {"scanned": len(self.agent("radar").ranked), "watching": self.scanned,
+                      "fusion": len(self.fusion_coins) if self.fusion_coins else None,
+                      "hot": [{k: r[k] for k in ("symbol", "heat", "change", "volume_usd")}
+                              for r in self.agent("radar").ranked if r["heat"] is not None][:12]},
+            "live_caps": {k: self.settings["live"][k] for k in ("max_invest", "max_order", "max_spread_pct", "use_my_coins")},
         }
         if not light:
             s["ticker"] = self.ticker()

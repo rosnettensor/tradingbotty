@@ -240,7 +240,10 @@ def test_live_mirror_never_sells_your_own_coins():
     eng = Engine.__new__(Engine)
     eng.live = FakeLive()
     eng.live_errors = 0
-    eng.settings = {"risk": {"min_order_usd": 1}}
+    eng.settings = {"risk": {"min_order_usd": 1},
+                    "live": {"max_invest": 25.0, "max_order": 10.0, "max_spread_pct": 1.0, "sell_orphans": True}}
+    eng.agent = lambda _id: SimpleNamespace(say=lambda *a: None)
+    eng.throttled_say = lambda *a: None
     eng.db = SimpleNamespace(get=lambda k, d=None: store.get(k, d), set=store.__setitem__, execute=lambda *a: None)
     eng.champion = lambda: SimpleNamespace(id="v1")
     eng._log = lambda *a: None

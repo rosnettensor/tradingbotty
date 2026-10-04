@@ -1,0 +1,203 @@
+"""v0.4: Market Radar over every coin, live money caps, spread guard and leftover sells."""
+import asyncio
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import httpx
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend"))
+
+from tradingbotty.config import load_settings  # noqa: E402
+from tradingbotty.data import prices as P  # noqa: E402
+from tradingbotty.data.universe import Universe, rank  # noqa: E402
+
+
+def _kraken(req: httpx.Request):
+    if req.url.path.endswith("/AssetPairs"):
+        return httpx.Response(200, json={"error": [], "result": {
+            "XXBTZUSD": {"altname": "XBTUSD", "wsname": "XBT/USD", "status": "online"},
+            "SOLUSD": {"altname": "SOLUSD", "wsname": "SOL/USD"},
+            "WIFUSD": {"altname": "WIFUSD", "wsname": "WIF/USD"},
+            "USDTZUSD": {"altname": "USDTUSD", "wsname": "USDT/USD"},   # stablecoin: skipped
+            "SOLEUR": {"altname": "SOLEUR", "wsname": "SOL/EUR"},       # not USD: skipped
+        }})
+    return httpx.Response(200, json={"error": [], "result": {
+        "XXBTZUSD": {"a": ["100010", "1", "1"], "b": ["99990", "1", "1"], "c": ["100000", "0.1"], "o": "98000",
+                     "v": ["10", "500"], "h": ["101000", "101000"], "l": ["97000", "97000"]},
+        "SOLUSD": {"a": ["150.1"], "b": ["149.9"], "c": ["150"], "o": "160", "v": ["1", "100000"],
+                   "h": ["0", "165"], "l": ["0", "148"]},
+        "WIFUSD": {"a": ["2.2"], "b": ["1.8"], "c": ["2"], "o": "1", "v": ["1", "10"], "h": ["0", "2"], "l": ["0", "1"]},
+        "USDTZUSD": {"a": ["1"], "b": ["1"], "c": ["1"], "o": "1", "v": ["1", "1e9"]},
+    }})
+
+
+def test_universe_reads_every_coin_in_two_requests():
+    u = Universe()
+    calls = []
+    u.client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: calls.append(r) or _kraken(r)))
+    rows = {r["symbol"]: r for r in asyncio.run(u.scan())}
+    assert set(rows) == {"BTC", "SOL", "WIF"} and len(calls) == 2
+    btc = rows["BTC"]
+    assert round(btc["change"], 2) == 2.04 and round(btc["spread_pct"], 3) == 0.02 and btc["volume_usd"] == 5e7
+    assert P.PAIR_KEYS["XXBTZUSD"] == "BTC" and P.kraken_pair("WIF") == "WIFUSD"
+
+
+def test_radar_filters_and_ranks():
+    rows = [
+        {"symbol": "UP", "price": 1, "change": 8, "volume_usd": 5e7, "spread_pct": 0.05, "range_pos": 0.9},
+        {"symbol": "DOWN", "price": 1, "change": -8, "volume_usd": 5e7, "spread_pct": 0.05, "range_pos": 0.1},
+        {"symbol": "THIN", "price": 1, "change": 20, "volume_usd": 1e4, "spread_pct": 0.05, "range_pos": 0.9},
+        {"symbol": "WIDE", "price": 1, "change": 20, "volume_usd": 5e7, "spread_pct": 2.0, "range_pos": 0.9},
+        {"symbol": "PUMP", "price": 1, "change": 150, "volume_usd": 5e7, "spread_pct": 0.05, "range_pos": 1},
+        {"symbol": "NOTFUS", "price": 1, "change": 9, "volume_usd": 5e7, "spread_pct": 0.05, "range_pos": 0.9},
+    ]
+    fus = {"UP", "DOWN", "THIN", "WIDE", "PUMP"}
+    r = {x["symbol"]: x for x in rank(rows, fusion=fus, min_volume_usd=1e6, max_spread_pct=0.5)}
+    assert r["UP"]["heat"] > 0 > r["DOWN"]["heat"]
+    assert r["THIN"]["why"] == "too little trading" and r["WIDE"]["why"] == "spread too wide"
+    assert r["PUMP"]["why"] == "already pumped" and r["NOTFUS"]["why"] == "not on Fusion"
+    ordered = [x["symbol"] for x in rank(rows, fusion=fus, min_volume_usd=1e6, max_spread_pct=0.5)]
+    assert ordered[:2] == ["UP", "DOWN"]
+    # buzz lifts a coin
+    a = rank(rows[:1], fusion=None, min_volume_usd=1e6, max_spread_pct=0.5)[0]["heat"]
+    b = rank(rows[:1], fusion=None, min_volume_usd=1e6, max_spread_pct=0.5, trending=["UP"])[0]["heat"]
+    assert b > a
+
+
+def test_radar_watchlist_in_engine(tmp_path, monkeypatch):
+    monkeypatch.setenv("TB_SIMULATE", "1")
+    monkeypatch.setenv("TB_DB", str(tmp_path / "e.db"))
+    from tradingbotty.engine import Engine
+    e = Engine(load_settings())
+    asyncio.run(e.prices.backfill())
+    e.set_controls({"scanner.max_hot": 5})
+    asyncio.run(e._scan())
+    assert 0 < len(e.scanned) <= 5 and all(s in e.prices.quotes for s in e.scanned)
+    assert not set(e.scanned) & set(e.core_crypto())
+    assert e.sources_info()["crypto"] == e.core_crypto()  # radar coins never leak into your own list
+    asyncio.run(e.tick())
+    assert e.agent("radar").status == "ok" and "scanned" in e.agent("radar").summary
+    # a held radar coin stays even when it cools off; the others leave
+    held = e.scanned[0]
+    e.champion().broker.positions[held] = SimpleNamespace(qty=1, avg_price=1, value=lambda p: 1)
+    added, dropped = asyncio.run(e.set_scanned([], keep=set()))
+    assert held in e.scanned and held not in dropped
+    assert all(e.held_anywhere(s) for s in e.scanned) and not any(e.held_anywhere(s) for s in dropped)
+    # adding a radar coin by hand makes it yours
+    r = asyncio.run(e.add_source("crypto", held))
+    assert r["ok"] and held in e.core_crypto() and held not in e.scanned
+    # restart: radar coins come back
+    e.set_controls({"scanner.on": False})
+    asyncio.run(e._scan())
+    assert e.agent("radar").ranked == []
+
+
+class FakeFusion:
+    name = "Bitpanda Fusion"
+    currency = "CHF"
+
+    def __init__(self, spread=0.1):
+        self.pairs = {"BTC": {}, "SOL": {}}
+        self.bal = {"FIAT": 100.0}
+        self.spread = spread
+        self.buys, self.sells = [], []
+
+    async def balances(self):
+        return dict(self.bal)
+
+    async def spread_pct(self, symbol):
+        return self.spread
+
+    async def buy(self, symbol, amount):
+        self.buys.append((symbol, amount))
+        self.bal["FIAT"] -= amount
+        self.bal[symbol] = self.bal.get(symbol, 0) + amount / 10
+        return {"execution": {"quantity": amount / 10, "price": 10, "notional": amount, "fee": 0}}
+
+    async def sell_fraction(self, symbol, fraction, owned=None):
+        held = self.bal.get(symbol, 0)
+        qty = (held if owned is None else min(held, owned)) * fraction
+        self.sells.append((symbol, round(qty, 6)))
+        self.bal[symbol] -= qty
+        self.bal["FIAT"] += qty * 10
+        return {"execution": {"quantity": qty, "price": 10, "notional": qty * 10, "fee": 0}}
+
+    async def prices(self):
+        return {s: 10.0 for s in self.pairs}
+
+
+def _engine(tmp_path, monkeypatch, live):
+    monkeypatch.setenv("TB_SIMULATE", "1")
+    monkeypatch.setenv("TB_DB", str(tmp_path / "l.db"))
+    from tradingbotty.engine import Engine
+    e = Engine(load_settings())
+    e.live = live
+    e.db.set("mode", "live")
+    return e
+
+
+def test_live_caps_and_spread_guard(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 15, "live.max_order": 8})
+    asyncio.run(e._mirror_live("BTC", "BUY", 0.9))   # champion goes 90% in: capped at 8 per order
+    asyncio.run(e._mirror_live("SOL", "BUY", 0.9))   # only 7 left under the 15 cap
+    asyncio.run(e._mirror_live("SOL", "BUY", 0.9))   # cap reached: nothing
+    assert f.buys == [("BTC", 8.0), ("SOL", 7.0)]
+    asyncio.run(e._mirror_live("DOGE", "BUY", 0.2))  # not on Fusion: skipped, not an error
+    assert e.live_errors == 0 and len(f.buys) == 2
+    f2 = FakeFusion(spread=3.0)
+    e.live = f2
+    asyncio.run(e._mirror_live("SOL", "SELL", 1.0))
+    e.db.set("live_cost", {})
+    asyncio.run(e._mirror_live("BTC", "BUY", 0.1))   # 3% spread > 1% limit: skipped
+    assert f2.buys == []
+
+
+def test_leftover_live_coins_are_sold_after_champion_change(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    f.bal["BTC"] = 0.5  # yours
+    asyncio.run(e._mirror_live("BTC", "BUY", 0.1))
+    assert "BTC" in e.db.get("live_qty")
+    asyncio.run(e._reconcile_live())  # champion doesn't hold BTC on paper: sell the bot's BTC, keep yours
+    assert f.sells == [("BTC", 0.25)] and abs(f.bal["BTC"] - 0.5) < 1e-9
+    assert e.db.get("live_qty") == {}
+
+
+def test_fusion_spread_and_prices():
+    from tradingbotty.brokers.fusion import FusionBroker
+
+    def handler(req):
+        if req.url.path == "/v1/orderbook/SOL-CHF":
+            return httpx.Response(200, json={"bids": [{"price": "99"}], "asks": [{"price": "101"}]})
+        if req.url.path == "/v1/tickers":
+            return httpx.Response(200, json=[{"pair": "SOL-CHF", "price": "100"}, {"pair": "SOL-EUR", "price": "105"}])
+        return httpx.Response(404)
+
+    b = FusionBroker("k", "CHF")
+    b.client = httpx.AsyncClient(base_url="https://api.fusion.bitpanda.com", transport=httpx.MockTransport(handler))
+    b.pairs = {"SOL": {"pair": "SOL-CHF"}}
+    assert asyncio.run(b.spread_pct("SOL")) == 2.0
+    assert asyncio.run(b.prices()) == {"SOL": 100.0}
+
+
+def test_bot_may_use_your_coins_only_when_allowed(tmp_path, monkeypatch):
+    f = FakeFusion()
+    f.pairs["HBAR"] = {}
+    f.bal = {"FIAT": 2.0, "HBAR": 5.0, "VSN": 3.0}  # HBAR worth 50; VSN has no Fusion pair: never touched
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 100, "live.max_order": 20})
+    asyncio.run(e._mirror_live("BTC", "BUY", 0.5))
+    assert f.sells == [] and f.buys == [("BTC", 1.0)]  # not allowed yet: only the 2 CHF cash counts
+    e.set_controls({"live.use_my_coins": True})
+    asyncio.run(e._mirror_live("BTC", "BUY", 0.5))
+    assert f.sells and f.sells[0][0] == "HBAR" and f.bal["VSN"] == 3.0
+    assert f.buys[-1] == ("BTC", 20.0) and f.bal["FIAT"] >= -1e-9  # never below zero
+    e.champion().broker.positions["SOL"] = SimpleNamespace(qty=1, avg_price=1)
+    f.pairs["SOL"] = {}
+    f.bal["SOL"] = 4.0
+    spare = asyncio.run(e._spare_coins(f.bal))
+    assert "SOL" not in spare and "BTC" not in spare and "VSN" not in spare  # champion's, bot's, untradable

@@ -298,7 +298,9 @@ class Professor(Agent):
     outputs = "risk appetite, avoid list, assessment and a research idea"
     default_prompt = (
         "You are a Stanford finance professor coaching a tiny, playful spot-only trading bot (about 100 USD, "
-        "fees about {fee}% per trade, no leverage, no shorting). Think in probabilities, base rates, Kelly sizing, "
+        "fees about {fee}% per trade, no leverage, no shorting). Its Market Radar scans hundreds of coins and "
+        "watches the hottest, so small, jumpy coins appear: judge whether they are momentum or a pump about to "
+        "dump, and put the dangerous ones on the avoid list. Think in probabilities, base rates, Kelly sizing, "
         "regime shifts and behavioral finance. Given the brief, return: assessment (2-3 sentences, plain words), "
         "risk_appetite between 0.5 (defensive) and 1.5 (aggressive) that scales position sizes, avoid (tickers to "
         "skip for now, may be empty), and idea (one concrete, testable strategy idea for the experiments).")
@@ -332,6 +334,10 @@ class Professor(Agent):
             "hype": {s: round(v, 2) for s, v in sorted(bb.hype.items(), key=lambda kv: -abs(kv[1]))[:6]},
             "coins_24h": {q.symbol: round(q.change_24h_pct, 2) for q in self.ctx.prices.crypto()},
             "strategies": [{k: b[k] for k in ("name", "return_pct", "trades", "max_drawdown_pct")} for b in board],
+            "radar_hottest": [{k: r[k] for k in ("symbol", "heat", "change")}
+                              for r in self.ctx.agent("radar").ranked if r["heat"] is not None][:10],
+            "live": None if not self.ctx.wallet or self.ctx.wallet.get("error") else
+                    {k: self.ctx.wallet[k] for k in ("currency", "fiat", "bot_value", "bot_pnl")} | {"mode": self.ctx.mode},
         }
         res = await self.ctx.llm.json_call(
             self.name, self.prompt.replace("{fee}", str(self.ctx.settings["paper"]["fee_pct"])), str(brief),

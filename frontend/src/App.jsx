@@ -2,12 +2,13 @@ import { useEffect, useState } from "react";
 import { api, fmt, useBot, usePoll } from "./useBot.js";
 import Cockpit from "./Cockpit.jsx";
 import Markets from "./Markets.jsx";
+import Radar from "./Radar.jsx";
 import Agents from "./Agents.jsx";
 import Lab from "./Lab.jsx";
 import Controls from "./Controls.jsx";
 import { Sparkline } from "./charts.jsx";
 
-const TABS = ["cockpit", "markets", "agents", "lab", "controls"];
+const TABS = ["cockpit", "radar", "markets", "agents", "lab", "controls"];
 
 export default function App() {
   const { state, connected, pulse } = useBot();
@@ -20,7 +21,7 @@ export default function App() {
   });
   useEffect(() => { try { localStorage.setItem("tb-tab", tab); } catch { /* private mode */ } }, [tab]);
   useEffect(() => { try { if (focus) localStorage.setItem("tb-focus", focus); } catch { /* private mode */ } }, [focus]);
-  useEffect(() => {  // keys 1-5 switch tabs
+  useEffect(() => {  // keys 1-6 switch tabs
     const onKey = (e) => {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
       const i = Number(e.key) - 1;
@@ -40,6 +41,7 @@ export default function App() {
       <Ticker items={state.ticker || []} onPick={(s) => { setFocus(s); if (tab !== "markets") setTab("cockpit"); }} />
       <main>
         {tab === "cockpit" && <Cockpit state={state} pulse={pulse} focus={focus} setFocus={setFocus} />}
+        {tab === "radar" && <Radar state={state} setFocus={setFocus} setTab={setTab} />}
         {tab === "markets" && <Markets state={state} focus={focus} setFocus={setFocus} />}
         {tab === "agents" && <Agents nodes={state.nodes || []} avatars={media?.avatars || {}} />}
         {tab === "lab" && <Lab state={state} />}
