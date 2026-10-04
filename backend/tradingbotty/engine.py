@@ -45,6 +45,15 @@ def make_live_broker(settings: Settings):
     raise ValueError(f"unknown live broker {kind!r} in config.toml")
 
 
+def _max_drawdown(series: list[float]) -> float:
+    """Largest fall from a peak, in %."""
+    peak, dd = (series[0] if series else 0.0), 0.0
+    for x in series:
+        peak = max(peak, x)
+        dd = max(dd, (peak - x) / peak * 100 if peak else 0)
+    return dd
+
+
 @dataclass
 class Variant:
     id: str
@@ -491,16 +500,22 @@ class Engine:
 
     def _leaderboard(self) -> list[dict]:
         prices = {s: q.price for s, q in self.prices.quotes.items() if q.price}
+        window_h = float(self.settings["optimizer"]["min_age_to_promote_h"])
         out = []
         for v in self.variants.values():
             eq = v.broker.equity(prices)
             ret = (eq / v.start_equity - 1) * 100
-            series = [v.start_equity] + [r["equity"] for r in self.db.query(
-                "SELECT equity FROM equity WHERE variant_id=? AND mode='paper' ORDER BY ts", (v.id,))] + [eq]
-            peak, dd = series[0], 0.0
-            for x in series:
-                peak = max(peak, x)
-                dd = max(dd, (peak - x) / peak * 100 if peak else 0)
+            rows = self.db.query(
+                "SELECT ts, equity FROM equity WHERE variant_id=? AND mode='paper' ORDER BY ts", (v.id,))
+            series = [v.start_equity] + [r["equity"] for r in rows] + [eq]
+            dd = _max_drawdown(series)
+            # the same recent window for everyone, so an old champion can't live off gains from long ago
+            since = time.time() - window_h * 3600
+            recent = [r["equity"] for r in rows if r["ts"] >= since] + [eq]
+            if v.created >= since:
+                recent = [v.start_equity] + recent
+            r_ret = (recent[-1] / recent[0] - 1) * 100 if recent[0] else 0.0
+            r_fit = r_ret - 0.5 * _max_drawdown(recent)
             t = self.db.query(
                 "SELECT COUNT(*) n, COALESCE(SUM(fee),0) fees, SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END) wins, "
                 "SUM(CASE WHEN side='SELL' THEN 1 ELSE 0 END) sells FROM trades WHERE variant_id=? AND mode='paper'",
@@ -508,6 +523,7 @@ class Engine:
             out.append({
                 "id": v.id, "name": v.name, "champion": v.champion, "equity": round(eq, 2), "return_pct": round(ret, 2),
                 "max_drawdown_pct": round(dd, 2), "fitness": round(ret - 0.5 * dd, 2), "trades": t["n"],
+                "recent_return_pct": round(r_ret, 2), "recent_fitness": round(r_fit, 2), "window_h": window_h,
                 "fees": round(t["fees"], 2), "win_rate": round((t["wins"] or 0) / t["sells"] * 100, 1) if t["sells"] else None,
                 "age_h": round((time.time() - v.created) / 3600, 1), "config": v.config.to_dict(),
                 "benchmark": v.config.hold,

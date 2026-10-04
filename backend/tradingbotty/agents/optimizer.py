@@ -25,14 +25,16 @@ class Optimizer(Agent):
     explain = ("Free, no AI. Every strategy trades its own paper account on the same live data. On a schedule the "
                "Optimizer retires the weakest mature strategy, then breeds a new one: it mutates the best strategy "
                "several times, backtests each mutation on recent price history, and adds only the winner. It "
-               "suggests a new champion when a challenger beats it clearly, and promotes it only if you allow that. "
-               "Fitness = return minus half the worst drawdown, so wild swings are punished.")
+               "checks the champion: everyone is scored on the same recent window (the 'Promote after' hours), and a "
+               "rival that beats the champion clearly at two checks in a row takes over (only if you allow "
+               "auto-promote). Fitness = return minus half the worst drawdown, so wild swings are punished.")
     outputs = "new and retired strategies, champion suggestions"
 
     def __init__(self, ctx):
         super().__init__(ctx)
         self.next_due = time.time() + 600  # first evolution 10 minutes after start
         self.rng = random.Random()
+        self.challenger: str | None = None  # a rival that beat the champion at the last check
 
     @property
     def cfg(self) -> dict:
@@ -74,18 +76,36 @@ class Optimizer(Agent):
             v = self.ctx.add_variant(child, parent_id=pv.id, note=note)
             self.say(f"Bred {v.name} ({note}). It starts with a fresh paper account.")
 
-        # promotion
+        # promotion: everyone is judged on the same recent window (the "Promote after" hours), and a challenger
+        # must lead on two checks in a row, so one lucky hour can't flip real money back and forth
         if champ:
             rivals = [b for b in board if not b["champion"] and b["age_h"] >= c["min_age_to_promote_h"]
                       and b["id"] in self.ctx.variants and not b.get("benchmark")]
-            best = max(rivals, key=lambda b: b["fitness"], default=None)
-            if best and best["fitness"] > champ["fitness"] + PROMOTE_MARGIN_PCT:
-                if self.ctx.db.get("auto_promote", False):
-                    self.ctx.promote(best["id"])
-                    self.say(f"Promoted {best['name']} to champion (fitness {best['fitness']:+.2f} vs {champ['fitness']:+.2f}).")
-                else:
-                    self.say(f"Suggestion: {best['name']} is beating the champion "
-                             f"({best['fitness']:+.2f} vs {champ['fitness']:+.2f}). Promote it in the Lab if you agree.")
+            best = max(rivals, key=lambda b: b["recent_fitness"], default=None)
+            if not best:
+                self.challenger = None
+                return
+            lead = best["recent_fitness"] - champ["recent_fitness"]
+            if lead <= PROMOTE_MARGIN_PCT:
+                self.challenger = None
+                self.say(f"Champion check: {champ['name']} stays ({champ['recent_fitness']:+.2f} over the last "
+                         f"{champ['window_h']:.0f}h; best rival {best['name']} {best['recent_fitness']:+.2f}).")
+                return
+            if self.challenger != best["id"]:
+                self.challenger = best["id"]
+                self.say(f"Champion check: {best['name']} leads {champ['name']} by {lead:.2f} over the last "
+                         f"{champ['window_h']:.0f}h. If it still leads at the next check, it takes over.")
+                return
+            self.challenger = None
+            if self.ctx.db.get("auto_promote", False):
+                self.ctx.promote(best["id"])
+                self.say(f"Promoted {best['name']} to champion: it beat {champ['name']} twice in a row "
+                         f"({best['recent_fitness']:+.2f} vs {champ['recent_fitness']:+.2f} over the last "
+                         f"{champ['window_h']:.0f}h).")
+            else:
+                self.say(f"Suggestion: {best['name']} is beating the champion "
+                         f"({best['recent_fitness']:+.2f} vs {champ['recent_fitness']:+.2f} over the last "
+                         f"{champ['window_h']:.0f}h). Promote it in the Lab if you agree.")
 
     async def _screened_child(self, parent):
         n = int(self.cfg["screen_candidates"])

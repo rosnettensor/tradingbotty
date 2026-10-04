@@ -48,10 +48,10 @@ export default function Lab({ state }) {
       </section>
 
       <section className="panel">
-        <h3>LIVE LEADERBOARD <span className="dim">fitness = return − ½ × max drawdown · every strategy trades on paper with the same live data</span></h3>
+        <h3>LIVE LEADERBOARD <span className="dim">fitness = return − ½ × max drawdown · the champion is picked on the same recent window for everyone · every strategy trades on paper with the same live data</span></h3>
         <table className="board">
           <thead>
-            <tr><th /><th>variant</th><th>equity</th><th>return</th><th>max dd</th><th>fitness</th><th>trades</th><th>win rate</th><th>fees</th><th>age</th><th /></tr>
+            <tr><th /><th>variant</th><th>equity</th><th>return</th><th>max dd</th><th>fitness</th><th title="What decides the champion: fitness over the same recent window for everyone">last {board[0]?.window_h ?? 48}h</th><th>trades</th><th>win rate</th><th>fees</th><th>age</th><th /></tr>
           </thead>
           <tbody>
             {board.map((b) => (
@@ -63,6 +63,7 @@ export default function Lab({ state }) {
                   <td className={b.return_pct >= 0 ? "up" : "down"}>{fmt.pct(b.return_pct)}</td>
                   <td className="down">{b.max_drawdown_pct.toFixed(2)}%</td>
                   <td>{b.fitness.toFixed(2)}</td>
+                  <td className={(b.recent_fitness ?? 0) >= 0 ? "up" : "down"}><b>{b.recent_fitness?.toFixed(2) ?? "–"}</b></td>
                   <td>{b.trades}</td>
                   <td>{b.win_rate == null ? "–" : `${b.win_rate}%`}</td>
                   <td>{fmt.usd(b.fees)}</td>
@@ -75,7 +76,7 @@ export default function Lab({ state }) {
                 </tr>
                 {open === b.id && (
                   <tr className="cfg-row">
-                    <td colSpan={11}><ConfigDiff config={b.config} base={champ?.config} /></td>
+                    <td colSpan={12}><ConfigDiff config={b.config} base={champ?.config} /></td>
                   </tr>
                 )}
               </Fragment>

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 export const SIGNAL_LABELS = {
   momentum: "Momentum", trend: "Trend", reversion: "Dip", breakout: "Breakout", swing: "Multi-day",
-  hype: "Hype", news: "News", market: "Market",
+  hype: "Hype", news: "News", market: "Market", radar: "Radar",
 };
 
 // A slider that only reports when you let go, so dragging doesn't spam the bot.

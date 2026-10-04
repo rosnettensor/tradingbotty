@@ -223,3 +223,44 @@ def test_test_accounts_resize_to_real_balance(tmp_path, monkeypatch):
     assert t["start_total"] == 308.0 and t["change"] == 0
     t = e._track_account(320.0)
     assert t["change"] == 12.0 and t["change_pct"] > 3.8
+
+
+def test_champion_is_judged_on_the_recent_window(tmp_path, monkeypatch):
+    """An old champion living off gains from long ago loses to a rival that does better lately,
+    but only after the rival leads at two checks in a row."""
+    import time
+    monkeypatch.setenv("TB_SIMULATE", "1")
+    monkeypatch.setenv("TB_DB", str(tmp_path / "c.db"))
+    from tradingbotty.engine import Engine
+    e = Engine(load_settings())
+    e.set_controls({"optimizer.max_variants": 16, "optimizer.min_age_to_promote_h": 48})
+    e.db.set("auto_promote", True)
+    now = time.time()
+    champ = e.champion()
+    rival = next(v for v in e.variants.values() if not v.champion and not v.config.hold)
+    for v in e.variants.values():
+        v.created = now - 3600
+        v.start_equity = v.broker.cash = 100.0
+        v.broker.positions.clear()
+    for v in (champ, rival):
+        v.created = now - 100 * 3600
+    for ts, eq in ((now - 90 * 3600, 150.0), (now - 40 * 3600, 150.0)):  # big gains long ago
+        e.db.execute("INSERT INTO equity(ts,variant_id,mode,equity,cash) VALUES(?,?,?,?,?)", (ts, champ.id, "paper", eq, eq))
+    champ.broker.cash = 140.0                                               # losing lately
+    e.db.execute("INSERT INTO equity(ts,variant_id,mode,equity,cash) VALUES(?,?,?,?,?)",
+                 (now - 40 * 3600, rival.id, "paper", 100.0, 100.0))
+    rival.broker.cash = 110.0                                               # winning lately
+
+    board = {b["id"]: b for b in e.leaderboard(max_age=0)}
+    assert board[champ.id]["fitness"] > board[rival.id]["fitness"]          # lifetime says keep the champion
+    assert board[rival.id]["recent_fitness"] > board[champ.id]["recent_fitness"] + 2
+
+    opt = e.agent("optimizer")
+
+    async def quick_child(parent):
+        return parent.config, "test child"
+    opt._screened_child = quick_child
+    asyncio.run(opt.evolve(e.leaderboard(max_age=0)))
+    assert e.champion().id == champ.id and opt.challenger == rival.id       # first lead: wait
+    asyncio.run(opt.evolve(e.leaderboard(max_age=0)))
+    assert e.champion().id == rival.id                                      # second lead: takes over

@@ -7,7 +7,7 @@ import math
 import random
 from dataclasses import asdict, dataclass, fields
 
-SIGNALS = ["momentum", "trend", "reversion", "breakout", "swing", "hype", "news", "market"]
+SIGNALS = ["momentum", "trend", "reversion", "breakout", "swing", "hype", "news", "market", "radar"]
 
 
 @dataclass
@@ -21,6 +21,7 @@ class StrategyConfig:
     w_news: float = 0.7
     w_market: float = 0.5
     w_swing: float = 0.0            # multi-day trend (hourly candles over 1-3 weeks)
+    w_radar: float = 0.0            # Market Radar heat: 24h momentum, position in the 24h range, volume, buzz
     entry_score: float = 0.35       # buy when score is above this
     exit_score: float = -0.15       # sell when score falls below this
     take_profit_pct: float = 6.0
@@ -116,6 +117,9 @@ STRATEGY_FIELDS = {
                    "help": "Price breaking above its last-hour high (or below its low)."},
     "w_swing": {"label": "Multi-day trend", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
                 "help": "Price trend over 1 to 3 weeks from hourly candles. Slow, so it trades rarely and pays fewer fees."},
+    "w_radar": {"label": "Radar heat (24h)", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+                "help": "The Market Radar's 24h heat: momentum, closeness to the 24h high, trading volume and buzz. "
+                        "Starts at 0; the Optimizer can try it."},
     "w_hype": {"label": "Social hype", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
                "help": "Reddit buzz and CoinGecko trending, corrected by the Hype vs Price Detective."},
     "w_news": {"label": "News", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",

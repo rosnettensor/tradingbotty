@@ -367,7 +367,7 @@ class Predictor(Agent):
     id = "predictor"
     name = "Predictor"
     role = "Blends every signal into one score per coin, separately for each strategy variant"
-    inputs = ["crypto", "market", "hype", "detective", "news", "professor"]
+    inputs = ["crypto", "market", "hype", "detective", "news", "professor", "radar"]
     explain = ("Pure math, free. For every strategy it multiplies each signal by that strategy's weight and adds them "
                "up, giving one score per symbol (about -1 to +1). A strategy buys when the score is above its buy "
                "threshold and sells when it falls below its sell threshold. The weights are what the Optimizer and "
@@ -376,12 +376,16 @@ class Predictor(Agent):
 
     async def run(self, bb: Blackboard) -> None:
         bb.scores, bb.signals = {}, {}
+        radar = self.ctx.agent("radar")
+        heat = {r["symbol"]: max(-1.0, min(1.0, r["heat"])) for r in (radar.ranked if radar else [])
+                if r["heat"] is not None}
         for sym, q in self.ctx.prices.quotes.items():
             t = bb.tech.get(sym, {})
             bb.signals[sym] = {
                 "momentum": t.get("momentum", 0.0), "trend": t.get("trend", 0.0),
                 "reversion": t.get("reversion", 0.0), "breakout": t.get("breakout", 0.0), "swing": t.get("swing", 0.0),
                 "hype": bb.hype.get(sym, 0.0), "news": bb.news.get(sym, 0.0), "market": bb.market.get(sym, 0.0),
+                "radar": heat.get(sym, 0.0),
             }
         for v in self.ctx.variants.values():
             w = v.config.weights()
