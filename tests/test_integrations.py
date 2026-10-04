@@ -105,3 +105,28 @@ def test_bitpanda_buy_sell_flow():
         assert await b.sell_fraction("BTC", 1.0) is None  # nothing held: no short
 
     asyncio.run(run())
+
+
+def test_reddit_rss_fallback():
+    from tradingbotty.data.social import SocialFeed, parse_atom
+
+    atom = b"""<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+    <entry><title>Solana to the moon</title><content type="html">&lt;p&gt;SOL is pumping, Bitcoin too&lt;/p&gt;</content></entry>
+    <entry><title>Daily discussion</title><content>nothing</content></entry></feed>"""
+    assert parse_atom(atom)[0][0] == "Solana to the moon"
+
+    def handler(req):
+        if req.url.path.endswith(".json"):
+            return httpx.Response(403, text="<html>blocked</html>")
+        if req.url.path.endswith(".rss"):
+            return httpx.Response(200, content=atom)
+        if "coingecko" in req.url.host:
+            return httpx.Response(200, json={"coins": [{"item": {"symbol": "sol"}}]})
+        return httpx.Response(200, json={"data": [{"value": "60", "value_classification": "Greed"}]})
+
+    feed = SocialFeed(["SOL", "BTC", "ETH"])
+    feed.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    asyncio.run(feed.poll_hype())
+    assert feed.healthy["reddit"]
+    assert feed.mention_counts["SOL"] > 0 and feed.mention_counts["BTC"] > 0
+    assert feed.trending == ["SOL"] and feed.fear_greed == 60
