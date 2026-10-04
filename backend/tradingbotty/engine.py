@@ -106,6 +106,11 @@ class Engine:
             saved = self.db.get(f"broker:{r['id']}")
             self.variants[r["id"]] = self._make_variant(r["id"], r["name"], StrategyConfig.from_dict(json.loads(r["config_json"])),
                                                         bool(r["is_champion"]), r["created_at"], saved)
+        # personalities added in a later version join the experiment with a fresh paper account
+        known = {r["name"] for r in self.db.query("SELECT name FROM variants")}
+        for name, cfg in SEED_VARIANTS.items():
+            if name not in known:
+                self.add_variant(cfg, name=name, note="new starting personality")
 
     def _make_variant(self, id, name, cfg, champion, created, saved=None) -> Variant:
         p = self.settings["paper"]

@@ -123,3 +123,20 @@ def test_signals_bounded():
     for k in ("momentum", "trend", "reversion", "breakout"):
         assert -1 <= sig[k] <= 1
     assert set(SEED_VARIANTS) >= {"Balanced"}
+
+
+def test_mutation_keeps_exit_threshold_negative_side():
+    rng = random.Random(5)
+    neg = sum(StrategyConfig().mutate(rng).exit_score < 0 for _ in range(200))
+    assert neg > 150  # default exit -0.15 must not flip positive by scaling
+    assert all(StrategyConfig().mutate(rng).min_edge_pct == 0 for _ in range(50))
+
+
+def test_fee_guard_blocks_quiet_coins():
+    from tradingbotty.agents.base import Blackboard
+    from tradingbotty.agents.team import expected_move_pct
+    bb = Blackboard(tech={"BTC": {"vol": 0.0005}})
+    quiet = SimpleNamespace(symbol="BTC", change_24h_pct=1.0)
+    assert expected_move_pct(bb, quiet) < 6.0
+    wild = SimpleNamespace(symbol="BTC", change_24h_pct=-9.0)
+    assert expected_move_pct(bb, wild) >= 6.0

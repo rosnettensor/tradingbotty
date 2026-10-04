@@ -363,6 +363,12 @@ class RiskOfficer(Agent):
         return usd, None
 
 
+def expected_move_pct(bb: Blackboard, quote) -> float:
+    """How much this coin plausibly moves: the bigger of its 24h change and its volatility projected over 4 hours."""
+    vol = bb.tech.get(quote.symbol, {}).get("vol", 0.0)
+    return max(abs(quote.change_24h_pct), vol * math.sqrt(240) * 100)
+
+
 class Buyer(Agent):
     id = "buyer"
     name = "Buyer"
@@ -411,6 +417,8 @@ class Buyer(Agent):
                     continue
                 if now - b.last_sell.get(sym, 0) < cfg.cooldown_minutes * 60:
                     continue
+                if cfg.min_edge_pct > 0 and expected_move_pct(bb, self.ctx.prices.quotes[sym]) < cfg.min_edge_pct:
+                    continue  # the Professor's fee guard: don't pay 3% round trip for a coin that barely moves
                 equity = b.equity(prices)
                 want = equity * cfg.position_pct / 100 * bb.risk_appetite
                 usd, why = risk.check_buy(v, sym, want, prices)
