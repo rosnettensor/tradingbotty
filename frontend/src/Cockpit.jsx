@@ -18,6 +18,7 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
   }, [champ?.id]);
 
   const ret = champ ? (champ.equity / champ.start - 1) * 100 : 0;
+  const w = state.wallet && !state.wallet.error ? state.wallet : null;
   const scores = Object.entries(state.scores || {}).sort((a, b) => b[1] - a[1]);
   const energy = Math.min(1, scores.reduce((s, [, v]) => s + Math.abs(v), 0) / Math.max(1, scores.length) * 2);
   const points = champ ? [...curve, [Date.now() / 1000, champ.equity]] : [];
@@ -25,17 +26,23 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
 
   return (
     <div className="cockpit2">
-      <StatStrip state={state} ret={ret} />
       {state.wallet && <LiveWallet state={state} setFocus={setFocus} />}
+      <StatStrip state={state} ret={ret} />
 
       <section className="panel core">
-        <Sphere mood={ret / 5} energy={energy} pulse={pulse} label={
+        <Sphere mood={(w ? w.change_pct : ret) / 5} energy={energy} pulse={pulse} label={w ? (
           <div className="core-label">
-            <div className="dim">{champ?.name || "–"} · paper test account</div>
+            <div className="dim">YOUR ACCOUNT · {state.mode.toUpperCase()}</div>
+            <div className="equity">{w.total.toFixed(2)} {w.currency}</div>
+            <div className={pctColor(w.change_pct)}>{fmt.pct(w.change_pct)} since start</div>
+          </div>
+        ) : (
+          <div className="core-label">
+            <div className="dim">{champ?.name || "–"} · paper test</div>
             <div className="equity">{fmt.usd(champ?.equity)}</div>
             <div className={ret >= 0 ? "up" : "down"}>{fmt.pct(ret)} since start</div>
           </div>
-        } />
+        )} />
         <Professor state={state} />
       </section>
 
@@ -44,8 +51,14 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
       </section>
 
       <section className="panel equity-panel">
-        <h3>CHAMPION TEST ACCOUNT (PAPER USD) <span className="dim">· dashed line = its virtual 100 USD start · real money: see LIVE MONEY</span></h3>
-        <LineChart series={[{ id: "c", color: "var(--cyan)", bold: true, points }]} baseline={champ?.start} height={170} />
+        {w ? <>
+          <h3>YOUR ACCOUNT ({w.currency}) <span className="dim">· real money · dashed line = where it started</span></h3>
+          <LineChart series={[{ id: "a", color: "var(--magenta)", bold: true, points: [...(w.history || []), [Date.now() / 1000, w.total]] }]}
+            baseline={w.start_total} height={170} />
+        </> : <>
+          <h3>CHAMPION TEST (USD) <span className="dim">· dashed line = start</span></h3>
+          <LineChart series={[{ id: "c", color: "var(--cyan)", bold: true, points }]} baseline={champ?.start} height={170} />
+        </>}
       </section>
 
       <section className="panel why">
@@ -75,49 +88,43 @@ function LiveWallet({ state, setFocus }) {
     return <section className="panel wallet"><h3>BITPANDA FUSION</h3><div className="err">Can't read your account: {w.error}</div></section>;
   }
   const cur = w.currency;
-  const total = w.total || w.fiat + w.bot_value + w.yours_value;
+  const total = w.total;
+  const coinsValue = w.coins_value ?? total - w.fiat;
   const part = (x) => `${total ? (x / total) * 100 : 0}%`;
-  const used = Math.min(100, ((w.bot_cost || 0) / (caps.max_invest || 1)) * 100);
+  const sign = (x) => `${x >= 0 ? "+" : ""}${Number(x || 0).toFixed(2)}`;
   return (
     <section className={`panel wallet ${live ? "is-live" : ""}`}>
       <div className="row-head">
-        <h3>{live ? "● LIVE MONEY" : "REAL ACCOUNT"} <span className="dim">· {w.venue} · {live ? "the champion's trades are copied here" : "watching only, switch to LIVE to trade"} · {ago(w.ts)}</span></h3>
+        <h3>{live ? "● LIVE · YOUR ACCOUNT" : "YOUR ACCOUNT · watching, not trading"} <span className="dim">· {w.venue} · real money · updated {ago(w.ts)}</span></h3>
       </div>
       <div className="wallet-top">
         <div className="wallet-total">
-          <div className="stat-label">Account total</div>
           <div className="big">{total.toFixed(2)} <span>{cur}</span></div>
-          <div className="stat-sub">worst case you lose this, never more: no debt possible</div>
+          <div className={`wallet-change ${pctColor(w.change)}`}>
+            {sign(w.change)} {cur} ({sign(w.change_pct)}%) <span className="dim">since {w.start_ts ? new Date(w.start_ts * 1000).toLocaleDateString() : "start"}</span>
+          </div>
+          <div className={`stat-sub ${pctColor(w.change_24h)}`}>{sign(w.change_24h)} {cur} last 24h</div>
         </div>
         <div className="wallet-split">
           <div className="splitbar">
             <div className="seg-cash" style={{ width: part(w.fiat) }} title="cash" />
-            <div className="seg-bot" style={{ width: part(w.bot_value) }} title="bot's coins" />
-            <div className="seg-own" style={{ width: part(w.yours_value) }} title="your coins" />
+            <div className="seg-own" style={{ width: part(coinsValue) }} title="coins" />
           </div>
           <div className="split-legend">
-            <span><i className="seg-cash" />Cash {w.fiat.toFixed(2)}</span>
-            <span><i className="seg-bot" />Bot's coins {w.bot_value.toFixed(2)} <b className={pctColor(w.bot_pnl)}>{w.bot_pnl >= 0 ? "+" : ""}{w.bot_pnl.toFixed(2)}</b></span>
-            <span><i className="seg-own" />Your coins {w.yours_value.toFixed(2)}</span>
+            <span><i className="seg-cash" />Cash {w.fiat.toFixed(2)} {cur}</span>
+            <span><i className="seg-own" />Coins {coinsValue.toFixed(2)} {cur}</span>
+            <span className="dim">worst case you lose what's here, never more: no debt possible</span>
           </div>
-          <div className="stat-sub">
-            Live cap {w.bot_cost.toFixed(2)} of {caps.max_invest} {cur} used · max {caps.max_order}/order · spread ≤ {caps.max_spread_pct}% ·{" "}
-            {caps.use_my_coins ? <b className="up">bot may use your coins</b> : <span>your coins stay untouched</span>}
+          <div className="wallet-coins">
+            {(w.all_coins || []).map((c) => (
+              <button key={c.symbol} className="tag coin-own" onClick={() => setFocus(c.symbol)}
+                title={`${c.qty} ${c.symbol}${c.bot ? " · bought by the bot" : ""}${c.tradable ? "" : " · not tradable on Fusion"}`}>
+                {c.bot ? "🤖 " : ""}{c.symbol} {c.price ? `${c.value.toFixed(2)}` : `${c.qty} (no price)`}
+              </button>
+            ))}
           </div>
-          <div className="capbar"><div style={{ width: `${used}%` }} /></div>
+          <div className="stat-sub">Limits: max {caps.max_invest} {cur} in bot trades · {caps.max_order}/order · spread ≤ {caps.max_spread_pct}% · {caps.use_my_coins ? "may use all coins" : "only uses cash"}</div>
         </div>
-      </div>
-      <div className="wallet-coins">
-        {w.coins.map((c) => (
-          <button key={`b${c.symbol}`} className="tag coin-bot" onClick={() => setFocus(c.symbol)} title="bought by the bot">
-            🤖 {c.symbol} {c.value.toFixed(2)} <span className={pctColor(c.pnl)}>{c.pnl == null ? "" : `${c.pnl >= 0 ? "+" : ""}${c.pnl.toFixed(2)}`}</span>
-          </button>
-        ))}
-        {(w.own_coins || []).map((c) => (
-          <span key={`o${c.symbol}`} className="tag coin-own" title={c.tradable ? "your coin" : "your coin, not tradable on Fusion in this currency"}>
-            {c.symbol} {c.price ? `${c.value.toFixed(2)} ${cur}` : `${c.qty} (no price)`}
-          </span>
-        ))}
       </div>
     </section>
   );
@@ -131,11 +138,10 @@ function StatStrip({ state, ret }) {
   const nextProf = state.next_professor ? Math.max(0, Math.round((state.next_professor - Date.now() / 1000) / 60)) : null;
   return (
     <section className="panel stats">
-      <Stat label="Test account" value={fmt.usd(c.equity)} sub={<span className={pctColor(ret)}>{fmt.pct(ret)} · paper, not real</span>}
-        title="Every strategy is tested on its own virtual 100 USD paper account. Real money is in the LIVE MONEY panel below." />
-      <Stat label="Cash" value={fmt.usd(c.cash)} sub={`${fmt.usd(s.invested)} invested`} />
-      <Stat label="Realized P&L" value={fmt.usd(s.realized)} tone={pctColor(s.realized)} sub="closed trades" />
-      <Stat label="Fees paid" value={fmt.usd(s.fees)} tone="down" sub={`${s.trades ?? 0} trades total`} />
+      <Stat label={`Champion: ${c.name || "–"}`} value={<span className={pctColor(ret)}>{fmt.pct(ret)}</span>} sub="its test run, sized like your account"
+        title="The strategy whose trades are copied to your account. Every strategy is tested in parallel on an account the size of yours." />
+      <Stat label="Realized P&L (test)" value={fmt.usd(s.realized)} tone={pctColor(s.realized)} sub="champion's closed trades" />
+      <Stat label="Fees (test)" value={fmt.usd(s.fees)} tone="down" sub={`${s.trades ?? 0} trades total`} />
       <Stat label="Trades 24h" value={s.trades_24h ?? 0} sub={`${s.buys_1h ?? 0}/${cfg.max_buys_per_hour ?? "–"} buys this hour`} />
       <Stat label="Win rate" value={s.win_rate == null ? "–" : `${s.win_rate}%`} sub="of closed trades" />
       <Stat label="Market mood" value={r.mood || "…"} tone={r.mood === "risk-on" ? "up" : r.mood === "risk-off" ? "down" : ""}

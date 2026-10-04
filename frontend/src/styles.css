@@ -176,7 +176,7 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 
 /* cockpit v2 */
 .cockpit2 { display: grid; gap: 12px; grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.6fr) minmax(300px, 1fr);
-  grid-template-areas: "stats stats stats" "wallet wallet wallet" "core focus why" "core equity why" "pos log news"; }
+  grid-template-areas: "wallet wallet wallet" "stats stats stats" "core focus why" "core equity why" "pos log news"; }
 .cockpit2 .wallet { grid-area: wallet; }
 .cockpit2 .stats { grid-area: stats; display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 4px 10px; padding: 10px 14px; }
 .cockpit2 .core { grid-area: core; min-height: 0; }
@@ -321,13 +321,13 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .lab .board td { white-space: nowrap; }
 
 @media (max-width: 1250px) {
-  .cockpit2 { grid-template-columns: 1fr 1fr; grid-template-areas: "stats stats" "wallet wallet" "core why" "focus focus" "equity equity" "pos news" "log log"; }
+  .cockpit2 { grid-template-columns: 1fr 1fr; grid-template-areas: "wallet wallet" "stats stats" "core why" "focus focus" "equity equity" "pos news" "log log"; }
   .controls { grid-template-columns: 1fr 1fr; }
   .controls .col { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 820px) {
   main { padding: 10px; }
-  .cockpit2 { grid-template-columns: 1fr; grid-template-areas: "stats" "wallet" "core" "why" "focus" "equity" "pos" "news" "log"; }
+  .cockpit2 { grid-template-columns: 1fr; grid-template-areas: "wallet" "stats" "core" "why" "focus" "equity" "pos" "news" "log"; }
   .controls, .controls .col { grid-template-columns: 1fr; }
   .nodes-view { grid-template-columns: 1fr; height: auto; }
   .flow { height: 70vh; }
@@ -411,3 +411,5 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .coin-own { border-color: rgba(255,176,32,0.5); }
 .coin-bot { border-color: rgba(255,43,214,0.6); }
 @media (max-width: 820px) { .wallet-top { grid-template-columns: 1fr; } }
+.wallet-change { font-size: 15px; margin-top: 2px; }
+.wallet .wallet-total .big { font-size: 40px; }

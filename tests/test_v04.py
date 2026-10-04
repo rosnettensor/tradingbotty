@@ -201,3 +201,25 @@ def test_bot_may_use_your_coins_only_when_allowed(tmp_path, monkeypatch):
     f.bal["SOL"] = 4.0
     spare = asyncio.run(e._spare_coins(f.bal))
     assert "SOL" not in spare and "BTC" not in spare and "VSN" not in spare  # champion's, bot's, untradable
+
+
+def test_test_accounts_resize_to_real_balance(tmp_path, monkeypatch):
+    monkeypatch.setenv("TB_SIMULATE", "1")
+    monkeypatch.setenv("TB_DB", str(tmp_path / "r.db"))
+    from tradingbotty.engine import Engine
+    e = Engine(load_settings())
+    asyncio.run(e.prices.backfill())
+    v = e.champion()
+    price = e.prices.price("BTC")
+    asyncio.run(e.execute(v, "BTC", "BUY", 20.0, price, "test", 0.2))
+    prices = {s: q.price for s, q in e.prices.quotes.items()}
+    before = v.broker.equity(prices) / v.start_equity
+    e._rebase_paper(340.0)
+    assert v.start_equity == 340.0 and abs(v.broker.equity(prices) / v.start_equity - before) < 1e-9
+    assert abs(v.broker.positions["BTC"].value(price) - 68 * (1 - 0.0025)) < 0.5  # 20% of 340, after fee
+    e2 = Engine(load_settings())  # survives a restart, new strategies start at the real size too
+    assert e2.settings["money"]["starting_cash_usd"] == 340.0 and e2.champion().start_equity == 340.0
+    t = e._track_account(308.0)
+    assert t["start_total"] == 308.0 and t["change"] == 0
+    t = e._track_account(320.0)
+    assert t["change"] == 12.0 and t["change_pct"] > 3.8

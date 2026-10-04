@@ -127,6 +127,9 @@ class Engine:
         if prof and time.time() - prof["detail"].get("ts", 0) < settings["engine"]["professor_every_minutes"] * 90:
             self.bb.risk_appetite, self.bb.avoid = prof["risk_appetite"], set(prof["avoid"])
             self.agent("professor").detail = prof["detail"]
+        # test accounts are sized like your real account (set once the Fusion balance is known)
+        if self.db.get("paper_start_usd"):
+            settings.raw["money"]["starting_cash_usd"] = self.db.get("paper_start_usd")
         self._load_variants()
 
     # ------------------------------------------------------------------ state
@@ -753,6 +756,64 @@ class Engine:
             "total": round(fiat + bot_value + yours_value, 2), "use_my_coins": self.settings["live"]["use_my_coins"],
             "max_invest": self.settings["live"]["max_invest"], "ts": time.time(),
         }
+        total = self.wallet["total"]
+        # every coin in the account, one list: what you hold is what you hold
+        allc = {c["symbol"]: c for c in own}
+        for c in coins:
+            a = allc.setdefault(c["symbol"], {"symbol": c["symbol"], "qty": 0.0, "price": c["price"], "value": 0.0,
+                                              "tradable": True})
+            a["qty"] = round(a["qty"] + c["qty"], 8)
+            a["value"] = round(a["value"] + c["value"], 2)
+            a["bot"] = True
+        self.wallet["all_coins"] = sorted(allc.values(), key=lambda c: -c["value"])
+        self.wallet["coins_value"] = round(total - fiat, 2)
+        self.wallet.update(self._track_account(total))
+        if not self.db.get("paper_rebased") and total > 5:
+            try:
+                usd = total * await self.prices._usd_rate(cur)
+                self._rebase_paper(round(usd, 2))
+                self.db.set("paper_rebased", {"ts": time.time(), "total": total, "currency": cur})
+            except Exception as ex:
+                self._log("Engine", "warn", f"Couldn't size test accounts to your balance yet: {ex}")
+
+    def _rebase_paper(self, new_start: float) -> None:
+        """Resize every test account so it starts like your real account. Everything scales by the same factor,
+        so returns, rankings and positions stay the same, only the amounts match your real money."""
+        old = self.settings["money"]["starting_cash_usd"]
+        k = new_start / old if old else 1.0
+        for v in self.variants.values():
+            b = v.broker
+            b.cash *= k
+            for pos in b.positions.values():
+                pos.qty *= k
+            v.start_equity = new_start
+            v.day_start_equity *= k
+            self._save_broker(v)
+        self.db.execute("UPDATE equity SET equity=equity*?, cash=cash*? WHERE mode='paper'", (k, k))
+        self.db.execute("UPDATE trades SET qty=qty*?, notional=notional*?, fee=fee*?, pnl=pnl*? WHERE mode='paper'",
+                        (k, k, k, k))
+        self.settings.raw["money"]["starting_cash_usd"] = new_start
+        self.db.set("paper_start_usd", new_start)
+        self._board_cache = None
+        self._log("Engine", "info", f"Test strategies now run at your real account size: {new_start:.2f} USD each "
+                                    f"instead of {old:.2f}.")
+
+    def _track_account(self, total: float) -> dict:
+        """Remember your account total over time: start value, 24h change and a chart."""
+        now = time.time()
+        hist = self.db.get("wallet_hist", [])
+        if not hist or now - hist[-1][0] >= 300:
+            hist = (hist + [[now, round(total, 2)]])[-4000:]
+            self.db.set("wallet_hist", hist)
+        start = self.db.get("account_start") or {"ts": now, "total": total}
+        if not self.db.get("account_start"):
+            self.db.set("account_start", start)
+        day = next((t for ts, t in hist if ts >= now - 86400), total)
+        step = max(1, len(hist) // 300)
+        return {"start_total": round(start["total"], 2), "start_ts": start["ts"],
+                "change": round(total - start["total"], 2),
+                "change_pct": round((total / start["total"] - 1) * 100, 2) if start["total"] else 0.0,
+                "change_24h": round(total - day, 2), "history": hist[::step] + ([hist[-1]] if hist and len(hist) % step else [])}
 
     async def _scan(self) -> None:
         await self.agent("radar").scan()
