@@ -934,10 +934,13 @@ class Engine:
             if sym in live or (champ.id, sym) in tried or not q or q.kind != "crypto" or not q.price or equity <= 0:
                 continue
             tried.add((champ.id, sym))  # one attempt per champion and coin, so a skipped copy doesn't repeat every minute
-            if scores.get(sym, 0.0) < champ.config.exit_score:
-                continue  # the champion is about to sell it anyway
+            if scores.get(sym, 0.0) < champ.config.exit_score or sym in self.bb.avoid:
+                continue  # the champion is about to sell it anyway (weak score or on the Professor's avoid list)
             self.agent("livedesk").say(f"{champ.name} holds {sym} on paper but your account doesn't: copying it now.", "live")
             await self._mirror_live(sym, "BUY", pos.value(q.price) / equity)
+            if sym in self.db.get("live_qty", {}):
+                # The real coin was bought just now, so the minimum hold counts from here, not from the paper buy.
+                pos.opened = time.time()
 
     async def _poll_wallet(self) -> None:
         """The real account, read-only: cash, the bot's coins with value and P&L, what Fusion can trade."""

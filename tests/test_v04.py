@@ -407,6 +407,23 @@ def test_champion_positions_missing_live_are_copied_once(tmp_path, monkeypatch):
     assert len(f.buys) == 1
 
 
+def test_copy_skips_avoided_coins_and_restarts_the_hold(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    asyncio.run(e.prices.backfill())
+    champ = e.champion()
+    e.db.set("mode", "paper")
+    for sym in ("SOL", "BTC"):
+        asyncio.run(e.execute(champ, sym, "BUY", 0.2 * champ.broker.cash, e.prices.price(sym), "t", 0.2))
+        champ.broker.positions[sym].opened -= 86400                # bought on paper a day ago
+    e.db.set("mode", "live")
+    e.bb.avoid = {"BTC"}                                            # the Professor flags BTC: don't buy it for real
+    asyncio.run(e._reconcile_live())
+    assert [b[0] for b in f.buys] == ["SOL"]
+    import time as _t
+    assert _t.time() - champ.broker.positions["SOL"].opened < 60    # the 12h hold starts with the real buy
+
+
 def test_small_live_orders_round_up_to_fusions_minimum(tmp_path, monkeypatch):
     f = FakeFusion()
     f.pairs = {"BTC": {"minOrderAmount": "25"}, "SOL": {"minOrderAmount": "30"}}
