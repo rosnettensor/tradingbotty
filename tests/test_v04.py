@@ -250,6 +250,9 @@ def test_champion_is_judged_on_the_recent_window(tmp_path, monkeypatch):
     e.db.execute("INSERT INTO equity(ts,variant_id,mode,equity,cash) VALUES(?,?,?,?,?)",
                  (now - 40 * 3600, rival.id, "paper", 100.0, 100.0))
     rival.broker.cash = 110.0                                               # winning lately
+    e.db.execute("INSERT INTO trades(ts,variant_id,mode,symbol,side,qty,price,notional,fee,pnl,reason) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (now - 3600, rival.id, "paper", "BTC", "BUY", 1, 1, 1, 0, None, "t"))
+    e._board_cache = None
 
     board = {b["id"]: b for b in e.leaderboard(max_age=0)}
     assert board[champ.id]["fitness"] > board[rival.id]["fitness"]          # lifetime says keep the champion
@@ -302,3 +305,36 @@ def test_bot_edge_ignores_coin_price_swings(tmp_path, monkeypatch):
     # the bot sold the BTC at 110k and its new coin is now worth 120: +10 from trading
     t = e._track_account(150.0, 30.0, {"SOL": 1.0}, {"BTC": 110000.0, "SOL": 120.0})
     assert t["bot_edge"] == 10.0 and t["bot_edge_pct"] > 7
+
+
+def test_stock_only_champion_hands_over_in_live_mode(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    stock = next(v for v in e.variants.values() if not v.config.trade_crypto)
+    try:
+        e.promote(stock.id)
+        raise AssertionError("a stock-only strategy must not lead real money")
+    except ValueError:
+        pass
+    e.db.set("mode", "paper"); e.promote(stock.id); e.db.set("mode", "live")  # how it got there before the guard
+    e.agent("optimizer")._fix_champion(e.leaderboard(max_age=0))
+    assert e.champion().config.trade_crypto and not e.champion().config.hold
+
+
+def test_wallet_hiccup_keeps_last_numbers(tmp_path, monkeypatch):
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    e.settings.simulate = False
+    class Boom:
+        name, currency, pairs = "Bitpanda Fusion", "CHF", {}
+        async def balances(self):
+            raise OSError()
+        async def prices(self):
+            return {}
+    e.live = Boom()
+    import time as _t
+    e.wallet = {"total": 300.0, "currency": "CHF", "ts": _t.time()}
+    asyncio.run(e._poll_wallet())
+    assert e.wallet["total"] == 300.0 and e.wallet["stale"] == "OSError"
+    e.wallet["ts"] -= 3600
+    asyncio.run(e._poll_wallet())
+    assert e.wallet["error"] == "OSError"                                  # never an empty error any more

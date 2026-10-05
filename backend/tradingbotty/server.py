@@ -120,6 +120,8 @@ def promote(vid: str):
         engine.promote(vid)
     except KeyError:
         raise HTTPException(404, "no such variant")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     return {"ok": True}
 
 

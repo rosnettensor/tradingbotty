@@ -48,6 +48,7 @@ class Optimizer(Agent):
             mins = max(0, (self.next_due - time.time()) / 60)
             self.detail = {"leaderboard": [{k: b[k] for k in ("name", "return_pct", "fitness", "trades")} for b in board],
                            "next_evolution_min": round(mins)}
+        self._fix_champion(board)
         if time.time() < self.next_due:
             return
         self.next_due = time.time() + self.cfg["every_minutes"] * 60
@@ -79,8 +80,10 @@ class Optimizer(Agent):
         # promotion: everyone is judged on the same recent window (the "Promote after" hours), and a challenger
         # must lead on two checks in a row, so one lucky hour can't flip real money back and forth
         if champ:
+            # a rival must trade crypto (real money is crypto-only) and must have traded at all:
+            # doing nothing scores 0, which would otherwise "beat" a champion that is slightly down
             rivals = [b for b in board if not b["champion"] and b["age_h"] >= c["min_age_to_promote_h"]
-                      and b["id"] in self.ctx.variants and not b.get("benchmark")]
+                      and b["id"] in self.ctx.variants and self._eligible(b)]
             best = max(rivals, key=lambda b: b["recent_fitness"], default=None)
             if not best:
                 self.challenger = None
@@ -106,6 +109,23 @@ class Optimizer(Agent):
                 self.say(f"Suggestion: {best['name']} is beating the champion "
                          f"({best['recent_fitness']:+.2f} vs {champ['recent_fitness']:+.2f} over the last "
                          f"{champ['window_h']:.0f}h). Promote it in the Lab if you agree.")
+
+    def _eligible(self, b: dict) -> bool:
+        v = self.ctx.variants.get(b["id"])
+        return bool(v and self.ctx.can_lead(v.config) and b["trades"] > 0)
+
+    def _fix_champion(self, board: list[dict]) -> None:
+        """A champion that can't trade crypto can never trade your real money: hand over to the best one that can."""
+        champ = self.ctx.champion()
+        if self.ctx.mode != "live" or not champ or self.ctx.can_lead(champ.config):
+            return
+        ok = [b for b in board if b["id"] in self.ctx.variants and self.ctx.can_lead(self.ctx.variants[b["id"]].config)]
+        best = max(ok, key=lambda b: (b["trades"] > 0, b["recent_fitness"]), default=None)
+        if best:
+            self.ctx.promote(best["id"])
+            self.say(f"{champ.name} only trades stocks (paper only), so it can't trade your real money. "
+                     f"{best['name']} takes over as champion (best crypto strategy over the last {best['window_h']:.0f}h).",
+                     "warn")
 
     async def _screened_child(self, parent):
         n = int(self.cfg["screen_candidates"])

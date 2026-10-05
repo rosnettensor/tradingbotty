@@ -480,9 +480,16 @@ class Engine:
         del self.variants[vid]
         self._board_cache = None
 
+    @staticmethod
+    def can_lead(cfg: StrategyConfig) -> bool:
+        """Only a strategy that trades crypto can drive real money (stocks are paper only, the benchmark never trades)."""
+        return cfg.trade_crypto and not cfg.hold
+
     def promote(self, vid: str) -> None:
         if vid not in self.variants:
             raise KeyError(vid)
+        if self.mode == "live" and not self.can_lead(self.variants[vid].config):
+            raise ValueError(f"{self.variants[vid].name} doesn't trade crypto, so it can't trade your real money.")
         old = self.champion()
         self.db.execute("UPDATE variants SET is_champion=0")
         self.db.execute("UPDATE variants SET is_champion=1 WHERE id=?", (vid,))
@@ -774,14 +781,18 @@ class Engine:
             try:
                 await b.connect()
             except Exception as ex:
-                self.wallet = {"error": str(ex), "ts": time.time()}
+                self.wallet = {"error": str(ex) or type(ex).__name__, "ts": time.time()}
                 return
             self._viewer = b
         try:
             bal = await b.balances()
             prices = await b.prices() if hasattr(b, "prices") else {}
         except Exception as ex:
-            self.wallet = {"error": str(ex), "ts": time.time()}
+            err = str(ex) or type(ex).__name__
+            if self.wallet and not self.wallet.get("error") and time.time() - self.wallet.get("ts", 0) < 600:
+                self.wallet["stale"] = err  # a short network hiccup: keep showing the last good numbers
+                return
+            self.wallet = {"error": err, "ts": time.time()}
             return
         if getattr(b, "pairs", None):
             self.fusion_coins = set(b.pairs)
