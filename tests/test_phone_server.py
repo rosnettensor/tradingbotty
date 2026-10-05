@@ -17,8 +17,8 @@ class FakeHTTP:
         self.calls.append(("GET", url, params))
         return type("R", (), {"status_code": 200, "text": "Message queued"})()
 
-    async def post(self, url, json=None, **kw):
-        self.calls.append(("POST", url, json))
+    async def post(self, url, json=None, content=None, **kw):
+        self.calls.append(("POST", url, json if json is not None else {"text": content.decode()}))
         return type("R", (), {"status_code": 200, "text": "{}"})()
 
 
@@ -95,3 +95,14 @@ def test_password_gate():
     assert r["status"] == 200
     cookie = dict(r["headers"])[b"set-cookie"].decode().split(";")[0]
     assert call("/api/state", [(b"cookie", cookie.encode())])["status"] == 200
+
+
+def test_ntfy_message(tmp_path, monkeypatch):
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    http = FakeHTTP()
+    monkeypatch.setattr(e.prices, "client", http)
+    e.settings.simulate = False
+    e.settings.ntfy_topic = "tradingbotty-secret123"
+    assert e.phone_channels() == ["ntfy"]
+    assert asyncio.run(e.notify("hallo"))
+    assert http.calls == [("POST", "https://ntfy.sh/tradingbotty-secret123", {"text": "hallo"})]

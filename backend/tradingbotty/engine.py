@@ -478,7 +478,7 @@ class Engine:
 
     def phone_channels(self) -> list[str]:
         st = self.settings
-        return (["WhatsApp"] if st.whatsapp_phone and st.whatsapp_key else []) + (["Telegram"] if st.telegram_token and st.telegram_chat else [])
+        return (["ntfy"] if st.ntfy_topic else []) + (["WhatsApp"] if st.whatsapp_phone and st.whatsapp_key else []) + (["Telegram"] if st.telegram_token and st.telegram_chat else [])
 
     async def notify(self, text: str) -> bool:
         """A message to your phone: WhatsApp through CallMeBot (WHATSAPP_PHONE and WHATSAPP_APIKEY in .env)
@@ -487,6 +487,15 @@ class Engine:
         if st.simulate or not self.phone_channels():
             return False
         ok = False
+        if st.ntfy_topic:
+            try:
+                r = await self.prices.client.post(f"https://ntfy.sh/{st.ntfy_topic.strip()}", content=text[:3900].encode(),
+                                                  headers={"Title": "TradingBotty"})
+                if r.status_code != 200:
+                    self._log("Engine", "warn", f"ntfy refused the message ({r.status_code}): check NTFY_TOPIC in .env")
+                ok = ok or r.status_code == 200
+            except Exception as ex:
+                self._log("Engine", "warn", f"ntfy message failed: {str(ex)[:80]}")
         if st.whatsapp_phone and st.whatsapp_key:
             try:
                 phone = st.whatsapp_phone.replace(" ", "")
