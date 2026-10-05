@@ -33,8 +33,8 @@ CONTROLS = [
      "group": "Speed", "help": "Reddit rate-limits fast polling, so stay above 2 minutes."},
     # ---- live money: only matters once you switch to LIVE
     {"key": "live.max_invest", "label": "Most live money in coins at once", "min": 2, "max": 2000, "step": 1,
-     "group": "Live money", "help": "Hard cap, in your Bitpanda currency (CHF). The bot never has more than this in coins, "
-     "whatever your balance. Start small."},
+     "group": "Live money", "help": "Hard cap, in your Bitpanda currency (CHF). The bot never has more than this in coins. "
+     "Above your account total (e.g. 2000) = the whole account; the daily brain splits it into equal slots."},
     {"key": "live.max_order", "label": "Biggest single live order", "min": 1, "max": 500, "step": 1,
      "group": "Live money", "help": "No live buy is bigger than this, in CHF."},
     {"key": "live.max_spread_pct", "label": "Skip coins with a spread above (%)", "min": 0.1, "max": 5, "step": 0.1,

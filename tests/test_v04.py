@@ -491,10 +491,10 @@ def test_daily_brain_trades_the_difference_once_a_day(tmp_path, monkeypatch):
     from tradingbotty import research
     f = FakeFusion()
     f.pairs = {s: {"minOrderAmount": "25"} for s in ("BTC", "SOL", "ADA")}
-    f.bal["ADA"] = 2.0
+    f.bal["ADA"] = 3.0
     e = _engine(tmp_path, monkeypatch, f)
     e.set_controls({"live.max_invest": 100, "live.max_order": 35})
-    e.db.set("live_qty", {"ADA": 2.0}); e.db.set("live_cost", {"ADA": 20.0})
+    e.db.set("live_qty", {"ADA": 3.0}); e.db.set("live_cost", {"ADA": 30.0})
     e.wallet = {"total": 300.0, "currency": "CHF"}
     monkeypatch.setattr(research, "current_target", lambda cd, s: {"SOL": 0.5, "BTC": 0.5})
     asyncio.run(e.set_brain(True, "Breakout 20/10 days, 3 slots, BTC filter 50d"))
@@ -542,3 +542,43 @@ def test_history_comes_from_binance_in_pages_and_is_cached(tmp_path, monkeypatch
     db.set("daily:BTC", db.get("daily:BTC")[:-5])                                     # 5 days behind: fetch only those
     out = asyncio.run(research.update_history(Client(), db, ["BTC"]))
     assert calls == [(today - 5 * 86400) * 1000] and len(out["BTC"]) == len(days) - 1
+
+
+def test_brain_uses_the_whole_account_and_leaves_unsellable_dust(tmp_path, monkeypatch):
+    from tradingbotty import research
+    f = FakeFusion()
+    f.pairs = {s: {"minOrderAmount": "25"} for s in ("BTC", "SOL", "AKT")}
+    f.bal.update({"FIAT": 400.0, "AKT": 2.0})              # AKT worth 20 CHF: under Fusion's minimum
+    e = _engine(tmp_path, monkeypatch, f)
+    e.db.set("live_qty", {"AKT": 2.0}); e.db.set("live_cost", {"AKT": 25.0})
+    monkeypatch.setattr(research, "current_target", lambda cd, s: {"SOL": 0.5, "BTC": 0.5})
+    asyncio.run(e.set_brain(True, "Breakout 20/10 days, 3 slots, BTC filter 50d"))
+    asyncio.run(e.brain_tick())
+    assert not f.buys                                       # balance not read yet: no guessing with a 2000 cap
+    e.wallet = {"total": 420.0, "currency": "CHF"}
+    e.set_controls({"live.max_invest": 2000, "live.max_order": 150, "live.use_my_coins": True})
+    asyncio.run(e.brain_tick())
+    assert not f.sells and e.live_errors == 0               # dust isn't sent to Fusion to be rejected
+    assert "sell it in the Bitpanda app" in e.brain()["note"]
+    # half of the account each (minus 2% for fees) in orders under the 150 cap; the last one gets what cash is left
+    assert [(s, round(a, 2)) for s, a in f.buys] == [("SOL", 102.9), ("SOL", 102.9), ("BTC", 102.9), ("BTC", 91.3)]
+    e.set_controls({"live.max_order": 250})                 # changing a money limit re-decides now
+    assert "day" not in e.brain()
+    f.bal["AKT"] = 0.0                                      # you sold the dust in the app: the bot forgets it
+    asyncio.run(e.brain_tick())
+    assert "AKT" not in e.db.get("live_qty") and e.live_errors == 0
+
+
+def test_live_account_gets_tuned_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("TB_SIMULATE", "1")
+    monkeypatch.setenv("TB_DB", str(tmp_path / "t.db"))
+    from tradingbotty.engine import Engine
+    e = Engine(load_settings())
+    assert e.settings["live"]["max_invest"] == 25           # fresh install in paper: untouched
+    e.db.set("mode", "live")
+    e.set_controls({"live.max_order": 35})
+    e2 = Engine(load_settings())
+    assert e2.settings["live"]["max_invest"] == 2000 and e2.settings["live"]["max_order"] == 150
+    e2.set_controls({"live.max_order": 60})                 # your later change wins after the next start
+    e3 = Engine(load_settings())
+    assert e3.settings["live"]["max_order"] == 60

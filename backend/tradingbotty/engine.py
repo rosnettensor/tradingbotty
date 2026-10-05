@@ -146,6 +146,33 @@ class Engine:
         if self.db.get("paper_start_usd"):
             settings.raw["money"]["starting_cash_usd"] = self.db.get("paper_start_usd")
         self._load_variants()
+        self._tune_for_daily_brain()
+
+    def _tune_for_daily_brain(self) -> None:
+        """One-time settings update for the live account (2026-10-05): the daily brain may use the whole account
+        in a few big positions, and the paper side gets sane limits. Your later changes win; fresh installs skip it."""
+        if self.db.get("tuned") == "2026-10-05" or self.db.get("mode") != "live":
+            return
+        overrides = self.db.get("controls", {})
+        overrides.update({
+            "live.max_invest": 2000,             # = the whole account: the brain never uses more than the account holds
+            "live.max_order": 150,               # one order per coin (a third of the account is about 115 CHF)
+            "live.max_spread_pct": 1.0,
+            "live.use_my_coins": True,
+            "risk.max_position_pct": 35,         # paper strategies: a third each, like the brain
+            "risk.max_open_positions": 5,
+            "risk.max_daily_loss_pct": 30,
+            "engine.professor_every_minutes": 720,  # its advice doesn't move real money now: twice a day is plenty
+        })
+        controls.apply(self.settings.raw, overrides)
+        self.db.set("controls", overrides)
+        b = self.brain()
+        if b.get("on"):
+            b.pop("day", None)  # decide again with the new limits right after this start
+            self.db.set("brain", b)
+        self.db.set("tuned", "2026-10-05")
+        self.db.log("Engine", "info", "Settings tuned for the daily brain: whole account, about a third per coin, "
+                                      "orders up to 150 CHF, Professor twice a day. Change anything in Controls.")
 
     # ------------------------------------------------------------------ state
     @property
@@ -191,6 +218,10 @@ class Engine:
                 overrides[key] = controls.coerce(key, value)
         controls.apply(self.settings.raw, overrides)
         self.db.set("controls", overrides)
+        if self.brain_on() and {"live.max_invest", "live.max_order"} & set(changes):
+            b = self.brain()
+            b.pop("day", None)  # new money limits: the brain re-decides at its next check instead of tomorrow
+            self.db.set("brain", b)
         for v in self.variants.values():  # fee changes apply to every paper account
             v.broker.fee_pct = self.settings["paper"]["fee_pct"]
             v.broker.slippage_pct = self.settings["paper"]["slippage_pct"]
@@ -962,6 +993,8 @@ class Engine:
         b = self.brain()
         if not b.get("on") or self.mode != "live" or not self.live or self.kill_switch or self.__dict__.get("_brain_busy"):
             return
+        if not (self.wallet or {}).get("total"):
+            return  # right after a start: wait until the account balance has been read
         self._brain_busy = True
         try:
             cd = await self._daily_candles()
@@ -989,11 +1022,21 @@ class Engine:
         pairs = getattr(self.live, "pairs", None) or {}
         prices = await self.live.prices() if hasattr(self.live, "prices") else {}
         owned = self.db.get("live_qty", {})
-        total = (self.wallet or {}).get("total") or cfg["max_invest"]
-        budget = min(cfg["max_invest"], total)
+        total = (self.wallet or {}).get("total")
+        if not total:
+            raise ValueError("your Bitpanda balance hasn't been read yet")
+        budget = min(cfg["max_invest"], total * 0.98)  # 2% left for fees when the whole account is in play
         self._brain_target = dict(target)
         done = []
+        bal = await self.live.balances()
         for sym in [s for s in owned if s not in target]:
+            value = min(owned[sym], bal.get(sym, 0.0)) * prices.get(sym, 0.0)
+            min_amt = float((pairs.get(sym) or {}).get("minOrderAmount") or 0)
+            if 0 < value < min_amt:  # (0 = you sold it yourself: the sell below finds nothing and forgets it)
+                # Fusion rejects orders under its minimum, sells too: retrying every day would only log errors
+                done.append(f"{sym} ({value:.2f} {cur}) is below Fusion's {min_amt:g} {cur} minimum and can't be sold "
+                            f"by the bot: sell it in the Bitpanda app, the bot then forgets it")
+                continue
             await self._mirror_live(sym, "SELL", 1.0, reason=f"daily brain: {name} no longer holds it")
             done.append(f"sold {sym}")
         owned = self.db.get("live_qty", {})
