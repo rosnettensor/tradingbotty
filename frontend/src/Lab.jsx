@@ -33,7 +33,7 @@ export default function Lab({ state }) {
 
   return (
     <div className="experiments">
-      <ResearchLab />
+      <ResearchLab state={state} />
       <BacktestLab board={board} reload={load} />
       <section className="panel">
         <div className="row-head">
@@ -107,10 +107,10 @@ function ConfigDiff({ config, base }) {
 
 const WINDOWS = [["6", "6h"], ["24", "24h"], ["72", "3d"], ["168", "7d"]];
 
-const PERIODS = [["full", "whole period"], ["first_half", "1st half"], ["second_half", "2nd half"], ["last_6m", "last 6 months"]];
+const PERIODS = [["full", "all history"], ["last_2y", "2 years"], ["last_1y", "1 year"], ["last_6m", "6 months"], ["first_half", "1st half"], ["second_half", "2nd half"]];
 const dayFmt = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", year: "2-digit" });
 
-function ResearchLab() {
+function ResearchLab({ state }) {
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -127,19 +127,27 @@ function ResearchLab() {
   const shown = res ? [btc, ...rows.filter((r) => r !== btc && (pick.length ? pick.includes(r.name) : r.group !== "Benchmark")).slice(0, pick.length || 3)].filter(Boolean) : [];
   const t0 = res ? Date.parse(res.from) / 1000 : 0;
   const series = shown.map((r, i) => ({ id: r.name, name: r.name, color: COLORS[i % COLORS.length], bold: r === btc,
-    points: r.curve.map((v, k) => [t0 + k * 3 * 86400, (v - 1) * 100]) }));
+    points: r.curve.map((v, k) => [t0 + k * (res.curve_step || 3) * 86400, (v - 1) * 100]) }));
+  const brain = state.brain || {};
+  const useLive = async (r) => {
+    const warn = r.robust ? "" : "\n\nCareful: this one does NOT pass every robustness check, so its results may be luck.";
+    if (!window.confirm(`Let "${r.name}" manage the bot's real coins?\n\nIt decides once a day on daily candles, exactly as in this test. Coins it doesn't want are sold, the ones it wants are bought up to its share of your cap (Controls, Live money). Buy-now is off while it runs.${warn}`)) return;
+    try { await api("brain", { on: true, strategy: r.name }); setMsg(`"${r.name}" now manages your real money.`); } catch (e) { setMsg(e.message); }
+  };
+  const stopLive = async () => { try { await api("brain", { on: false }); setMsg("Daily brain off: the champion steers the real money again."); } catch (e) { setMsg(e.message); } };
   const toggle = (name) => setPick((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]));
   return (
     <section className="panel lab research">
       <div className="row-head">
-        <h3>2-YEAR TEST <span className="dim">· daily candles, real fees + spread, every strategy vs simply holding Bitcoin</span></h3>
+        <h3>HISTORY TEST <span className="dim">· all daily history since 2017, real fees + spread, every strategy vs simply holding Bitcoin · re-run daily by the Researcher</span></h3>
         <div className="row-tools">
           {res && <Tabs value={period} options={PERIODS} onChange={setPeriod} />}
-          <button className="primary" onClick={run} disabled={busy}>{busy ? "loading 2 years of candles…" : res ? "run again" : "run the 2-year test"}</button>
+          {brain.on && <button onClick={stopLive}>stop daily brain</button>}
+          <button className="primary" onClick={run} disabled={busy}>{busy ? "loading history…" : res ? "run again" : "run the history test"}</button>
         </div>
       </div>
-      <p className="dim small">Decides on each day's close, trades at the next day's open, pays {res?.cost_per_side_pct ?? 0.4}% per buy or sell. A strategy is only worth real money if it beats holding Bitcoin in <b>both halves</b> of the history (✓): one good stretch can be luck. Click rows to compare their curves.</p>
-      {msg && <p className="err-msg">{msg}</p>}
+      <p className="dim small">Decides on each day's close, trades at the next day's open, pays {res?.cost_per_side_pct ?? 0.4}% per buy or sell. <b>Robust ✓</b> = beats holding Bitcoin (risk-adjusted) in both halves AND in most calendar years, AND the "skill" check (deflated Sharpe: corrects for testing {res?.strategies_tested ?? "many"} strategies at once) says it's at least 80% likely not luck. Coins are today's survivors, so the past looks a bit rosier than it was. Click rows to compare curves.</p>
+      {msg && <p className={/now manages|brain off/.test(msg) ? "ok-msg" : "err-msg"}>{msg}</p>}
       {res?.simulated && <p className="err-msg">Simulated prices (simulate mode): these numbers are not real.</p>}
       {res && (
         <>
@@ -148,13 +156,13 @@ function ResearchLab() {
           <LineChart series={series} height={240} unit="%" baseline={0} xfmt={dayFmt} />
           <div className="scroll">
             <table className="board">
-              <thead><tr><th>strategy</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th>fees</th><th>in coins</th><th title="beats holding Bitcoin (risk-adjusted) in both halves">both halves</th></tr></thead>
+              <thead><tr><th>strategy</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th title="fees and spread paid per year, as a share of the account">fees/yr</th><th>in coins</th><th title="calendar years in which it beat holding Bitcoin, risk-adjusted">years won</th><th title="deflated Sharpe: chance the result is skill, not luck">skill</th><th>robust</th><th /></tr></thead>
               <tbody>
                 {rows.map((r) => {
                   const st = r[period] || {};
                   return (
                     <tr key={r.name} className={`${r === btc ? "champ" : ""} ${pick.includes(r.name) ? "picked" : ""}`} onClick={() => toggle(r.name)} title={r.explain}>
-                      <td><b>{r.name}</b><div className="dim small">{r.group}</div></td>
+                      <td><b>{r.name}</b>{brain.on && brain.strategy === r.name && <span className="live-badge">LIVE</span>}<div className="dim small">{r.group}</div></td>
                       <td className={pctColor(st.return_pct)}>{st.return_pct == null ? "–" : `${st.return_pct > 0 ? "+" : ""}${st.return_pct}%`}</td>
                       <td>{st.cagr_pct == null ? "–" : `${st.cagr_pct}%`}</td>
                       <td className="down">{st.max_dd_pct}%</td>
@@ -162,7 +170,10 @@ function ResearchLab() {
                       <td>{r.trades}</td>
                       <td>{r.fees_pct}%</td>
                       <td>{r.invested_pct}%</td>
-                      <td>{r.group === "Benchmark" ? "" : r.beats_btc_both_halves ? <span className="up">✓</span> : <span className="dim">–</span>}</td>
+                      <td>{r.group === "Benchmark" ? "" : `${r.years_won ?? "–"}/${r.years_total ?? "–"}`}</td>
+                      <td>{r.skill_prob == null ? "–" : `${Math.round(r.skill_prob * 100)}%`}</td>
+                      <td>{r.group === "Benchmark" ? "" : r.robust ? <span className="up">✓</span> : <span className="dim">–</span>}</td>
+                      <td>{r.group !== "Benchmark" && !(brain.on && brain.strategy === r.name) && <button className={r.robust ? "mini primary" : "mini"} onClick={(e) => { e.stopPropagation(); useLive(r); }}>trade this live</button>}</td>
                     </tr>
                   );
                 })}

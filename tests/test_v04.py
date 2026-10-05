@@ -1,4 +1,6 @@
 """v0.4: Market Radar over every coin, live money caps, spread guard and leftover sells."""
+import time as _time
+import pytest
 import asyncio
 import sys
 from pathlib import Path
@@ -483,3 +485,60 @@ def test_research_lab_runs_every_strategy_without_peeking(tmp_path, monkeypatch)
     rows["ETH"][-1] = (t, o, h * 3, l, c * 3)
     b = research.simulate(research.Candles.from_rows(rows), research.Rotation(30, 2), 100).equity
     assert a[:-1] == b[:-1]
+
+
+def test_daily_brain_trades_the_difference_once_a_day(tmp_path, monkeypatch):
+    from tradingbotty import research
+    f = FakeFusion()
+    f.pairs = {s: {"minOrderAmount": "25"} for s in ("BTC", "SOL", "ADA")}
+    f.bal["ADA"] = 2.0
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 100, "live.max_order": 35})
+    e.db.set("live_qty", {"ADA": 2.0}); e.db.set("live_cost", {"ADA": 20.0})
+    e.wallet = {"total": 300.0, "currency": "CHF"}
+    monkeypatch.setattr(research, "current_target", lambda cd, s: {"SOL": 0.5, "BTC": 0.5})
+    asyncio.run(e.set_brain(True, "Breakout 20/10 days, 3 slots, BTC filter 50d"))
+    asyncio.run(e.brain_tick())
+    b = e.brain()
+    assert f.sells and f.sells[0][0] == "ADA" and "ADA" not in e.db.get("live_qty")
+    # 50 CHF each (half of the 100 cap), in two equal orders of 25 to stay under the 35 per-order cap
+    assert sorted(f.buys) == [("BTC", 25.0), ("BTC", 25.0), ("SOL", 25.0), ("SOL", 25.0)]
+    assert b["target"] == {"SOL": 0.5, "BTC": 0.5} and "holds BTC, SOL" in b["note"]
+    asyncio.run(e.brain_tick())                       # same day: nothing new
+    assert len(f.buys) == 4
+    with pytest.raises(ValueError):                   # buy-now would fight the brain
+        asyncio.run(e.force_buy(30))
+    champ = e.champion()                              # paper champion trades no longer touch real money
+    asyncio.run(e.execute(champ, "SOL", "BUY", 10, e.prices.price("SOL") or 10, "t", 0.2))
+    assert len(f.buys) == 4
+
+
+def test_history_comes_from_binance_in_pages_and_is_cached(tmp_path, monkeypatch):
+    from tradingbotty import research
+    from tradingbotty.db import DB
+    today = int(_time.time() // 86400 * 86400)
+    days = list(range(research.HISTORY_START, today + 86400, 86400))   # includes today's forming candle
+    calls = []
+
+    class R:
+        def __init__(self, data): self.data = data
+        def json(self): return self.data
+
+    class Client:
+        async def get(self, url, params=None):
+            calls.append(params["startTime"])
+            rows = [[d * 1000, "1", "2", "0.5", "1.5"] for d in days if d * 1000 >= params["startTime"]][:1000]
+            return R(rows)
+
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(research.asyncio, "sleep", lambda s: real_sleep(0))
+    db = DB(tmp_path / "h.db")
+    out = asyncio.run(research.update_history(Client(), db, ["BTC"]))
+    assert len(out["BTC"]) == len(days) - 1 and out["BTC"][-1][0] == today - 86400   # forming candle dropped
+    assert len(calls) >= 3                                                            # paged, 1000 at a time
+    calls.clear()
+    out = asyncio.run(research.update_history(Client(), db, ["BTC"]))                # same day: nothing to download
+    assert not calls and len(out["BTC"]) == len(days) - 1
+    db.set("daily:BTC", db.get("daily:BTC")[:-5])                                     # 5 days behind: fetch only those
+    out = asyncio.run(research.update_history(Client(), db, ["BTC"]))
+    assert calls == [(today - 5 * 86400) * 1000] and len(out["BTC"]) == len(days) - 1

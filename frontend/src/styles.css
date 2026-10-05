@@ -499,3 +499,8 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 
 .research .board tr.picked td { background: rgba(255,43,214,0.08); }
 .err-msg { color: var(--red); font-size: 12px; }
+.brain-status { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin-top: 10px; padding: 8px 10px;
+  border: 1px solid rgba(57,255,136,0.35); border-radius: 6px; font-size: 12px; background: rgba(57,255,136,0.04); }
+.brain-label { font-size: 11px; letter-spacing: 0.18em; color: var(--green); }
+.brain-note { flex-basis: 100%; }
+.research .live-badge { margin-left: 8px; font-size: 10px; letter-spacing: 0.12em; color: var(--green); border: 1px solid var(--green); padding: 0 4px; border-radius: 3px; }

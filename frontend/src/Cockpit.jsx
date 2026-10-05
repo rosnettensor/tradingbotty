@@ -168,11 +168,11 @@ function LiveWallet({ state, setFocus }) {
               </button>
             ))}
           </div>
-          {live && <BuyNow state={state} cur={cur} />}
+          {live && !state.brain?.on && <BuyNow state={state} cur={cur} />}
           <div className="stat-sub">Limits: max {caps.max_invest} {cur} in bot trades · {caps.max_order}/order · spread ≤ {caps.max_spread_pct}% · {caps.use_my_coins ? "may use all coins" : "only uses cash"}</div>
         </div>
       </div>
-      <Blockers state={state} />
+      {state.brain?.on ? <BrainStatus b={state.brain} /> : <Blockers state={state} />}
     </section>
   );
 }
@@ -200,6 +200,23 @@ function BuyNow({ state, cur }) {
       {pending && <span className="warn-msg">searching until {new Date(pending.until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{pending.why ? `: ${pending.why}` : "…"}
         <button className="mini" onClick={() => api("buy_now/cancel", {})}>cancel</button></span>}
       {msg && !pending && <span className="small">{msg}</span>}
+    </div>
+  );
+}
+
+/** The daily brain: which strategy runs the real money, what it holds and why. */
+function BrainStatus({ b }) {
+  const when = b.ts ? new Date(b.ts * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "pending";
+  const nextDay = new Date((Math.floor(Date.now() / 86400000) + 1) * 86400000);
+  const holds = Object.entries(b.target || {});
+  return (
+    <div className="brain-status">
+      <span className="brain-label">DAILY BRAIN</span>
+      <b>{b.strategy}</b>
+      {b.btc_ok != null && <span className={b.btc_ok ? "up" : "down"}>Bitcoin {b.btc_ok ? "above" : "below"} its {b.regime_days}-day average{b.btc_ok ? "" : ": cash"}</span>}
+      <span>holds {holds.length ? holds.map(([s, w]) => `${s} ${Math.round(w * 100)}%`).join(" · ") : "nothing (cash)"}</span>
+      <span className="dim">decided {when} · next check after {nextDay.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+      {b.note && <span className="dim small brain-note">{b.note}</span>}
     </div>
   );
 }

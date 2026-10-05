@@ -223,6 +223,19 @@ def retire(vid: str):
     return {"ok": True}
 
 
+class BrainIn(BaseModel):
+    on: bool
+    strategy: str | None = None
+
+
+@app.post("/api/brain")
+async def brain_set(body: BrainIn):
+    try:
+        return await engine.set_brain(body.on, body.strategy)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/research/run")
 async def research_run():
     try:

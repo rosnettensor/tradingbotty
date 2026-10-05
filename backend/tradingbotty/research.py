@@ -41,6 +41,9 @@ class Candles:
                 out.o[sym][i], out.h[sym][i], out.l[sym][i], out.c[sym][i] = o, h, l, c
         return out
 
+    def day_no(self, i: int) -> int:
+        return int(self.days[i] // 86400)
+
     @property
     def coins(self) -> list[str]:
         return list(self.c)
@@ -83,6 +86,74 @@ def synthetic_rows(symbols: list[str], days: int = 720, seed: int = 7) -> dict[s
             p *= math.exp(rng.gauss(drift + 0.003 * math.sin(d / 60), 0.04))
             rows.append((t0 + d * 86400, o, max(o, p) * 1.01, min(o, p) * 0.99, p))
         out[sym] = rows
+    return out
+
+
+BINANCE = "https://api.binance.com/api/v3/klines"
+COINBASE = "https://api.exchange.coinbase.com/products"
+HISTORY_START = 1483228800  # 2017-01-01: about as far back as exchange APIs give daily candles for free
+
+
+async def fetch_binance(client, sym: str, since: float) -> list[tuple]:
+    """Daily candles from Binance (USDT pairs, history back to 2017), 1000 per request."""
+    rows, start = [], int(since * 1000)
+    while True:
+        r = await client.get(BINANCE, params={"symbol": f"{sym}USDT", "interval": "1d", "startTime": start, "limit": 1000})
+        data = r.json()
+        if not isinstance(data, list):
+            raise ValueError(str(data)[:120])
+        rows += [(x[0] / 1000, float(x[1]), float(x[2]), float(x[3]), float(x[4])) for x in data]
+        if len(data) < 1000:
+            break
+        start = int(data[-1][0]) + 86_400_000
+        await asyncio.sleep(0.3)
+    return rows
+
+
+async def fetch_coinbase(client, sym: str, since: float) -> list[tuple]:
+    """Fallback: Coinbase Exchange daily candles, 300 per request."""
+    rows, start, now = [], since, time.time()
+    while start < now:
+        end = min(start + 299 * 86400, now)
+        r = await client.get(f"{COINBASE}/{sym}-USD/candles", params={
+            "granularity": 86400, "start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start)),
+            "end": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(end))})
+        data = r.json()
+        if not isinstance(data, list):
+            raise ValueError(str(data)[:120])
+        rows += [(float(x[0]), float(x[3]), float(x[2]), float(x[1]), float(x[4])) for x in data]  # t, low, high, open, close
+        start = end + 86400
+        await asyncio.sleep(0.4)
+    return sorted(rows)
+
+
+async def update_history(client, db, symbols: list[str], log=lambda *a: None) -> dict[str, list[tuple]]:
+    """All the daily history we can get, cached in the database: only new days are downloaded after the first run.
+    Binance first (longest history), then Coinbase, then Kraken's last 720 days."""
+    out = {}
+    today = time.time() // 86400 * 86400
+    for sym in symbols:
+        have = [tuple(r) for r in (db.get(f"daily:{sym}") or [])]
+        since = have[-1][0] + 86400 if have else HISTORY_START
+        new, src = [], ""
+        if since < today:
+            for src, fn in (("Binance", fetch_binance), ("Coinbase", fetch_coinbase)):
+                try:
+                    new = await fn(client, sym, since)
+                    break
+                except Exception as ex:
+                    log("Lab", "warn", f"{src} has no daily history for {sym} ({str(ex)[:60]}), trying the next source.")
+            if not new and not have:
+                kr = await fetch_daily(client, [sym], log)
+                new, src = kr.get(sym, []), "Kraken"
+        merged = {r[0]: r for r in have}
+        merged.update({r[0]: r for r in new if r[0] < today})  # today's candle is still forming
+        rows = sorted(merged.values())
+        if len(rows) >= 60:
+            db.set(f"daily:{sym}", [list(r) for r in rows])
+            out[sym] = rows
+        if new:
+            await asyncio.sleep(0.2)
     return out
 
 
@@ -141,7 +212,7 @@ class HoldBasket(Strategy):
     explain = "Equal money in every coin, rebalanced monthly."
 
     def target(self, cd, i, held):
-        if held and i % 30:
+        if held and cd.day_no(i) % 30:
             return None
         live = [s for s in cd.coins if cd.c[s][i] is not None]
         return {s: 1 / len(live) for s in live}
@@ -174,7 +245,7 @@ class Rotation(Strategy):
     def target(self, cd, i, held):
         if self.regime and not btc_uptrend(cd, i, self.regime):
             return {}
-        if held and i % self.every:
+        if held and cd.day_no(i) % self.every:  # calendar days, so live and test rebalance on the same day
             return None
         ranked = []
         for s in cd.coins:
@@ -240,11 +311,30 @@ def all_strategies() -> list[Strategy]:
     for lb in (14, 30, 60):
         for top in (1, 2, 3, 5):
             out.append(Rotation(lb, top))
+    for lb in (7, 10, 21):  # neighbours of 14 days: a real edge shouldn't vanish one step away
+        for top in (2, 3):
+            out.append(Rotation(lb, top))
     out += [Rotation(30, 3, regime=None), Rotation(30, 3, inv_vol=True), Rotation(30, 3, every=1)]
     for e, x in ((20, 10), (55, 20), (20, 20)):
         out.append(Donchian(e, x))
-    out += [Donchian(20, 10, regime=None), Donchian(20, 10, slots=4), Donchian(55, 20, slots=2)]
+    out += [Donchian(20, 10, regime=None), Donchian(20, 10, slots=4), Donchian(55, 20, slots=2),
+            Donchian(15, 7), Donchian(25, 12), Donchian(20, 10, regime=100)]
     return out
+
+
+def by_name(name: str) -> Strategy | None:
+    """A fresh instance of the strategy with this name (fresh, because some keep state while they run)."""
+    return next((s for s in all_strategies() if s.name == name), None)
+
+
+def current_target(cd: Candles, strat: Strategy, start: int | None = None) -> dict[str, float]:
+    """What the strategy holds after the last complete day: the same decisions the test makes, replayed up to today."""
+    held: dict[str, float] = {}
+    for i in range(start if start is not None else min(len(cd.days) - 1, strat.warmup), len(cd.days)):
+        want = strat.target(cd, i, held)
+        if want is not None:
+            held = dict(want)
+    return held
 
 
 # ------------------------------------------------------------------ simulator
@@ -255,7 +345,7 @@ class Result:
     explain: str
     equity: list[float]          # account value per day (start = 1.0)
     trades: int = 0
-    fees: float = 0.0            # paid as a share of the starting money
+    fees: float = 0.0            # fee drag: fees paid as a share of the account at the time, per year
     invested: float = 0.0        # share of days with money in coins
 
     def stats(self, a: int = 0, b: int | None = None) -> dict:
@@ -297,7 +387,7 @@ def simulate(cd: Candles, strat: Strategy, start: int, cost: float = FEE + SPREA
                 if s in nxt and tgt < cur * 0.75:  # trade only real changes, not tiny drift
                     sell = cur - tgt
                     cash += sell * (1 - cost)
-                    res.fees += sell * cost
+                    res.fees += sell * cost / value
                     qty[s] -= sell / nxt[s]
                     res.trades += 1
                     if qty[s] * nxt[s] < 1e-9:
@@ -309,7 +399,7 @@ def simulate(cd: Candles, strat: Strategy, start: int, cost: float = FEE + SPREA
                 buy = min(w * value - cur, cash)
                 if buy > max(0.25 * w * value, 1e-9) or (cur == 0 and buy > 1e-9):
                     cash -= buy
-                    res.fees += buy * cost
+                    res.fees += buy * cost / value
                     qty[s] = qty.get(s, 0.0) + buy * (1 - cost) / nxt[s]
                     res.trades += 1
         close = {s: cd.c[s][i + 1] for s in qty}
@@ -318,30 +408,77 @@ def simulate(cd: Candles, strat: Strategy, start: int, cost: float = FEE + SPREA
         res.equity.append(value)
     n = max(1, len(res.equity) - 1)
     res.invested = round(days_in / n * 100)
-    res.fees = round(res.fees * 100, 1)
+    res.fees = round(res.fees * 100 / max(n / 365, 0.25), 1)
     return res
 
 
+def _daily_rets(eq: list[float]) -> list[float]:
+    return [y / x - 1 for x, y in zip(eq[:-1], eq[1:]) if x > 0]
+
+
+def deflated_sharpe(rets: list[float], trial_sharpes: list[float]) -> float:
+    """Probability that the strategy's Sharpe is real skill and not the luck of picking the best of many tries
+    (Bailey & Lopez de Prado 2014). Daily, non-annualised Sharpes; fat tails and skew make it stricter."""
+    from statistics import NormalDist
+    nd, n, t = NormalDist(), len(trial_sharpes), len(rets)
+    if t < 30 or n < 2:
+        return 0.0
+    m = sum(rets) / t
+    sd = math.sqrt(sum((r - m) ** 2 for r in rets) / (t - 1)) or 1e-12
+    sr = m / sd
+    skew = sum((r - m) ** 3 for r in rets) / t / sd ** 3
+    kurt = sum((r - m) ** 4 for r in rets) / t / sd ** 4
+    mu = sum(trial_sharpes) / n
+    var = sum((x - mu) ** 2 for x in trial_sharpes) / (n - 1)
+    g = 0.5772156649
+    sr0 = math.sqrt(var) * ((1 - g) * nd.inv_cdf(1 - 1 / n) + g * nd.inv_cdf(1 - 1 / (n * math.e)))
+    denom = math.sqrt(max(1e-12, 1 - skew * sr + (kurt - 1) / 4 * sr * sr))
+    return round(nd.cdf((sr - sr0) * math.sqrt(t - 1) / denom), 3)
+
+
 def run_all(cd: Candles, strategies: list[Strategy] | None = None) -> dict:
-    """Every strategy over the full history, each half (walk-forward check) and the last 6 months."""
+    """Every strategy over the whole history, plus the robustness checks: each half, every calendar year against
+    Bitcoin, recent windows, and the deflated Sharpe ratio that corrects for testing many strategies at once."""
     strategies = strategies or all_strategies()
     start = min(len(cd.days) - 30, max(s.warmup for s in strategies))
     n = len(cd.days) - 1 - start
     half = n // 2
+    years: dict[int, tuple[int, int]] = {}
+    for k in range(n + 1):
+        y = time.gmtime(cd.days[start + k]).tm_year
+        a, _ = years.get(y, (k, k))
+        years[y] = (a, k)
+    years = {y: ab for y, ab in years.items() if ab[1] - ab[0] >= 90}  # a year with under 3 months says little
+    step = max(1, n // 700)
+    sims = [simulate(cd, s, start) for s in strategies]
+    trial_sr = []
+    for r in sims:
+        rets = _daily_rets(r.equity)
+        m = sum(rets) / len(rets)
+        sd = math.sqrt(sum((x - m) ** 2 for x in rets) / max(1, len(rets) - 1)) or 1e-12
+        trial_sr.append(m / sd)
     rows = []
-    for s in strategies:
-        r = simulate(cd, s, start)
+    for r in sims:
         rows.append({"name": r.name, "group": r.group, "explain": r.explain, "trades": r.trades,
                      "fees_pct": r.fees, "invested_pct": r.invested, "full": r.stats(),
                      "first_half": r.stats(0, half + 1), "second_half": r.stats(half),
+                     "last_2y": r.stats(max(0, n - 730)), "last_1y": r.stats(max(0, n - 365)),
                      "last_6m": r.stats(max(0, n - 182)),
-                     "curve": [round(x, 4) for x in r.equity[::3]]})
+                     "years": {str(y): r.stats(a, b + 1) for y, (a, b) in years.items()},
+                     "skill_prob": deflated_sharpe(_daily_rets(r.equity), trial_sr),
+                     "curve": [round(x, 4) for x in r.equity[::step]]})
     btc = next(r for r in rows if r["name"] == HoldBTC.name)
     for r in rows:
         # beats Bitcoin on risk-adjusted terms in BOTH halves: the bar against luck
         r["beats_btc_both_halves"] = all(r[k].get("sharpe", 0) > btc[k].get("sharpe", 0)
                                          for k in ("first_half", "second_half"))
+        won = [y for y in r["years"] if r["years"][y].get("sharpe", 0) > btc["years"][y].get("sharpe", 0)]
+        r["years_won"], r["years_total"] = len(won), len(r["years"])
+        # robust = wins most years against Bitcoin, wins both halves, and probably isn't luck
+        r["robust"] = (r["group"] != "Benchmark" and r["beats_btc_both_halves"] and r["skill_prob"] >= 0.8
+                       and r["years_won"] >= max(1, math.ceil(r["years_total"] * 0.6)))
     day = lambda i: time.strftime("%Y-%m-%d", time.gmtime(cd.days[i]))
     return {"ts": time.time(), "from": day(start), "to": day(len(cd.days) - 1), "days": n,
-            "coins": cd.coins, "cost_per_side_pct": round((FEE + SPREAD) * 100, 2),
-            "rows": sorted(rows, key=lambda r: -r["full"].get("sharpe", -9))}
+            "coins": cd.coins, "cost_per_side_pct": round((FEE + SPREAD) * 100, 2), "curve_step": step,
+            "years": [str(y) for y in years], "strategies_tested": len(strategies),
+            "rows": sorted(rows, key=lambda r: (-r["robust"], -r["full"].get("sharpe", -9)))}
