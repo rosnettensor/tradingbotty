@@ -23,8 +23,7 @@ def exit_reason(cfg: StrategyConfig, pos, price: float, score: float, now: float
         return f"trailing stop ({from_peak:.1f}% from peak)"
     if held_min >= cfg.min_hold_minutes and score < cfg.exit_score:
         return f"score dropped to {score:+.2f}"
-    if pos.symbol in avoid and held_min >= cfg.min_hold_minutes:
-        return "Professor says avoid"
+    # The Professor's avoid list only blocks new buys: an AI opinion alone never forces a sell (no fee churn).
     return None
 
 

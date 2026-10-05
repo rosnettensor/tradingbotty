@@ -17,6 +17,7 @@ class Blackboard:
     regime: dict[str, Any] = field(default_factory=dict)                # summary for the dashboard
     risk_appetite: float = 1.0                                          # Professor's multiplier 0.5..1.5
     avoid: set[str] = field(default_factory=set)                        # symbols the Professor vetoed
+    btc_uptrend: bool = True                                            # Bitcoin above its 20-day average
     scores: dict[str, dict[str, float]] = field(default_factory=dict)   # variant -> symbol -> score
     signals: dict[str, dict[str, float]] = field(default_factory=dict)  # symbol -> every raw signal (for "why")
     notes: list[str] = field(default_factory=list)

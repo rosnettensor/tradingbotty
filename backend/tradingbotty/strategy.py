@@ -37,6 +37,7 @@ class StrategyConfig:
     trade_crypto: bool = True
     max_buys_per_hour: int = 6      # speed limit on new positions
     hold: bool = False              # benchmark: buy a basket once and never sell
+    btc_filter: bool = False        # only buy while Bitcoin is above its 20-day average (no buying into a crash)
 
     def weights(self) -> dict[str, float]:
         return {s: getattr(self, f"w_{s}") for s in SIGNALS}
@@ -100,13 +101,13 @@ STRATEGY_FIELDS = {
                       "help": "How many coins it may hold at the same time."},
     "exit_score": {"label": "Sell threshold", "min": -0.9, "max": 0.5, "step": 0.01, "group": "When to sell",
                    "help": "Sell when the score falls below this (after the minimum hold time)."},
-    "take_profit_pct": {"label": "Take profit (%)", "min": 0.5, "max": 50, "step": 0.5, "group": "When to sell",
-                        "help": "Sell everything once the position is up this much."},
+    "take_profit_pct": {"label": "Take profit (%)", "min": 0.5, "max": 100, "step": 0.5, "group": "When to sell",
+                        "help": "Sell everything once the position is up this much. 100 = let winners run and leave it to the trailing stop."},
     "stop_loss_pct": {"label": "Stop loss (%)", "min": 0.5, "max": 30, "step": 0.5, "group": "When to sell",
                       "help": "Sell once the position is down this much. Smaller = less risk per trade, more fees."},
     "trailing_stop_pct": {"label": "Trailing stop (%)", "min": 0.5, "max": 20, "step": 0.5, "group": "When to sell",
                           "help": "Once in profit, sell if the price drops this much from its peak."},
-    "min_hold_minutes": {"label": "Min hold time (min)", "min": 0, "max": 720, "step": 5, "group": "When to sell",
+    "min_hold_minutes": {"label": "Min hold time (min)", "min": 0, "max": 2880, "step": 5, "group": "When to sell",
                          "help": "Don't sell on a weak score before this (stops and take-profit still work)."},
     "w_momentum": {"label": "Momentum", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
                    "help": "Last 15 minutes' move compared with normal volatility."},
@@ -130,6 +131,9 @@ STRATEGY_FIELDS = {
                "help": "News Hunter's rating of recent headlines, fading over about 3 hours."},
     "w_market": {"label": "Market mood", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
                  "help": "Is the whole market risk-on? Bitcoin trend plus Fear & Greed for coins, S&P and Nasdaq for stocks."},
+    "btc_filter": {"label": "Only buy while Bitcoin is in an uptrend", "group": "When to buy",
+                   "help": "No new buys while Bitcoin is below its 20-day average. Most altcoin crashes happen in "
+                           "Bitcoin downtrends, so this sits them out in cash. Coins already held follow their stops."},
     "trade_crypto": {"label": "Trade crypto", "group": "Markets", "help": "Buy coins (24/7)."},
     "trade_stocks": {"label": "Trade US stocks (paper)", "group": "Markets",
                      "help": "Buy stocks and ETFs from your watchlist, only while the US market is open. Paper only for now."},
@@ -157,6 +161,13 @@ SEED_VARIANTS = {
                                    w_news=0.3, w_market=0.6, entry_score=0.35, exit_score=-0.1, take_profit_pct=20,
                                    stop_loss_pct=8, trailing_stop_pct=7, min_hold_minutes=720, cooldown_minutes=1440,
                                    max_buys_per_hour=2, position_pct=24),
+    # Trend following as the research describes it: ride multi-week uptrends, only while Bitcoin trends up,
+    # few big positions, no fixed take-profit (the big winners pay for the many small losers), wide trailing stop.
+    "Trend Rider": StrategyConfig(w_momentum=0.0, w_trend=0.2, w_reversion=0.0, w_breakout=0.3, w_swing=2.0, w_hype=0.0,
+                                  w_news=0.1, w_market=0.3, w_relstr=0.5, entry_score=0.4, exit_score=-0.3,
+                                  take_profit_pct=100, stop_loss_pct=12, trailing_stop_pct=12, min_hold_minutes=1440,
+                                  cooldown_minutes=2880, max_buys_per_hour=1, position_pct=33, max_positions=3,
+                                  btc_filter=True),
     # The yardstick: buy the four biggest coins once and do nothing. A strategy is only good if it beats this.
     "Buy & Hold": StrategyConfig(hold=True),
     "Dip Buyer": StrategyConfig(w_momentum=-0.4, w_trend=0.3, w_reversion=1.6, w_breakout=-0.3, w_hype=0.2, w_news=0.5,

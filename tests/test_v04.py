@@ -438,3 +438,30 @@ def test_small_live_orders_round_up_to_fusions_minimum(tmp_path, monkeypatch):
     e.set_controls({"live.max_order": 35})
     asyncio.run(e._mirror_live("SOL", "BUY", 0.2))
     assert f.buys[-1] == ("SOL", 30.6)
+
+
+def test_professor_blocks_buys_but_never_forces_a_sell():
+    from types import SimpleNamespace as NS
+    from tradingbotty.decisions import exit_reason
+    from tradingbotty.strategy import SEED_VARIANTS
+    cfg = SEED_VARIANTS["Swing Trader"]
+    pos = NS(symbol="PUMP", avg_price=1.0, peak=1.0, opened=0.0)
+    assert exit_reason(cfg, pos, 1.01, 0.5, 10 ** 9, {"PUMP"}) is None
+
+
+def test_trend_rider_waits_while_bitcoin_trends_down(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    e.db.set("mode", "paper")
+    asyncio.run(e.prices.backfill())
+    tr = next(v for v in e.variants.values() if v.name == "Trend Rider")
+    assert tr.config.btc_filter and tr.config.take_profit_pct == 100
+    e.bb.btc_uptrend = False
+    e.bb.scores = {tr.id: {"SOL": 0.9}}
+    buyer = e.agent("buyer")
+    monkeypatch.setattr(e, "champion", lambda: tr)
+    asyncio.run(buyer.run(e.bb))
+    assert not tr.broker.positions and buyer.detail["why_not"]["SOL"] == "Bitcoin below its 20-day average"
+    e.bb.btc_uptrend = True
+    asyncio.run(buyer.run(e.bb))
+    assert "SOL" in tr.broker.positions

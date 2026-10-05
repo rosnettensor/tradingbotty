@@ -33,6 +33,10 @@ class CryptoAnalyst(Agent):
         strongest = []
         btc = self.ctx.prices.quotes.get("BTC")
         btc_24h = btc.change_24h_pct if btc and btc.price else 0.0
+        if btc and btc.price:
+            h = btc.hourly_closes()[-24 * 20:]
+            if len(h) >= 24 * 10:  # not enough history yet: don't block anything
+                bb.btc_uptrend = btc.price >= sum(h) / len(h)
         for q in self.ctx.prices.crypto():
             closes = q.closes()
             sig = technical_signals(closes)
@@ -451,9 +455,9 @@ class Buyer(Agent):
     role = "Places the orders: paper for every strategy, and live money for the champion when the switch is on"
     inputs = ["risk"]
     explain = ("Every tick, for every strategy: first checks exits on each open position (stop loss, take profit, "
-               "trailing stop, weak score after the minimum hold, or the Professor's avoid list). Then it walks the "
-               "best scores and buys while the strategy's rules allow: buy threshold, position limit, cooldown, "
-               "hourly buy limit and fee guard. Size = position % x equity x the Professor's risk appetite, then cut "
+               "trailing stop, or weak score after the minimum hold). Then it walks the "
+               "best scores and buys while the strategy's rules allow: buy threshold, Bitcoin uptrend filter, position "
+               "limit, the Professor's avoid list, cooldown, hourly buy limit and fee guard. Size = position % x equity x the Professor's risk appetite, then cut "
                "by the Risk Officer. Stocks only trade while the US market is open. Live mode copies the champion.")
     outputs = "orders, and why each symbol was or wasn't bought"
 
@@ -492,6 +496,8 @@ class Buyer(Agent):
                     continue
                 if not q.tradable:
                     blocker = "US market closed"
+                elif cfg.btc_filter and not bb.btc_uptrend:
+                    blocker = "Bitcoin below its 20-day average"
                 else:
                     blocker = entry_blocker(cfg, b, sym, score, now, bb.avoid, buys_last_hour, expected_move_pct(bb, q))
                 if blocker:
