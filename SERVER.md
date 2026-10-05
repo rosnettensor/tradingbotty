@@ -12,6 +12,7 @@ Damit läuft der Bot rund um die Uhr, auch wenn der Mac zu ist. Kosten bei Rende
    - `TB_PASSWORD`: ein langes Passwort für das Dashboard, das du dir merkst
    - `BITPANDA_FUSION_API_KEY`: derselbe Fusion-Key wie im `.env` auf dem Mac (nur Read + Trade)
    - `ANTHROPIC_API_KEY`: optional
+   - `NTFY_TOPIC`: optional, für Nachrichten auf dein Handy
    - `WHATSAPP_PHONE` und `WHATSAPP_APIKEY`: optional
 4. **Apply** drücken und warten, bis "Live" steht. Die Adresse sieht so aus: `https://tradingbotty-xxxx.onrender.com`.
 5. Die Adresse öffnen. Der Browser fragt nach einem Login: Benutzername beliebig, Passwort ist `TB_PASSWORD`. Der Server läuft jetzt auf STANDBY und handelt nicht.

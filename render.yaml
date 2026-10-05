@@ -25,6 +25,8 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: NTFY_TOPIC
+        sync: false
       - key: WHATSAPP_PHONE
         sync: false
       - key: WHATSAPP_APIKEY
