@@ -542,11 +542,23 @@ class Researcher(Agent):
                       ["Cost per side", f"{res.get('cost_per_side_pct', 0.4)}%"],
                       ["Alternative-data strategies", "; ".join(f"{r['name'].split(', ')[-1]}: "
                                                                f"{r['full'].get('cagr_pct')}%/yr{' ✓' if r['robust'] else ''}"
-                                                               for r in alt) or "none yet"]],
+                                                               for r in alt) or "none yet"],
+                      ["Fast lab (4-hour candles)", self._fast(e.db.get("fastlab") or {})]],
             "table": {"cols": ["strategy", "%/yr", "worst drop %", "sharpe", "years won", "skill %", "robust"],
                       "rows": [line(r) for r in ([mine] if mine else []) + [r for r in robust if r is not mine][:8]
                                + ([btc] if btc else [])]},
         }
+
+
+    @staticmethod
+    def _fast(f: dict) -> str:
+        if not f.get("rows"):
+            return "not run yet (Research tab, or nightly after the history test)"
+        fast = [r for r in f["rows"] if r["group"].startswith("Fast")]
+        ok = [r for r in fast if r["robust"]]
+        best = max(fast, key=lambda r: r["full"].get("sharpe") or -9, default=None)
+        return (f"{len(ok)} of {len(fast)} fast strategies robust at {f.get('cost_per_side_pct')}% per side"
+                + (f"; best {best['name']} {best['full'].get('cagr_pct')}%/yr" if best else ""))
 
 
 # --------------------------------------------------------------------------------------------

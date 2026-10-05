@@ -7,16 +7,25 @@ const COLORS = ["#00f0ff", "#ff2bd6", "#39ff88", "#ffb020", "#8a5cff", "#ff6b3d"
 const PERIODS = [["full", "all history"], ["last_2y", "2 years"], ["last_1y", "1 year"], ["last_6m", "6 months"], ["first_half", "1st half"], ["second_half", "2nd half"]];
 const dayFmt = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", year: "2-digit" });
 
+const LABS = [["daily", "DAILY BRAIN LAB · the real money"], ["fast", "FAST TRADER LAB · speculative, 4-hour"]];
+
 export default function Research({ state, openAgent }) {
   const [res, setRes] = useState(null);
   const [pat, reloadPat] = usePoll("patterns", 0);
+  const [lab, setLab] = useState(() => { try { return localStorage.getItem("tb-lab") || "daily"; } catch { return "daily"; } });
+  const pickLab = (k) => { setLab(k); try { localStorage.setItem("tb-lab", k); } catch { /* private window */ } };
   useEffect(() => { api("research").then((r) => r && r.rows && setRes(r)).catch(() => {}); }, [state.research?.ts]);
   return (
     <div className="research-tab">
-      <HistoryTest state={state} res={res} setRes={(r) => { setRes(r); reloadPat(); }} openAgent={openAgent} />
-      {res && <RealityChecks res={res} live={state.brain?.strategy} />}
-      <PatternHunt p={pat} openAgent={openAgent} />
-      <FreeData node={(state.nodes || []).find((n) => n.id === "collector")} openAgent={openAgent} />
+      <div className="lab-switch"><Tabs value={lab} options={LABS} onChange={pickLab} /></div>
+      {lab === "fast" ? <FastLab openAgent={openAgent} /> : (
+        <>
+          <HistoryTest state={state} res={res} setRes={(r) => { setRes(r); reloadPat(); }} openAgent={openAgent} />
+          {res && <RealityChecks res={res} live={state.brain?.strategy} />}
+          <PatternHunt p={pat} openAgent={openAgent} />
+          <FreeData node={(state.nodes || []).find((n) => n.id === "collector")} openAgent={openAgent} />
+        </>
+      )}
     </div>
   );
 }
@@ -41,7 +50,7 @@ function HistoryTest({ state, res, setRes, openAgent }) {
   const shown = res ? [btc, live, ...rows.filter((r) => r !== btc && r !== live && (pick.length ? pick.includes(r.name) : r.group !== "Benchmark")).slice(0, pick.length || 2)].filter(Boolean) : [];
   const t0 = res ? Date.parse(res.from) / 1000 : 0;
   const series = shown.map((r, i) => ({ id: r.name, name: r.name, color: COLORS[i % COLORS.length], bold: r === live,
-    points: r.curve.map((v, k) => [t0 + k * (res.curve_step || 3) * 86400, (v - 1) * 100]) }));
+    points: r.curve.map((v, k) => [t0 + k * (res.curve_step_days ?? res.curve_step ?? 3) * 86400, (v - 1) * 100]) }));
   const useLive = async (r) => {
     const warn = r.robust ? "" : "\n\nCareful: this one does NOT pass every robustness check, so its results may be luck.";
     if (!window.confirm(`Let "${r.name}" manage the bot's real coins?\n\nIt decides once a day on daily candles, exactly as in this test. Coins it doesn't want are sold, the ones it wants are bought up to its share of your limit (Controls).${warn}`)) return;
@@ -111,23 +120,27 @@ function HistoryTest({ state, res, setRes, openAgent }) {
 
 const VERDICT = { pattern: ["up", "REAL PATTERN"], hint: ["warn", "hint"], chance: ["dim", "chance"], "no data": ["dim", "no data yet"] };
 
-function PatternHunt({ p, openAgent }) {
+function PatternHunt({ p, openAgent, fast = false }) {
   const rows = p?.rows || [];
   const real = rows.filter((r) => r.verdict === "pattern");
+  const unit = fast ? "day" : "week";
   return (
     <section className="panel patterns-panel">
       <div className="row-head">
-        <h3>PATTERN HUNT <span className="dim">· does any free signal predict next week's price? · by the <button className="mini linkish" onClick={() => openAgent("patterns")}>Pattern Hunter</button></span></h3>
+        {fast
+          ? <h3>FAST SIGNALS <span className="dim">· which signal says something about the next 24 hours? Classic, volume, Bitcoin lead-lag and a few new ideas</span></h3>
+          : <h3>PATTERN HUNT <span className="dim">· does any free signal predict next week's price? · by the <button className="mini linkish" onClick={() => openAgent("patterns")}>Pattern Hunter</button></span></h3>}
         {p?.ts && <span className="dim small">{p.from} to {p.to} · {ago(p.ts)}</span>}
       </div>
-      <p className="dim small">Every idea is measured the same honest way: only data known on the day, the outcome is the return over the next {p?.horizon_days ?? 7} days, weeks don't overlap, and a signal only counts if it survives the correction for testing {p?.tested ?? "many"} ideas at once, points the same way in both halves of history and in most years. Two random numbers run along as controls: if they ever "win", the test is broken. That's how a pizza index or flight counts would be judged too: without a reason why they should move prices, a match is almost always chance.</p>
+      {fast ? <p className="dim small">Same honest test as the Pattern Hunt, on 4-hour candles: only what is known at a bar's close, the outcome is the next 24 hours, days don't overlap, corrected for testing {p?.tested ?? "many"} signals at once, same direction in both halves and in most years, with two random controls. Per-coin signals compare coins with each other on the same day; market signals (Bitcoin lead-lag, breadth, weekend) are judged against the average altcoin's next day. A real pattern here is a candidate rule for a fast strategy, not a trade by itself.</p> : (
+      <p className="dim small">Every idea is measured the same honest way: only data known on the day, the outcome is the return over the next {p?.horizon_days ?? 7} days, weeks don't overlap, and a signal only counts if it survives the correction for testing {p?.tested ?? "many"} ideas at once, points the same way in both halves of history and in most years. Two random numbers run along as controls: if they ever "win", the test is broken. That's how a pizza index or flight counts would be judged too: without a reason why they should move prices, a match is almost always chance.</p>)}
       {p?.simulated && <p className="err-msg">Simulated data: not real findings.</p>}
-      {!rows.length ? <div className="empty">Runs with the history test (tonight, or "run again" above).</div> : (
+      {!rows.length ? <div className="empty">{fast ? "Runs with the fast lab." : "Runs with the history test (tonight, or \"run again\" above)."}</div> : (
         <>
           <p className={real.length ? "ok-msg" : "dim"}>{real.length ? `${real.length} real pattern(s): ${real.map((r) => r.name).join(", ")}.` : "No signal passes every check right now. That's the normal, honest result: most ideas are noise. Hints are watched but not traded."}</p>
           <div className="scroll">
             <table className="board">
-              <thead><tr><th>signal</th><th>verdict</th><th>direction</th><th title="rank correlation with next week's return">corr</th><th title="chance of a result this strong by luck, after correcting for the number of signals">p corrected</th><th>halves</th><th>years same way</th><th title="top fifth minus bottom fifth, return per week">spread/wk</th><th>weeks</th><th>source</th></tr></thead>
+              <thead><tr><th>signal</th><th>verdict</th><th>direction</th><th title={`rank correlation with the next ${unit}'s return`}>corr</th><th title="chance of a result this strong by luck, after correcting for the number of signals">p corrected</th><th>halves</th><th>years same way</th><th title={`top fifth minus bottom fifth, return per ${unit}`}>spread/{fast ? "day" : "wk"}</th><th>{unit}s</th><th>source</th></tr></thead>
               <tbody>
                 {rows.map((r) => {
                   const [tone, label] = VERDICT[r.verdict] || ["dim", r.verdict];
@@ -176,7 +189,7 @@ function FreeData({ node, openAgent }) {
   );
 }
 
-function RealityChecks({ res, live }) {
+function RealityChecks({ res, live, title = "REALITY CHECKS" }) {
   const btc = res.rows.find((r) => r.name === "Hold Bitcoin");
   const mine = res.rows.find((r) => r.name === live);
   const wf = res.walk_forward;
@@ -184,7 +197,7 @@ function RealityChecks({ res, live }) {
   const pc = (x) => (x == null ? "–" : `${x > 0 ? "+" : ""}${x}%`);
   return (
     <section className="panel reality">
-      <h3>REALITY CHECKS <span className="dim">· would it have worked if we had used it back then?</span></h3>
+      <h3>{title} <span className="dim">· would it have worked if we had used it back then?</span></h3>
       <div className="reality-grid">
         {mine && btc && (
           <div>
@@ -210,21 +223,21 @@ function RealityChecks({ res, live }) {
             <h4>CHASING THE LEADER (WALK-FORWARD)</h4>
             <p className="dim small">At the start of each year, switch to whatever looked best on all the years before, using only the past. If this beats sticking with one strategy, chasing the top of the list pays; if not, the list's leader is partly luck.</p>
             <table className="board">
-              <thead><tr><th>year</th><th>picked from the past</th><th>its year</th><th>live strategy</th><th>Bitcoin</th></tr></thead>
+              <thead><tr><th>year</th><th>picked from the past</th><th>its year</th>{wf.live && <th>live strategy</th>}<th>Bitcoin</th></tr></thead>
               <tbody>
                 {wf.years.map((y) => (
                   <tr key={y.year}>
                     <td>{y.year}</td>
                     <td className="small" style={{ whiteSpace: "normal" }}>{y.pick}</td>
                     <td className={pctColor(y.pick_ret)}>{pc(y.pick_ret)}</td>
-                    <td className={pctColor(y.live_ret)}>{pc(y.live_ret)}</td>
+                    {wf.live && <td className={pctColor(y.live_ret)}>{pc(y.live_ret)}</td>}
                     <td className={pctColor(y.btc_ret)}>{pc(y.btc_ret)}</td>
                   </tr>
                 ))}
                 <tr className="champ">
                   <td><b>per year</b></td><td className="small">{wf.switches} switches</td>
                   <td className={pctColor(wf.pick_cagr)}><b>{pc(wf.pick_cagr)}</b></td>
-                  <td className={pctColor(wf.live_cagr)}><b>{pc(wf.live_cagr)}</b></td>
+                  {wf.live && <td className={pctColor(wf.live_cagr)}><b>{pc(wf.live_cagr)}</b></td>}
                   <td className={pctColor(wf.btc_cagr)}><b>{pc(wf.btc_cagr)}</b></td>
                 </tr>
               </tbody>
@@ -234,7 +247,7 @@ function RealityChecks({ res, live }) {
         {luck.length > 0 && (
           <div>
             <h4>COIN LUCK</h4>
-            <p className="dim small">Each strategy re-run {luck[0].rounds} times on a random two-thirds of the coins. A real edge keeps working whichever coins are missing; one that only won thanks to a few lucky coins collapses here.</p>
+            <p className="dim small">{luck.some((l) => !res.rows.find((r) => r.name === l.name)?.robust) ? "Nothing passed every check, so this shows the best-looking ones. " : ""}Each strategy re-run {luck[0].rounds} times on a random two-thirds of the coins. A real edge keeps working whichever coins are missing; one that only won thanks to a few lucky coins collapses here.</p>
             <table className="board">
               <thead><tr><th>strategy</th><th>all coins</th><th>median</th><th>worst</th><th>worst drop</th><th>positive</th></tr></thead>
               <tbody>
@@ -256,6 +269,142 @@ function RealityChecks({ res, live }) {
             <p className="dim small">Numbers are per year. Remember: the coins are today's survivors, so all of these are rosier than the future will be.</p>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+
+function FastLab({ openAgent }) {
+  const [res, reload] = usePoll("fastlab", 0);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [period, setPeriod] = useState("full");
+  const [group, setGroup] = useState("all");
+  const [pick, setPick] = useState([]);
+  const run = async () => {
+    setBusy(true); setMsg("");
+    try { const r = await api("fastlab/run", {}); if (r.busy) setMsg("already running…"); else reload(); }
+    catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  };
+  const has = res && res.rows;
+  const all = has ? res.rows : [];
+  const btc = all.find((r) => r.group === "Benchmark");
+  const slow = all.find((r) => r.group.startsWith("Slow"));
+  const fast = all.filter((r) => r.group.startsWith("Fast"));
+  const robust = fast.filter((r) => r.robust);
+  const best = [...fast].sort((a, b) => (b.full?.sharpe ?? -9) - (a.full?.sharpe ?? -9))[0];
+  const groups = ["all", ...new Set(fast.map((r) => r.group))];
+  const rows = all.filter((r) => group === "all" || r.group === group || !r.group.startsWith("Fast"))
+    .sort((a, b) => (b.robust - a.robust) || ((b[period]?.sharpe ?? -9) - (a[period]?.sharpe ?? -9)));
+  const shown = has ? [btc, slow, ...(pick.length ? fast.filter((r) => pick.includes(r.name)) : [best])].filter(Boolean) : [];
+  const t0 = has ? Date.parse(res.from) / 1000 : 0;
+  const series = shown.map((r, i) => ({ id: r.name, name: r.name, color: COLORS[i % COLORS.length], bold: r === best,
+    points: r.curve.map((v, k) => [t0 + k * (res.curve_step_days ?? 1) * 86400, (v - 1) * 100]) }));
+  const toggle = (name) => setPick((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]));
+  const pc = (x) => (x == null ? "–" : `${x > 0 ? "+" : ""}${x}%`);
+  return (
+    <>
+      <section className="panel lab research fastlab">
+        <div className="row-head">
+          <h3>FAST TRADER LAB <span className="dim">· a quick, speculative trader for its own pot, tested before it gets real money · by the <button className="mini linkish" onClick={() => openAgent("researcher")}>Researcher</button></span></h3>
+          <div className="row-tools">
+            {has && <Tabs value={period} options={PERIODS} onChange={setPeriod} />}
+            <button className="primary" onClick={run} disabled={busy}>{busy ? "loading 4-hour candles…" : has ? "run again" : "run the fast lab"}</button>
+          </div>
+        </div>
+        <p className="dim small">4-hour candles of the {res?.coins?.length ?? 40} most traded coins that Fusion also lists, up to 3 years back. Every 4 hours each rule decides on the close and trades at the next open, paying {res?.cost_per_side_pct ?? 0.5}% per buy or sell (Fusion's fee plus a wider spread for smaller coins). Breakouts with profit-taking, pump riding, dip buying, with and without a volume check, against holding Bitcoin and against the daily brain's slow rules on the same coins. Same robustness bar as the daily lab. <b>Research only:</b> nothing here touches your money yet.</p>
+        {msg && <p className="err-msg">{msg}</p>}
+        {res?.simulated && <p className="err-msg">Simulated prices (simulate mode): these numbers are not real.</p>}
+        {!has ? <div className="empty">Not run yet. It runs nightly after the history test, or press "run the fast lab" (the first run downloads about 40 coins × 3 years of 4-hour candles, a few minutes).</div> : (
+          <>
+            <div className={robust.length ? "ok-msg" : "verdict-box"}>
+              {robust.length
+                ? <>{robust.length} fast rule(s) pass every check. Best: <b>{robust[0].name}</b>, {pc(robust[0].full.cagr_pct)}/yr, worst drop {robust[0].full.max_dd_pct}%, {robust[0].fees_pct}% of the pot in fees per year.</>
+                : <>No fast rule passes every check yet. Best-looking: <b>{best?.name}</b> {pc(best?.full?.cagr_pct)}/yr (worst drop {best?.full?.max_dd_pct}%, fees {best?.fees_pct}%/yr, skill {best?.skill_prob == null ? "–" : Math.round(best.skill_prob * 100)}%).</>}
+              {" "}For comparison: holding Bitcoin {pc(btc?.full?.cagr_pct)}/yr, the daily brain's rules on these coins {pc(slow?.full?.cagr_pct)}/yr.
+            </div>
+            <p className="dim small">{res.from} to {res.to} · {Math.round(res.days / (res.bars_per_day || 6))} days · {res.coins.length} coins: {res.coins.join(", ")} · tested {ago(res.ts)}</p>
+            <div className="legend small">{series.map((x) => <span key={x.id} style={{ color: x.color, marginRight: 16 }}>■ {x.name}</span>)}</div>
+            <LineChart series={series} height={220} unit="%" baseline={0} xfmt={dayFmt} />
+            <div className="row-head" style={{ marginTop: 8 }}>
+              <span className="dim small">{robust.length} robust of {fast.length} fast rules · click rows to compare</span>
+              <Tabs value={group} options={groups.map((g) => [g, g === "all" ? "all" : g.replace("Fast: ", "")])} onChange={setGroup} />
+            </div>
+            <div className="scroll">
+              <table className="board">
+                <thead><tr><th>rule</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th>fees/yr</th><th>at 2x fees</th><th>in coins</th><th>years won</th><th>skill</th><th>robust</th></tr></thead>
+                <tbody>
+                  {rows.map((r) => {
+                    const st = r[period] || {};
+                    const fastRow = r.group.startsWith("Fast");
+                    return (
+                      <tr key={r.name} className={`${!fastRow ? "champ" : ""} ${pick.includes(r.name) ? "picked" : ""}`} onClick={() => fastRow && toggle(r.name)} title={r.explain}>
+                        <td><b>{r.name}</b><div className="dim small">{r.group}</div></td>
+                        <td className={pctColor(st.return_pct)}>{pc(st.return_pct)}</td>
+                        <td>{st.cagr_pct == null ? "–" : `${st.cagr_pct}%`}</td>
+                        <td className="down">{st.max_dd_pct}%</td>
+                        <td>{st.sharpe}</td>
+                        <td>{r.trades}</td>
+                        <td>{r.fees_pct}%</td>
+                        <td className={pctColor(r.fees2x?.cagr_pct)}>{r.fees2x?.cagr_pct == null ? "–" : `${r.fees2x.cagr_pct}%`}</td>
+                        <td>{r.invested_pct}%</td>
+                        <td>{r.group === "Benchmark" ? "" : `${r.years_won ?? "–"}/${r.years_total ?? "–"}`}</td>
+                        <td>{r.skill_prob == null ? "–" : `${Math.round(r.skill_prob * 100)}%`}</td>
+                        <td>{r.group === "Benchmark" ? "" : r.robust ? <span className="up">✓</span> : <span className="dim">–</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
+      {has && <RealityChecks res={res} live={null} title="FAST LAB REALITY CHECKS" />}
+      {has && <PatternHunt p={res.patterns} openAgent={openAgent} fast />}
+      {has && res.correlation && <BtcLinks c={res.correlation} />}
+    </>
+  );
+}
+
+function BtcLinks({ c }) {
+  const pts = (c.series || []).map((x) => [Date.parse(x.date) / 1000, x.avg_corr * 100]);
+  const disp = (c.series || []).map((x) => [Date.parse(x.date) / 1000, x.dispersion_pct]);
+  const coins = c.coins || [];
+  const lone = coins.filter((x) => x.change != null && x.change <= -0.2);
+  return (
+    <section className="panel">
+      <h3>BITCOIN LINKS OVER TIME <span className="dim">· how tightly the altcoins follow Bitcoin, and who is breaking away</span></h3>
+      <p className="dim small">Correlation 100 = moves exactly with Bitcoin, 0 = its own way. When everything follows Bitcoin, picking coins hardly matters and Bitcoin's direction decides. When links loosen and coins move differently (dispersion), a fast coin-picker has more to work with. Coins whose link dropped a lot in the last 30 days have their own story right now, good or bad.</p>
+      <div className="reality-grid">
+        <div>
+          <h4>AVERAGE ALTCOIN LINK TO BITCOIN, PER MONTH</h4>
+          <div className="legend small"><span style={{ color: COLORS[0], marginRight: 16 }}>■ correlation ×100</span><span style={{ color: COLORS[3] }}>■ dispersion, % per day</span></div>
+          <LineChart series={[{ id: "c", name: "correlation", color: COLORS[0], bold: true, points: pts }, { id: "d", name: "dispersion", color: COLORS[3], points: disp }]} height={200} baseline={0} xfmt={dayFmt} />
+          {lone.length > 0 && <p className="small">Breaking away now: {lone.map((x) => <b key={x.coin} style={{ marginRight: 8 }}>{x.coin} ({x.corr_all} → {x.corr_30d})</b>)}</p>}
+        </div>
+        <div>
+          <h4>EACH COIN, LAST 30 DAYS VS THE WHOLE PERIOD</h4>
+          <div className="scroll" style={{ maxHeight: 300 }}>
+            <table className="board">
+              <thead><tr><th>coin</th><th title="correlation with Bitcoin's 4-hour moves, last 30 days">link 30d</th><th>link all</th><th>change</th><th title="how much it swings when Bitcoin moves 1%">beta 30d</th><th>30d move</th><th title="trading volume of the last day vs the week before">volume now</th></tr></thead>
+              <tbody>
+                {coins.map((x) => (
+                  <tr key={x.coin}>
+                    <td><b>{x.coin}</b></td>
+                    <td>{x.corr_30d}</td>
+                    <td className="dim">{x.corr_all ?? "–"}</td>
+                    <td className={x.change <= -0.2 ? "warn" : x.change >= 0.2 ? "up" : "dim"}>{x.change == null ? "–" : `${x.change > 0 ? "+" : ""}${x.change}`}</td>
+                    <td>{x.beta_30d}</td>
+                    <td className={pctColor(x.move_30d_pct)}>{x.move_30d_pct == null ? "–" : `${x.move_30d_pct > 0 ? "+" : ""}${x.move_30d_pct}%`}</td>
+                    <td className={x.vol_surge >= 2 ? "up" : "dim"}>{x.vol_surge == null ? "–" : `${x.vol_surge}x`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
   );

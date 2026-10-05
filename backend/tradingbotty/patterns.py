@@ -49,6 +49,9 @@ def spearman(a: list[float], b: list[float]) -> float | None:
 def fwd_return(cd: Candles, sym: str, i: int, h: int = HORIZON) -> float | None:
     if i + h >= len(cd.days):
         return None
+    if sym == "ALTS":  # the average coin other than Bitcoin
+        rs = [r for r in (fwd_return(cd, s, i, h) for s in cd.coins if s != "BTC") if r is not None]
+        return sum(rs) / len(rs) if rs else None
     o, c = cd.o[sym][i + 1], cd.c[sym][i + h]
     return c / o - 1 if o and c else None
 
@@ -162,10 +165,10 @@ def _stats(points: list[tuple[int, float]]) -> tuple[float, float, int]:
     return m, m / sd * math.sqrt(n), n
 
 
-def analyse(cd: Candles, start: int = 100) -> dict:
+def analyse(cd: Candles, start: int = 100, cands: list[dict] | None = None, horizon: int = HORIZON) -> dict:
     nd = NormalDist()
-    cands = candidates()
-    days = list(range(start, len(cd.days) - HORIZON - 1, HORIZON))
+    cands = cands or candidates()
+    days = list(range(start, len(cd.days) - horizon - 1, horizon))
     rows = []
     for c in cands:
         weekly: list[tuple[int, float]] = []      # one statistic per week
@@ -174,7 +177,7 @@ def analyse(cd: Candles, start: int = 100) -> dict:
             for i in days:
                 pairs = []
                 for s in cd.coins:
-                    v, r = c["f"](cd, s, i), fwd_return(cd, s, i)
+                    v, r = c["f"](cd, s, i), fwd_return(cd, s, i, horizon)
                     if v is not None and r is not None:
                         pairs.append((v, r))
                 if len(pairs) < 6:
@@ -190,7 +193,7 @@ def analyse(cd: Candles, start: int = 100) -> dict:
         else:
             vals = []
             for i in days:
-                v, r = c["f"](cd, "BTC", i), fwd_return(cd, "BTC", i)
+                v, r = c["f"](cd, "BTC", i), fwd_return(cd, c.get("target", "BTC"), i, horizon)
                 if v is not None and r is not None:
                     vals.append((i, v, r))
             n = len(vals)
@@ -236,6 +239,8 @@ def analyse(cd: Candles, start: int = 100) -> dict:
                      "spread_pct": round(sum(spread) / len(spread) * 100, 2) if spread else None,
                      "since": time.strftime("%Y-%m-%d", time.gmtime(cd.days[weekly[0][0]]))})
     tested = [r for r in rows if r.get("verdict") != "no data"]
+    hd = round(horizon * (cd.days[1] - cd.days[0]) / 86400, 2) if len(cd.days) > 1 else horizon
+    word = "week" if hd >= 5 else "day" if hd >= 0.9 else "few hours"
     for r in tested:
         r["p_corrected"] = round(min(1.0, r["p"] * len(tested)), 4)
         halves = r["first_half"] is not None and r["second_half"] is not None and r["first_half"] * r["second_half"] > 0
@@ -246,9 +251,9 @@ def analyse(cd: Candles, start: int = 100) -> dict:
             r["verdict"] = "hint"
         else:
             r["verdict"] = "chance"
-        r["direction"] = "higher value, better week" if r["corr"] > 0 else "higher value, worse week"
+        r["direction"] = f"higher value, better {word}" if r["corr"] > 0 else f"higher value, worse {word}"
     order = {"pattern": 0, "hint": 1, "chance": 2, "no data": 3}
     rows.sort(key=lambda r: (order[r["verdict"]], -abs(r.get("t", 0))))
-    return {"ts": time.time(), "horizon_days": HORIZON, "tested": len(tested),
+    return {"ts": time.time(), "horizon_days": hd, "tested": len(tested),
             "from": time.strftime("%Y-%m-%d", time.gmtime(cd.days[start])) if len(cd.days) > start else None,
             "to": time.strftime("%Y-%m-%d", time.gmtime(cd.days[-1])), "rows": rows}

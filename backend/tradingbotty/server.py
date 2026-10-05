@@ -151,6 +151,19 @@ async def research_get():
     return engine.db.get("research", {}) or {}
 
 
+@app.post("/api/fastlab/run")
+async def fastlab_run():
+    try:
+        return await engine.run_fastlab()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/fastlab")
+async def fastlab_get():
+    return engine.db.get("fastlab", {}) or {}
+
+
 @app.get("/api/patterns")
 async def patterns_get():
     return engine.db.get("patterns", {}) or {}

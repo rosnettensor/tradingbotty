@@ -13,7 +13,7 @@ import re
 import time
 from collections import deque
 
-from . import altdata, controls, patterns, research
+from . import altdata, controls, fastlab, patterns, research
 from .agents.base import Blackboard, Source
 from .agents.crew import (DailyBrain, DataCollector, FusionScout, Guardian, LiveDesk, NewsHunter, PatternHunter,
                           Professor, Researcher, RiskOfficer, TrendWatch)
@@ -720,10 +720,47 @@ class Engine:
         return self._daily
 
     async def research_tick(self) -> None:
-        """The Researcher: once a day, after the daily candle closes, re-runs every strategy on all history."""
+        """The Researcher: once a day, after the daily candle closes, re-runs every strategy on all history, then
+        the fast lab."""
         last = (self.db.get("research") or {}).get("ts", 0)
         if time.time() // 86400 > last // 86400 and time.time() % 86400 > 900:
             await self.run_research()
+        last = (self.db.get("fastlab") or {}).get("ts", 0)
+        if time.time() // 86400 > last // 86400 and time.time() % 86400 > 1800:
+            await self.run_fastlab()
+
+    # ------------------------------------------------------------------ fast lab: 4-hour candles, speculative rules
+    async def run_fastlab(self) -> dict:
+        """Can a fast, speculative trader beat Fusion's fees? 4-hour candles of the most traded coins Fusion lists,
+        the same robustness checks as the history test, a signal test on the next 24 hours and Bitcoin links."""
+        if self.__dict__.get("_fast_busy"):
+            return {"busy": True}
+        self._fast_busy = True
+        try:
+            if self.settings.simulate:
+                rows = fastlab.synthetic_4h([*research.UNIVERSE[:16]])
+            else:
+                coins = await fastlab.pick_coins(self.prices.client, self.fusion_coins)
+                self._log("Researcher", "info", f"Fast lab: loading 4-hour candles for {len(coins)} coins "
+                          "(the first time takes a few minutes).")
+                rows = await fastlab.update_4h(self.prices.client, self.db, coins, self._log)
+            if "BTC" not in rows or len(rows) < 8:
+                raise ValueError("Not enough 4-hour history yet (Bitcoin plus at least 7 coins).")
+            cd = research.Candles.from_rows(rows)
+            res = await asyncio.to_thread(fastlab.run, cd)
+            res["simulated"] = bool(self.settings.simulate)
+            self.db.set("fastlab", res)
+            robust = [r for r in res["rows"] if r["robust"] and r["group"].startswith("Fast")]
+            found = [r for r in res["patterns"]["rows"] if r.get("verdict") == "pattern"]
+            self._log("Researcher", "info", f"Fast lab {res['from']} to {res['to']}, {len(cd.coins)} coins, "
+                      f"{res['cost_per_side_pct']}% cost per side: "
+                      + (f"{len(robust)} fast strategies pass every check, best {robust[0]['name']} "
+                         f"({robust[0]['full'].get('cagr_pct')}%/yr)" if robust else "no fast strategy passes every check")
+                      + f"; {len(found)} real 24-hour signal(s)"
+                      + (": " + "; ".join(f"{r['name']} ({r['direction']})" for r in found[:3]) if found else "") + ".")
+            return res
+        finally:
+            self._fast_busy = False
 
     async def brain_tick(self) -> None:
         """Every few minutes: once a new daily candle has closed, decide what to hold and trade the difference."""

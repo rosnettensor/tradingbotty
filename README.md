@@ -60,7 +60,10 @@ Press 1-4 to switch tabs.
   review, a daily chart per coin with the brain's lines and real trades, real trades, the agent feed and rated news.
 - **Agents:** the node graph and an inspector that shows what each agent just did, step by step, its key facts and
   tables, its own log, and for the AI agents their model and instructions.
-- **Research:** the history test (pick which strategy trades live), the Pattern Hunt and the free data.
+- **Research:** two labs. The daily brain lab: the history test (pick which strategy trades live), reality checks,
+  the Pattern Hunt and the free data. The fast trader lab: speculative rules on 4-hour candles of the ~40 most
+  traded coins Fusion lists (breakouts with profit-taking, pump riding, dip buying, volume checks), the same
+  robustness checks, a signal test on the next 24 hours, and each coin's link to Bitcoin over time. Research only.
 - **Controls:** money limits, AI switches, news feeds, and the Telegram briefing.
 
 ## Money rules

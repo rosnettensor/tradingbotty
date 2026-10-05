@@ -22,11 +22,12 @@ SPREAD = 0.0015   # estimated half-spread on liquid coins, per side
 @dataclass
 class Candles:
     """Daily OHLC per coin on one shared calendar (days as UTC midnight timestamps)."""
-    days: list[float]
+    days: list[float]               # one timestamp per bar (daily, or 4-hourly in the fast lab)
     o: dict[str, list[float | None]] = field(default_factory=dict)
     h: dict[str, list[float | None]] = field(default_factory=dict)
     l: dict[str, list[float | None]] = field(default_factory=dict)
     c: dict[str, list[float | None]] = field(default_factory=dict)
+    v: dict[str, list[float | None]] = field(default_factory=dict)   # quote volume, when the source has it
 
     @classmethod
     def from_rows(cls, rows: dict[str, list[tuple]]) -> "Candles":
@@ -36,9 +37,13 @@ class Candles:
         for sym, rs in rows.items():
             for name in ("o", "h", "l", "c"):
                 getattr(out, name)[sym] = [None] * len(days)
-            for t, o, h, l, c in rs:
-                i = idx[t]
-                out.o[sym][i], out.h[sym][i], out.l[sym][i], out.c[sym][i] = o, h, l, c
+            if rs and len(rs[0]) > 5:  # with volume (4-hour candles)
+                out.v[sym] = [None] * len(days)
+            for r in rs:
+                i = idx[r[0]]
+                out.o[sym][i], out.h[sym][i], out.l[sym][i], out.c[sym][i] = r[1:5]
+                if len(r) > 5:
+                    out.v[sym][i] = r[5]
         return out
 
     def attach(self, alt: dict[str, dict[int, float]], stale_days: int = 10) -> None:
@@ -63,12 +68,21 @@ class Candles:
         return int(self.days[i] // 86400)
 
     @property
+    def ppy(self) -> float:
+        """Bars per year: 365 for daily candles, 2190 for 4-hour candles."""
+        if len(self.days) < 2:
+            return 365.0
+        step = (self.days[-1] - self.days[0]) / (len(self.days) - 1)
+        return round(365 * 86400 / step) if step < 80000 else 365.0
+
+    @property
     def coins(self) -> list[str]:
         return list(self.c)
 
     def subset(self, coins: list[str]) -> "Candles":
         """The same calendar with only some coins (for the coin-luck check)."""
-        out = Candles(self.days, *({s: getattr(self, k)[s] for s in coins} for k in ("o", "h", "l", "c")))
+        out = Candles(self.days, *({s: getattr(self, k)[s] for s in coins} for k in ("o", "h", "l", "c")),
+                      {s: self.v[s] for s in coins if s in self.v})
         if hasattr(self, "alt"):
             out.alt = self.alt
         return out
@@ -462,13 +476,14 @@ class Result:
     trades: int = 0
     fees: float = 0.0            # fee drag: fees paid as a share of the account at the time, per year
     invested: float = 0.0        # share of days with money in coins
+    ppy: float = 365.0           # bars per year
 
     def stats(self, a: int = 0, b: int | None = None) -> dict:
         eq = self.equity[a:b]
         if len(eq) < 2 or eq[0] <= 0:
             return {}
         total = eq[-1] / eq[0] - 1
-        years = (len(eq) - 1) / 365
+        years = (len(eq) - 1) / self.ppy
         rets = [y / x - 1 for x, y in zip(eq[:-1], eq[1:]) if x > 0]
         m = sum(rets) / len(rets)
         sd = math.sqrt(sum((r - m) ** 2 for r in rets) / max(1, len(rets) - 1))
@@ -479,13 +494,13 @@ class Result:
         return {"return_pct": round(total * 100, 1),
                 "cagr_pct": round(((1 + total) ** (1 / years) - 1) * 100, 1) if years > 0 and total > -1 else None,
                 "max_dd_pct": round(dd * 100, 1),
-                "sharpe": round(m / sd * math.sqrt(365), 2) if sd > 0 else 0.0}
+                "sharpe": round(m / sd * math.sqrt(self.ppy), 2) if sd > 0 else 0.0}
 
 
 def simulate(cd: Candles, strat: Strategy, start: int, cost: float = FEE + SPREAD) -> Result:
     """Run one strategy from day `start`. Decisions on day i's close, fills at day i+1's open."""
     cash, qty = 1.0, {}
-    res = Result(strat.name, strat.group, strat.explain, [1.0])
+    res = Result(strat.name, strat.group, strat.explain, [1.0], ppy=cd.ppy)
     days_in = 0
     for i in range(start, len(cd.days) - 1):
         px = {s: cd.c[s][i] for s in qty}
@@ -523,7 +538,7 @@ def simulate(cd: Candles, strat: Strategy, start: int, cost: float = FEE + SPREA
         res.equity.append(value)
     n = max(1, len(res.equity) - 1)
     res.invested = round(days_in / n * 100)
-    res.fees = round(res.fees * 100 / max(n / 365, 0.25), 1)
+    res.fees = round(res.fees * 100 / max(n / res.ppy, 0.25), 1)
     return res
 
 
@@ -551,13 +566,13 @@ def deflated_sharpe(rets: list[float], trial_sharpes: list[float]) -> float:
     return round(nd.cdf((sr - sr0) * math.sqrt(t - 1) / denom), 3)
 
 
-def _sharpe(eq: list[float]) -> float:
+def _sharpe(eq: list[float], ppy: float = 365.0) -> float:
     rets = _daily_rets(eq)
     if len(rets) < 30:
         return -9.0
     m = sum(rets) / len(rets)
     sd = math.sqrt(sum((x - m) ** 2 for x in rets) / (len(rets) - 1)) or 1e-12
-    return m / sd * math.sqrt(365)
+    return m / sd * math.sqrt(ppy)
 
 
 def walk_forward(sims: list[Result], years: dict[int, tuple[int, int]], focus: str | None) -> dict:
@@ -587,14 +602,15 @@ def walk_forward(sims: list[Result], years: dict[int, tuple[int, int]], focus: s
         if live:
             acc["live"] *= 1 + ret(live)
         out.append(row)
-    n_years = sum((years[y][1] - years[y][0]) for y in ys[1:]) / 365 or 1
+    n_years = sum((years[y][1] - years[y][0]) for y in ys[1:]) / btc.ppy or 1
     cagr = lambda x: round((x ** (1 / n_years) - 1) * 100, 1) if x > 0 else -100.0  # noqa: E731
     return {"years": out, "pick_cagr": cagr(acc["pick"]), "btc_cagr": cagr(acc["btc"]),
             "live_cagr": cagr(acc["live"]) if live else None, "live": focus,
             "switches": sum(1 for p, q in zip(out, out[1:]) if p["pick"] != q["pick"])}
 
 
-def coin_luck(cd: Candles, names: list[str], start: int, rounds: int = 8, seed: int = 21) -> list[dict]:
+def coin_luck(cd: Candles, names: list[str], start: int, rounds: int = 8, seed: int = 21,
+              lookup=None, cost: float = FEE + SPREAD) -> list[dict]:
     """Does a strategy only work thanks to a few lucky coins? Re-run it on random two-thirds of the coins (Bitcoin
     always stays, for the filter). A real edge keeps working on most subsets; a lucky one collapses."""
     import random
@@ -605,10 +621,10 @@ def coin_luck(cd: Candles, names: list[str], start: int, rounds: int = 8, seed: 
     for name in names:
         cagrs, dds = [], []
         for sub in subsets:
-            strat = by_name(name)
+            strat = (lookup or by_name)(name)
             if not strat:
                 break
-            st = simulate(cd.subset(sub), strat, start).stats()
+            st = simulate(cd.subset(sub), strat, start, cost).stats()
             if st.get("cagr_pct") is not None:
                 cagrs.append(st["cagr_pct"])
                 dds.append(st["max_dd_pct"])
@@ -621,7 +637,7 @@ def coin_luck(cd: Candles, names: list[str], start: int, rounds: int = 8, seed: 
 
 
 def run_all(cd: Candles, strategies: list[Strategy] | None = None, focus: str | None = None,
-            checks: bool = True) -> dict:
+            checks: bool = True, cost: float = FEE + SPREAD, lookup=None) -> dict:
     """Every strategy over the whole history, plus the robustness checks: each half, every calendar year against
     Bitcoin, recent windows, and the deflated Sharpe ratio that corrects for testing many strategies at once."""
     strategies = strategies or all_strategies()
@@ -633,9 +649,11 @@ def run_all(cd: Candles, strategies: list[Strategy] | None = None, focus: str | 
         y = time.gmtime(cd.days[start + k]).tm_year
         a, _ = years.get(y, (k, k))
         years[y] = (a, k)
-    years = {y: ab for y, ab in years.items() if ab[1] - ab[0] >= 90}  # a year with under 3 months says little
+    k = cd.ppy / 365  # bars per day
+    years = {y: ab for y, ab in years.items() if ab[1] - ab[0] >= 90 * k}  # a year with under 3 months says little
     step = max(1, n // 700)
-    sims = [simulate(cd, s, start) for s in strategies]
+    lookup = lookup or by_name
+    sims = [simulate(cd, s, start, cost) for s in strategies]
     trial_sr = []
     for r in sims:
         rets = _daily_rets(r.equity)
@@ -646,15 +664,15 @@ def run_all(cd: Candles, strategies: list[Strategy] | None = None, focus: str | 
     if checks:  # same strategies at twice the cost: wider spreads on smaller coins, worse fills
         for st in strategies:
             if st.group != "Benchmark":
-                fresh = by_name(st.name) or st
-                stress[st.name] = simulate(cd, fresh, start, cost=2 * (FEE + SPREAD)).stats()
+                fresh = lookup(st.name) or st
+                stress[st.name] = simulate(cd, fresh, start, cost=2 * cost).stats()
     rows = []
     for r in sims:
         rows.append({"name": r.name, "fees2x": stress.get(r.name), "group": r.group, "explain": r.explain, "trades": r.trades,
                      "fees_pct": r.fees, "invested_pct": r.invested, "full": r.stats(),
                      "first_half": r.stats(0, half + 1), "second_half": r.stats(half),
-                     "last_2y": r.stats(max(0, n - 730)), "last_1y": r.stats(max(0, n - 365)),
-                     "last_6m": r.stats(max(0, n - 182)),
+                     "last_2y": r.stats(max(0, n - int(730 * k))), "last_1y": r.stats(max(0, n - int(365 * k))),
+                     "last_6m": r.stats(max(0, n - int(182 * k))),
                      "years": {str(y): r.stats(a, b + 1) for y, (a, b) in years.items()},
                      "skill_prob": deflated_sharpe(_daily_rets(r.equity), trial_sr),
                      "curve": [round(x, 4) for x in r.equity[::step]]})
@@ -674,8 +692,9 @@ def run_all(cd: Candles, strategies: list[Strategy] | None = None, focus: str | 
         extra["walk_forward"] = walk_forward(sims, years, focus)
         top = [r["name"] for r in sorted(rows, key=lambda r: -r["full"].get("sharpe", -9)) if r["robust"]]
         names = ([focus] if focus and any(r["name"] == focus for r in rows) else []) + [x for x in top if x != focus]
-        extra["coin_luck"] = coin_luck(cd, names[:5], start)
+        extra["coin_luck"] = coin_luck(cd, names[:5], start, lookup=lookup, cost=cost)
     return {**extra, "ts": time.time(), "from": day(start), "to": day(len(cd.days) - 1), "days": n,
-            "coins": cd.coins, "cost_per_side_pct": round((FEE + SPREAD) * 100, 2), "curve_step": step,
+            "coins": cd.coins, "cost_per_side_pct": round(cost * 100, 2), "curve_step": step,
+            "curve_step_days": round(step / k, 4), "bars_per_day": round(k, 2),
             "years": [str(y) for y in years], "strategies_tested": len(strategies),
             "rows": sorted(rows, key=lambda r: (-r["robust"], -r["full"].get("sharpe", -9)))}
