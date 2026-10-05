@@ -94,6 +94,13 @@ class DB:
             self.conn.executemany(sql, rows)
             self.conn.commit()
 
+    def snapshot(self, dest: Path) -> None:
+        """A consistent copy of the whole database, safe while the bot runs."""
+        out = sqlite3.connect(dest)
+        with self.lock:
+            self.conn.backup(out)
+        out.close()
+
     # key/value state (mode, kill switch, budget counters)
     def get(self, key: str, default=None):
         rows = self.query("SELECT value FROM kv WHERE key=?", (key,))

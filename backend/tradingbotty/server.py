@@ -2,10 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
+import os
+import sqlite3
+import tempfile
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -18,7 +26,19 @@ DIST = ROOT / "frontend" / "dist"
 MEDIA = ROOT / "media"
 MEDIA_TYPES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm"}
 
+
+
+def _take_incoming(db_path: Path) -> None:
+    """A database sent by 'move to server' waits next to the live one until the next start, then takes its place."""
+    incoming = db_path.with_suffix(".incoming")
+    if incoming.exists():
+        if db_path.exists():
+            db_path.replace(db_path.with_suffix(f".before-move-{int(time.time())}.db"))
+        incoming.replace(db_path)
+
+
 settings = load_settings()
+_take_incoming(settings.db_path)
 engine = Engine(settings)
 
 
@@ -30,6 +50,63 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="TradingBotty", lifespan=lifespan)
+
+
+class PasswordGate:
+    """With TB_PASSWORD set (always on a server), every page, API call and live feed needs the password.
+    The browser asks once (any user name), then a cookie keeps you signed in for 30 days."""
+    OPEN = {"/api/health"}
+
+    def __init__(self, app, password: str | None):
+        self.app, self.password = app, password
+        self.token = hmac.new((password or "").encode(), b"tradingbotty-session", hashlib.sha256).hexdigest()
+
+    def _ok(self, headers: dict) -> tuple[bool, bool]:
+        """(allowed, needs the cookie)"""
+        for part in headers.get(b"cookie", b"").decode(errors="ignore").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "tb_auth" and hmac.compare_digest(v, self.token):
+                return True, False
+        auth = headers.get(b"authorization", b"").decode(errors="ignore")
+        if auth.lower().startswith("basic "):
+            try:
+                pw = base64.b64decode(auth[6:]).decode().partition(":")[2]
+            except Exception:
+                pw = ""
+            if hmac.compare_digest(pw.encode(), self.password.encode()):
+                return True, True
+        return False, False
+
+    async def __call__(self, scope, receive, send):
+        if not self.password or scope["type"] not in ("http", "websocket") or scope.get("path") in self.OPEN:
+            return await self.app(scope, receive, send)
+        ok, cookie = self._ok(dict(scope.get("headers") or []))
+        if ok and scope["type"] == "http" and cookie:
+            async def send_with_cookie(msg):
+                if msg["type"] == "http.response.start":
+                    msg.setdefault("headers", [])
+                    msg["headers"] = list(msg["headers"]) + [(b"set-cookie", f"tb_auth={self.token}; Path=/; Max-Age=2592000; "
+                                                                              "HttpOnly; Secure; SameSite=Strict".encode())]
+                await send(msg)
+            return await self.app(scope, receive, send_with_cookie)
+        if ok:
+            return await self.app(scope, receive, send)
+        await asyncio.sleep(1)  # slows down password guessing
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 4401})
+            return
+        await send({"type": "http.response.start", "status": 401,
+                    "headers": [(b"www-authenticate", b'Basic realm="TradingBotty", charset="UTF-8"'),
+                                (b"content-type", b"text/plain")]})
+        await send({"type": "http.response.body", "body": b"TradingBotty: password needed"})
+
+
+app.add_middleware(PasswordGate, password=settings.password)
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True}
 
 
 class ModeIn(BaseModel):
@@ -208,13 +285,56 @@ def report():
     return {"text": engine.daily_report(), "telegram": bool(settings.telegram_token and settings.telegram_chat)}
 
 
+@app.post("/api/phone/test")
 @app.post("/api/telegram/test")
-async def telegram_test():
-    if not (settings.telegram_token and settings.telegram_chat):
-        raise HTTPException(400, "Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env and restart first.")
+async def phone_test():
+    if not engine.phone_channels():
+        raise HTTPException(400, "Add WHATSAPP_PHONE and WHATSAPP_APIKEY (or the Telegram pair) to .env and restart first.")
     ok = await engine.notify("TradingBotty test message: your phone briefing works.\n\n" + engine.daily_report())
     if not ok:
-        raise HTTPException(400, "Telegram refused the message: check the token and chat id (see the agent feed).")
+        raise HTTPException(400, "The message was refused: check the keys in .env (details in the agent feed).")
+    return {"ok": True, "channels": engine.phone_channels()}
+
+
+# ---- moving the bot between this computer and a server, without ever trading twice
+@app.get("/api/move/export")
+async def move_export(request: Request):
+    """Switches this bot to STANDBY for good (until 'trade here again') and hands out its whole database."""
+    if engine.__dict__.get("_brain_busy") or engine.__dict__.get("_fast_trading"):
+        raise HTTPException(409, "A decision is running right now. Try again in a minute.")
+    await engine.set_mode("paper")
+    tmp = Path(tempfile.mkdtemp()) / "tradingbotty.db"
+    engine.db.snapshot(tmp)
+    engine.db.set("moved", {"ts": time.time(), "to": request.query_params.get("to", "the server")})
+    engine._log("Engine", "live", "Bot moved away: this copy stays on STANDBY so the money is never traded twice.")
+    return FileResponse(tmp, filename="tradingbotty.db", media_type="application/octet-stream")
+
+
+@app.post("/api/move/import")
+async def move_import(request: Request):
+    """Takes the database from the other copy and restarts with it (on STANDBY: you switch LIVE yourself)."""
+    if engine.mode == "live":
+        raise HTTPException(409, "This copy is LIVE. Switch it to STANDBY first.")
+    data = await request.body()
+    if not data.startswith(b"SQLite format 3\x00"):
+        raise HTTPException(400, "That is not a TradingBotty database.")
+    incoming = settings.db_path.with_suffix(".incoming")
+    incoming.write_bytes(data)
+    con = sqlite3.connect(incoming)
+    con.execute("DELETE FROM kv WHERE key IN ('moved')")
+    con.execute("INSERT INTO kv(key,value) VALUES('mode','\"paper\"') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    con.commit()
+    con.close()
+    engine._log("Engine", "info", f"Received the bot's database ({len(data) // 1024} KB). Restarting with it now.")
+    asyncio.get_running_loop().call_later(1.5, os._exit, 0)  # the server starts it again with the new database
+    return {"ok": True, "kb": len(data) // 1024}
+
+
+@app.post("/api/move/back")
+def move_back():
+    """'Trade on this computer again': only after the other copy is on STANDBY or switched off."""
+    engine.db.set("moved", None)
+    engine._log("Engine", "info", "This copy may trade again (the moved-away lock is off). LIVE still needs REAL MONEY.")
     return {"ok": True}
 
 

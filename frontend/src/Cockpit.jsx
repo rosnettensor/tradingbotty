@@ -262,7 +262,8 @@ function StatStrip({ state, openAgent }) {
         title="Coins blocked from buying after hack or delisting news, a crash, or a Professor warning" />
       <Stat label="Professor" value={p.ts ? ago(p.ts) : "–"} sub={p.block?.length ? `blocked ${p.block.map((x) => x.symbol).join(", ")}` : p.ts ? "no veto" : "after next decision"}
         title="Daily review by Claude Opus after each brain decision" />
-      <Stat label="Phone briefing" value={state.telegram ? "on" : "off"} tone={state.telegram ? "up" : "dim"} sub={state.telegram ? "Telegram, daily" : "set up in Controls"} />
+      <Stat label="Phone briefing" value={state.phone?.channels?.length ? "on" : "off"} tone={state.phone?.channels?.length ? "up" : "dim"}
+        sub={state.phone?.channels?.length ? `${state.phone.channels.join(" + ")}, ${state.phone.hour}:00` : "set up in Controls"} />
       <div className="stat-links">
         {["trend", "guardian", "researcher"].map((id) => <button key={id} className="mini" onClick={() => openAgent(id)}>{id}</button>)}
       </div>

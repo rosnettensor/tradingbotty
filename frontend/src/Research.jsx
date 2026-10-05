@@ -3,7 +3,7 @@ import { LineChart } from "./charts.jsx";
 import { Tabs } from "./components.jsx";
 import { ago, api, pctColor, usePoll } from "./useBot.js";
 
-const COLORS = ["#00f0ff", "#ff2bd6", "#39ff88", "#ffb020", "#8a5cff", "#ff6b3d", "#4da3ff", "#e8ff3d"];
+const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "var(--violet)", "#ff6b3d", "#4da3ff", "#c8a400"];  // follow the skin
 const PERIODS = [["full", "all history"], ["last_2y", "2 years"], ["last_1y", "1 year"], ["last_6m", "6 months"], ["first_half", "1st half"], ["second_half", "2nd half"]];
 const dayFmt = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", year: "2-digit" });
 

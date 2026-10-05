@@ -25,6 +25,12 @@ CONTROLS = [
      "help": "One deep review a day, a few cents. It writes your briefing and may block a coin for 24 hours."},
     {"key": "ai_budget.spread_over_days", "label": "Spread AI budget over (days)", "min": 3, "max": 120, "step": 1,
      "int": True, "group": "AI", "help": "Daily AI allowance = budget / days. The total budget itself stays your hard cap."},
+    # ---- phone
+    {"key": "phone.morning_hour", "label": "Morning briefing at (hour, Swiss time)", "min": 5, "max": 12, "step": 1,
+     "int": True, "group": "Phone", "help": "Once a day by WhatsApp and/or Telegram: account, the bot's own gain, "
+     "the night's decision, the fast pot, real trades of the last 24h and the Professor's review."},
+    {"key": "phone.trades", "label": "Message me on every real trade", "bool": True, "group": "Phone",
+     "help": "A short message the moment the Daily Brain or the fast pot buys or sells with real money."},
     # ---- speed
     {"key": "engine.news_poll_seconds", "label": "Read news every (seconds)", "min": 60, "max": 3600, "step": 60, "int": True,
      "group": "Speed", "help": "More often = the Guardian hears about a hack sooner, and a little more AI spend."},
@@ -37,6 +43,8 @@ DEFAULTS = {
     "live.max_order": 10.0,
     "live.max_spread_pct": 1.0,
     "live.use_my_coins": False,
+    "phone.morning_hour": 7,
+    "phone.trades": True,
 }
 
 BY_KEY = {c["key"]: c for c in CONTROLS}

@@ -9,8 +9,18 @@ import * as THREE from "three";
 // - halo: share of coins up in the last 24h (green) vs down (red)
 // - outer ring: cash (cyan) vs coins (magenta) in your account
 // - red sparks: Guardian blocks; shockwave: every real trade (green buy, red sell)
+// colors come from the dashboard skin (CSS tokens) and change when you switch it
 const GREEN = new THREE.Color(0x39ff88), RED = new THREE.Color(0xff3b5c), CYAN = new THREE.Color(0x00f0ff);
 const AMBER = new THREE.Color(0xffb020), MAGENTA = new THREE.Color(0xff2bd6), DIM = new THREE.Color(0x3a5a7a);
+const INK = new THREE.Color(0xffffff);
+
+function readSkin() {
+  const css = getComputedStyle(document.documentElement);
+  const set = (c, name) => { const v = css.getPropertyValue(name).trim(); if (v) { try { c.setStyle(v); } catch { /* keep */ } } };
+  set(GREEN, "--green"); set(RED, "--red"); set(CYAN, "--cyan"); set(AMBER, "--amber"); set(MAGENTA, "--magenta"); set(DIM, "--dim");
+  set(INK, "--hi");
+  return css.getPropertyValue("--sphere-blend").trim() === "normal" ? THREE.NormalBlending : THREE.AdditiveBlending;
+}
 
 export const LAYERS = [
   ["var(--green)", "Surface color", "the bot's own gain (green) or loss (red)"],
@@ -66,27 +76,38 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
     const world = new THREE.Group();
     scene.add(world);
     const glow = glowTexture();
+    let blend = readSkin();
+    const glowing = [];  // materials that glow on dark skins and turn to ink on paper
+    const mark = (m) => { m.blending = blend; glowing.push(m); return m; };
 
     // surface
     const geo = new THREE.IcosahedronGeometry(1, 24);
     const base = geo.attributes.position.array.slice();
-    const pointsMat = new THREE.PointsMaterial({ size: 0.02, color: 0x00f0ff, transparent: true, opacity: 0.85, depthWrite: false });
+    const pointsMat = new THREE.PointsMaterial({ size: 0.02, color: CYAN, transparent: true, opacity: 0.85, depthWrite: false });
     world.add(new THREE.Points(geo, pointsMat));
 
     // inner cage: Bitcoin filter
-    const cageMat = new THREE.MeshBasicMaterial({ color: 0x39ff88, wireframe: true, transparent: true, opacity: 0.4 });
+    const cageMat = new THREE.MeshBasicMaterial({ color: GREEN, wireframe: true, transparent: true, opacity: 0.4 });
+    const onSkin = () => {
+      blend = readSkin();
+      for (const m of glowing) { m.blending = blend; m.needsUpdate = true; }
+      haloUp.material.color.copy(GREEN); haloDown.material.color.copy(RED);
+      cashArc.material.color.copy(CYAN); coinArc.material.color.copy(MAGENTA);
+      sparkMat.color.copy(RED);
+    };
+    window.addEventListener("tb-skin", onSkin);
     const cage = new THREE.Mesh(new THREE.IcosahedronGeometry(0.62, 2), cageMat);
     world.add(cage);
 
     // halo (breadth) and outer ring (cash vs coins): arcs rebuilt when the share changes
     const arc = (r1, r2, color, opacity) => {
       const m = new THREE.Mesh(new THREE.RingGeometry(r1, r2, 128, 1, 0, Math.PI * 2),
-        new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false }));
+        mark(new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, transparent: true, opacity, depthWrite: false })));
       return m;
     };
     const halo = new THREE.Group(), outer = new THREE.Group();
-    const haloUp = arc(1.42, 1.46, 0x39ff88, 0.55), haloDown = arc(1.42, 1.46, 0xff3b5c, 0.55);
-    const cashArc = arc(1.62, 1.635, 0x00f0ff, 0.5), coinArc = arc(1.62, 1.635, 0xff2bd6, 0.5);
+    const haloUp = arc(1.42, 1.46, GREEN, 0.55), haloDown = arc(1.42, 1.46, RED, 0.55);
+    const cashArc = arc(1.62, 1.635, CYAN, 0.5), coinArc = arc(1.62, 1.635, MAGENTA, 0.5);
     halo.add(haloUp, haloDown);
     outer.add(cashArc, coinArc);
     halo.rotation.x = Math.PI / 2.3;
@@ -117,10 +138,10 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
     };
     const makeSpike = (sym) => {
       const dir = spots[spotFor(sym)].clone();
-      const mat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+      const mat = mark(new THREE.MeshBasicMaterial({ color: CYAN, transparent: true, opacity: 0.85, depthWrite: false }));
       const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.018, 1, 6, 1, true), mat);
       shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-      const tip = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0x00f0ff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+      const tip = new THREE.Sprite(mark(new THREE.SpriteMaterial({ map: glow, color: CYAN, transparent: true, depthWrite: false })));
       world.add(shaft, tip);
       const tag = document.createElement("div");
       tag.className = "core-tag";
@@ -134,11 +155,11 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
     const sparkGeo = new THREE.BufferGeometry();
     const sparkPos = new Float32Array(60 * 3);
     sparkGeo.setAttribute("position", new THREE.BufferAttribute(sparkPos, 3));
-    const sparkMat = new THREE.PointsMaterial({ size: 0.05, color: 0xff3b5c, map: glow, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+    const sparkMat = mark(new THREE.PointsMaterial({ size: 0.05, color: RED, map: glow, transparent: true, opacity: 0, depthWrite: false }));
     world.add(new THREE.Points(sparkGeo, sparkMat));
 
     // shockwave
-    const shockMat = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0 });
+    const shockMat = new THREE.MeshBasicMaterial({ color: INK, side: THREE.DoubleSide, transparent: true, opacity: 0 });
     const shock = new THREE.Mesh(new THREE.RingGeometry(0.98, 1.0, 128), shockMat);
     scene.add(shock);
 
@@ -286,6 +307,7 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
       el.removeEventListener("pointerdown", down);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("tb-skin", onSkin);
       for (const s of spikes.values()) s.tag.remove();
       renderer.dispose();
       el.removeChild(renderer.domElement);

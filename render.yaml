@@ -1,0 +1,31 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick the tradingbotty repo. See SERVER.md.
+services:
+  - type: web
+    name: tradingbotty
+    runtime: python
+    region: frankfurt          # close to Bitpanda (Vienna); Binance and Kraken data work from here
+    plan: starter              # must stay on all the time: the free plan sleeps and would miss decisions
+    branch: main
+    autoDeploy: false          # updates only when you press "Manual Deploy", never in the middle of the night
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py --host 0.0.0.0
+    healthCheckPath: /api/health
+    disk:
+      name: tradingbotty-data
+      mountPath: /var/data     # the database lives here and survives restarts and deploys
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: TB_DB
+        value: /var/data/tradingbotty.db
+      - key: TB_PASSWORD
+        sync: false            # Render asks you for these when you create it; they never go into GitHub
+      - key: BITPANDA_FUSION_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: WHATSAPP_PHONE
+        sync: false
+      - key: WHATSAPP_APIKEY
+        sync: false

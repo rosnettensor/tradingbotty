@@ -5,6 +5,7 @@ import Agents from "./Agents.jsx";
 import Research from "./Research.jsx";
 import Controls from "./Controls.jsx";
 import { Sparkline } from "./charts.jsx";
+import { SKINS, applySkin, currentSkin } from "./skins.js";
 
 const TABS = ["cockpit", "agents", "research", "controls"];
 
@@ -84,6 +85,7 @@ function TopBar({ state, connected, tab, setTab, logo }) {
     }
   };
   const kill = () => api("kill", { on: !state.kill_switch });
+  const [skin, setSkin] = useState(currentSkin);
   return (
     <header className="topbar">
       {logo ? <img className="logo-img" src={logo} alt="TradingBotty" /> : <div className="logo">TRADING<span>BOTTY</span></div>}
@@ -94,6 +96,10 @@ function TopBar({ state, connected, tab, setTab, logo }) {
       </nav>
       <div className="spacer" />
       {state.simulate && <span className="badge warn" title="Random-walk prices for testing">SIMULATED DATA</span>}
+      <select className="skin-pick" value={skin} title="Look of the dashboard"
+        onChange={(e) => { setSkin(e.target.value); applySkin(e.target.value); }}>
+        {SKINS.map(([k, name]) => <option key={k} value={k}>◐ {name}</option>)}
+      </select>
       <span className={`badge ${connected ? "ok" : "bad"}`}>{connected ? "● LINK" : "○ OFFLINE"}</span>
       <div className="budget" title="AI spend: last 24h vs daily allowance, and total vs your hard cap (grows with 10% of the bot's gains)">
         <span>AI {state.ai ? "" : "(off) "}{fmt.usd(b.spent_today)}/{fmt.usd(b.cap_today)} today</span>

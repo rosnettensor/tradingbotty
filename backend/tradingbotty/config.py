@@ -29,6 +29,9 @@ class Settings:
     fusion_api_key: str | None = None
     telegram_token: str | None = None
     telegram_chat: str | None = None
+    whatsapp_phone: str | None = None   # CallMeBot: your number with country code, e.g. +41791234567
+    whatsapp_key: str | None = None     # CallMeBot: the apikey it sends you after you allow it
+    password: str | None = None         # dashboard password, required when the bot is reachable from the internet
     simulate: bool = False  # offline mode: synthetic prices, for tests and demos
     db_path: Path = field(default_factory=lambda: DATA_DIR / "tradingbotty.db")
 
@@ -48,6 +51,9 @@ def load_settings(config_path: Path | None = None) -> Settings:
         fusion_api_key=os.environ.get("BITPANDA_FUSION_API_KEY") or None,
         telegram_token=os.environ.get("TELEGRAM_BOT_TOKEN") or None,
         telegram_chat=os.environ.get("TELEGRAM_CHAT_ID") or None,
+        whatsapp_phone=os.environ.get("WHATSAPP_PHONE") or None,
+        whatsapp_key=os.environ.get("WHATSAPP_APIKEY") or None,
+        password=os.environ.get("TB_PASSWORD") or None,
         simulate=os.environ.get("TB_SIMULATE", "0") == "1",
         db_path=Path(os.environ.get("TB_DB", DATA_DIR / "tradingbotty.db")),
     )

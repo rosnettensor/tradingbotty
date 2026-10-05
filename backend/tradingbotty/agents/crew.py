@@ -692,7 +692,6 @@ class Professor(Agent):
             self.say(f"Watch: {out['watch']}")
         if out["idea"]:
             self.say(f"Research idea: {out['idea']}")
-        e._notify_later("The Professor: " + (out["assessment"] or "") + (f"\nWatch: {out['watch']}" if out["watch"] else ""))
         self._show(out)
 
     def _show(self, p: dict) -> None:

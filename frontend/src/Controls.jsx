@@ -7,6 +7,7 @@ export default function Controls({ state }) {
     <div className="controls">
       <BotSettings />
       <div className="col">
+        <Moved state={state} />
         <HowItTrades state={state} />
         <Phone state={state} />
       </div>
@@ -75,19 +76,40 @@ function Phone({ state }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [report] = usePoll("report", 300000);
+  const ph = state.phone || { channels: [] };
+  const on = ph.channels.length > 0;
   const test = async () => {
     setBusy(true); setMsg("");
-    try { await api("telegram/test", {}); setMsg("Sent: check your phone."); } catch (e) { setMsg(e.message); } finally { setBusy(false); }
+    try { await api("phone/test", {}); setMsg("Sent: check your phone."); } catch (e) { setMsg(e.message); } finally { setBusy(false); }
   };
   return (
     <section className="panel">
-      <h3>PHONE BRIEFING (TELEGRAM) <span className={state.telegram ? "up" : "dim"}>· {state.telegram ? "connected" : "not set up"}</span></h3>
-      <p className="dim small">Every morning after the daily decision: account, the bot's gain or loss, hours since the last trade, what it holds, coins near a breakout, Guardian blocks and the Professor's review. Also right away when the Guardian sells a coin in an emergency or the brain switches strategy.</p>
-      {state.telegram
+      <h3>PHONE BRIEFING <span className={on ? "up" : "dim"}>· {on ? ph.channels.join(" + ") : "not set up"}</span></h3>
+      <p className="dim small">Every morning at {ph.hour ?? 7}:00 Swiss time: account, the bot's own gain or loss, the night's decision, the fast pot, real trades of the last 24 hours, Guardian blocks and the Professor's review.
+        {ph.trades ? " Plus a short message on every real trade." : ""} Right away when the Guardian sells in an emergency. Time and trade messages: Settings, Phone.</p>
+      {on
         ? <button onClick={test} disabled={busy}>{busy ? "sending…" : "send a test message"}</button>
-        : <p className="small">To switch it on, follow the steps Claude sent you in the chat (BotFather, then two lines in .env), then restart the bot.</p>}
+        : <p className="small">WhatsApp: send the activation message from callmebot.com to their WhatsApp number, put your number and the apikey you get into .env (WHATSAPP_PHONE, WHATSAPP_APIKEY), restart. Telegram works too (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID).</p>}
       {msg && <p className={/Sent/.test(msg) ? "ok-msg" : "err-msg"}>{msg}</p>}
       {report?.text && <><h4>TODAY'S BRIEFING (PREVIEW)</h4><pre className="report">{report.text}</pre></>}
+    </section>
+  );
+}
+
+function Moved({ state }) {
+  const [msg, setMsg] = useState("");
+  if (!state.moved) return null;
+  const back = async () => {
+    const ok = window.confirm("Trade on this computer again?\n\nOnly if the server copy is on STANDBY or switched off: two copies would trade the same money twice.");
+    if (!ok) return;
+    try { await api("move/back", {}); setMsg("Done. Switch LIVE at the top when you're ready."); } catch (e) { setMsg(e.message); }
+  };
+  return (
+    <section className="panel guard-item">
+      <h3>THIS BOT MOVED TO {String(state.moved.to || "the server").toUpperCase()}</h3>
+      <p className="small">This copy stays on STANDBY so your money is never traded twice. The server trades now.</p>
+      <button onClick={back}>trade on this computer again</button>
+      {msg && <p className="ok-msg">{msg}</p>}
     </section>
   );
 }

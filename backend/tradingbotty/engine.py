@@ -476,20 +476,61 @@ class Engine:
         except RuntimeError:
             pass  # no event loop (tests)
 
+    def phone_channels(self) -> list[str]:
+        st = self.settings
+        return (["WhatsApp"] if st.whatsapp_phone and st.whatsapp_key else []) + (["Telegram"] if st.telegram_token and st.telegram_chat else [])
+
     async def notify(self, text: str) -> bool:
-        """A message to your phone through your own Telegram bot (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env)."""
-        tok, chat = self.settings.telegram_token, self.settings.telegram_chat
-        if not tok or not chat or self.settings.simulate:
+        """A message to your phone: WhatsApp through CallMeBot (WHATSAPP_PHONE and WHATSAPP_APIKEY in .env)
+        and/or your own Telegram bot (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID). True if at least one arrived."""
+        st = self.settings
+        if st.simulate or not self.phone_channels():
             return False
+        ok = False
+        if st.whatsapp_phone and st.whatsapp_key:
+            try:
+                phone = st.whatsapp_phone.replace(" ", "")
+                r = await self.prices.client.get("https://api.callmebot.com/whatsapp.php",
+                                                 params={"phone": phone, "text": text[:1500], "apikey": st.whatsapp_key})
+                good = r.status_code == 200 and "error" not in r.text[:400].lower()
+                if not good:
+                    self._log("Engine", "warn", f"WhatsApp (CallMeBot) refused the message ({r.status_code}): "
+                                                "check WHATSAPP_PHONE and WHATSAPP_APIKEY in .env")
+                ok = ok or good
+            except Exception as ex:
+                self._log("Engine", "warn", f"WhatsApp message failed: {str(ex)[:80]}")
+        if st.telegram_token and st.telegram_chat:
+            try:
+                r = await self.prices.client.post(f"https://api.telegram.org/bot{st.telegram_token}/sendMessage",
+                                                  json={"chat_id": st.telegram_chat, "text": text[:3900]})
+                if r.status_code != 200:
+                    self._log("Engine", "warn", f"Telegram refused the message ({r.status_code}): check the token and chat id")
+                ok = ok or r.status_code == 200
+            except Exception as ex:
+                self._log("Engine", "warn", f"Telegram message failed: {str(ex)[:80]}")
+        return ok
+
+    @staticmethod
+    def _local_now() -> time.struct_time:
+        """Swiss time for the morning briefing (falls back to the computer's own clock)."""
         try:
-            r = await self.prices.client.post(f"https://api.telegram.org/bot{tok}/sendMessage",
-                                              json={"chat_id": chat, "text": text[:3900]})
-            if r.status_code != 200:
-                self._log("Engine", "warn", f"Telegram refused the message ({r.status_code}): check the token and chat id")
-            return r.status_code == 200
-        except Exception as ex:
-            self._log("Engine", "warn", f"Telegram message failed: {str(ex)[:80]}")
-            return False
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo("Europe/Zurich")).timetuple()
+        except Exception:
+            return time.localtime()
+
+    async def morning_tick(self) -> None:
+        """Once a day at the chosen hour (Swiss time): the briefing to your phone."""
+        if not self.phone_channels():
+            return
+        now = self._local_now()
+        day = time.strftime("%Y-%m-%d", now)
+        if now.tm_hour < int(self.settings["phone"]["morning_hour"]) or self.db.get("briefing_day") == day:
+            return
+        self.db.set("briefing_day", day)
+        if await self.notify(self.daily_report()):
+            self._log("Engine", "info", f"Morning briefing sent by {' and '.join(self.phone_channels())}.")
 
     def daily_report(self) -> str:
         b, w = self.brain(), self.wallet or {}
@@ -498,8 +539,17 @@ class Engine:
                  (f"Account: {w['total']:.2f} {cur} (cash {w['fiat']:.2f})" if w.get("total") is not None else "Account: ?")]
         if w.get("bot_edge") is not None:
             lines.append(f"Bot's own gain/loss: {w['bot_edge']:+.2f} {cur} (coin price swings excluded)")
-        lines.append(f"Strategy: {b.get('strategy')}")
-        lines.append(f"Decision: {b.get('note', 'none yet')}")
+        lines.append(f"Daily Brain: {b.get('strategy')}")
+        lines.append(f"Last decision: {b.get('note', 'none yet')}")
+        f = self.fast.status()
+        if f.get("on"):
+            lines.append(f"Fast pot: {f.get('pot', 0):.2f} {cur}, {f.get('trades', 0)} trades, "
+                         f"{f.get('realized', 0):+.2f} {cur} so far" + (f" (holds {', '.join(f['pos'])})" if f.get("pos") else ""))
+        day = self.db.query("SELECT symbol,side,notional,variant_id FROM trades WHERE mode='live' AND ts>? ORDER BY ts",
+                            (time.time() - 86400,))
+        if day:
+            lines.append("Real trades in 24h: " + ", ".join(
+                f"{'⚡' if t['variant_id'] == 'fast' else ''}{t['side'].lower()} {t['symbol']} {t['notional']:.0f}" for t in day))
         if b.get("btc_ok") is False:
             lines.append("Bitcoin is below its average: the bot waits in cash on purpose.")
         last = self.db.query("SELECT MAX(ts) t FROM trades WHERE mode='live'")[0]["t"]
@@ -512,6 +562,9 @@ class Engine:
         guard = self.guard()
         if guard:
             lines.append("Guardian blocks: " + ", ".join(f"{s} ({g['reason']})" for s, g in guard.items()))
+        prof = self.db.get("professor_last") or {}
+        if prof.get("assessment") and time.time() - (prof.get("ts") or 0) < 36 * 3600:
+            lines.append("Professor: " + prof["assessment"][:400])
         found = [r["name"] for r in (self.db.get("patterns") or {}).get("rows", []) if r.get("verdict") == "pattern"]
         if found:
             lines.append("Patterns found: " + "; ".join(found[:3]))
@@ -525,6 +578,11 @@ class Engine:
             return {"ok": True, "mode": "paper"}
         if mode != "live":
             return {"ok": False, "error": "unknown mode"}
+        moved = self.db.get("moved")
+        if moved:
+            return {"ok": False, "error": f"This bot was moved to {moved.get('to', 'the server')} on "
+                    f"{time.strftime('%d.%m. %H:%M', time.localtime(moved['ts']))}. Two copies would trade the same money "
+                    "twice. If the other copy is on STANDBY or off, press 'Trade on this computer again' in Controls first."}
         try:
             self.live = make_live_broker(self.settings)
         except ValueError as e:
@@ -552,6 +610,9 @@ class Engine:
              notional, float(ex.get("fee", 0) or 0), None, reason))
         self.bus.publish("trade", {"mode": "live", "symbol": sym, "side": side, "notional": round(notional, 2),
                                    "reason": reason, "ts": time.time(), "book": book})
+        if self.settings["phone"].get("trades"):
+            who = "Fast pot ⚡" if book == "fast" else "Daily Brain"
+            self._notify_later(f"TradingBotty {who}: {side} {sym} {notional:.2f} {self.live.currency if self.live else ''}. {reason}")
 
     @staticmethod
     def _book_keys(book: str) -> tuple[str, str]:
@@ -863,7 +924,6 @@ class Engine:
                  "regime_days": regime, "btc_ok": research.btc_uptrend(cd, len(cd.days) - 1, regime) if regime else None,
                  "explain": strat.explain}
             self.db.set("brain", b)
-            self._notify_later(self.daily_report())
         except Exception as ex:
             self._log("Daily Brain", "error", f"Daily decision failed: {str(ex) or type(ex).__name__}. Retrying in 5 minutes.")
         finally:
@@ -1150,6 +1210,7 @@ class Engine:
             self._every(lambda: 300, self.brain_tick),
             self._every(lambda: 60, self.fast.tick),
             self._every(lambda: 60, self.guard_tick),
+            self._every(lambda: 60, self.morning_tick),
             self._every(lambda: 1800, self.research_tick),
         )
 
@@ -1207,6 +1268,9 @@ class Engine:
             "research": {"ts": res.get("ts"), "robust": sum(1 for r in res.get("rows", []) if r["robust"]),
                          "tested": res.get("strategies_tested")},
             "telegram": bool(self.settings.telegram_token and self.settings.telegram_chat),
+            "moved": self.db.get("moved"),
+            "phone": {"channels": self.phone_channels(), "hour": self.settings["phone"]["morning_hour"],
+                      "trades": bool(self.settings["phone"].get("trades")), "last": self.db.get("briefing_day")},
             "news": [{k: e.get(k) for k in ("ts", "source", "title", "link", "symbols", "sentiment", "impact", "event", "ai")}
                      for e in self.bb.news_events[:25]],
             "live_trades": self.db.query("SELECT COUNT(*) n, MAX(ts) last FROM trades WHERE mode='live'")[0],
