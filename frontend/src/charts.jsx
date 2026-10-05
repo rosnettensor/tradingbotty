@@ -15,7 +15,7 @@ export function Sparkline({ values, width = 60, height = 18 }) {
 }
 
 // series: [{ id, name, color, points: [[ts, value], ...] }]
-export function LineChart({ series, height = 220, unit = "", baseline = null }) {
+export function LineChart({ series, height = 220, unit = "", baseline = null, xfmt = null }) {
   const box = useRef(null);
   const [W, setW] = useState(800);
   useEffect(() => {
@@ -36,7 +36,7 @@ export function LineChart({ series, height = 220, unit = "", baseline = null }) 
   const sx = (x) => padL + ((x - x0) / (x1 - x0 || 1)) * (W - padL - padR);
   const sy = (y) => padT + (1 - (y - y0) / (y1 - y0)) * (H - padT - padB);
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => y0 + f * (y1 - y0));
-  const tfmt = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const tfmt = xfmt || ((ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
   return (
     <div ref={box} style={{ height: H }}>
     <svg width={W} height={H} className="linechart">

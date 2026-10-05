@@ -8,7 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from . import backtest, controls
+from . import backtest, controls, research
 from .agents.base import Blackboard, Source
 from .agents.optimizer import Optimizer
 from .agents.radar import LiveDesk, MarketRadar
@@ -406,6 +406,33 @@ class Engine:
             raise ValueError("not enough price history yet: let the bot run a little longer")
         self._dataset = (time.time(), hours, ds)
         return ds
+
+    async def run_research(self) -> dict:
+        """The 2-year test lab: daily candles for the liquid Fusion coins, every strategy vs holding Bitcoin."""
+        if self.__dict__.get("_research_busy"):
+            return {"busy": True}
+        self._research_busy = True
+        try:
+            coins = [c for c in research.UNIVERSE if not self.fusion_coins or c in self.fusion_coins or c == "BTC"]
+            self._log("Lab", "info", f"2-year test: loading daily candles for {len(coins)} coins (about a minute).")
+            if self.settings.simulate:
+                rows = research.synthetic_rows(coins)
+            else:
+                rows = await research.fetch_daily(self.prices.client, coins, self._log)
+            if "BTC" not in rows:
+                raise ValueError("no Bitcoin history from Kraken, try again in a minute")
+            res = await asyncio.to_thread(research.run_all, research.Candles.from_rows(rows))
+            res["simulated"] = bool(self.settings.simulate)
+            self.db.set("research", res)
+            best = next((r for r in res["rows"] if r["group"] != "Benchmark"), None)
+            btc = next(r for r in res["rows"] if r["name"] == research.HoldBTC.name)
+            if best:
+                self._log("Lab", "info", f"2-year test done ({res['from']} to {res['to']}): best {best['name']} "
+                          f"{best['full'].get('return_pct')}% (max drop {best['full'].get('max_dd_pct')}%), "
+                          f"Bitcoin {btc['full'].get('return_pct')}% (max drop {btc['full'].get('max_dd_pct')}%).")
+            return res
+        finally:
+            self._research_busy = False
 
     def backtest_sync(self, cfg: StrategyConfig, hours: float = 24) -> dict:
         ds = self.dataset(hours)

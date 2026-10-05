@@ -496,3 +496,6 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .blocker { position: relative; overflow: hidden; padding: 2px 8px; border: 1px solid var(--line); border-radius: 10px; }
 .blocker i { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(255,176,32,0.18); }
 .blocker b { color: var(--amber); margin-left: 4px; }
+
+.research .board tr.picked td { background: rgba(255,43,214,0.08); }
+.err-msg { color: var(--red); font-size: 12px; }

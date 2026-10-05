@@ -465,3 +465,21 @@ def test_trend_rider_waits_while_bitcoin_trends_down(tmp_path, monkeypatch):
     e.bb.btc_uptrend = True
     asyncio.run(buyer.run(e.bb))
     assert "SOL" in tr.broker.positions
+
+
+def test_research_lab_runs_every_strategy_without_peeking(tmp_path, monkeypatch):
+    from tradingbotty import research
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    res = asyncio.run(e.run_research())
+    names = [r["name"] for r in res["rows"]]
+    assert "Hold Bitcoin" in names and len(names) == len(set(names)) > 20
+    assert e.db.get("research")["days"] == res["days"] > 500
+    btc = next(r for r in res["rows"] if r["name"] == "Hold Bitcoin")
+    assert btc["trades"] == 1 and btc["full"]["max_dd_pct"] <= 0
+    # no lookahead: changing the last day's prices can't change any earlier decision or value
+    rows = research.synthetic_rows(["BTC", "ETH", "SOL"], days=300)
+    a = research.simulate(research.Candles.from_rows(rows), research.Rotation(30, 2), 100).equity
+    t, o, h, l, c = rows["ETH"][-1]
+    rows["ETH"][-1] = (t, o, h * 3, l, c * 3)
+    b = research.simulate(research.Candles.from_rows(rows), research.Rotation(30, 2), 100).equity
+    assert a[:-1] == b[:-1]

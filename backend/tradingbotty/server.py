@@ -223,6 +223,19 @@ def retire(vid: str):
     return {"ok": True}
 
 
+@app.post("/api/research/run")
+async def research_run():
+    try:
+        return await engine.run_research()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/research")
+async def research_get():
+    return engine.db.get("research", {}) or {}
+
+
 @app.post("/api/backtest")
 async def run_backtest(body: BacktestIn):
     try:

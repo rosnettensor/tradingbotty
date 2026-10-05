@@ -33,6 +33,7 @@ export default function Lab({ state }) {
 
   return (
     <div className="experiments">
+      <ResearchLab />
       <BacktestLab board={board} reload={load} />
       <section className="panel">
         <div className="row-head">
@@ -105,6 +106,74 @@ function ConfigDiff({ config, base }) {
 }
 
 const WINDOWS = [["6", "6h"], ["24", "24h"], ["72", "3d"], ["168", "7d"]];
+
+const PERIODS = [["full", "whole period"], ["first_half", "1st half"], ["second_half", "2nd half"], ["last_6m", "last 6 months"]];
+const dayFmt = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", year: "2-digit" });
+
+function ResearchLab() {
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [period, setPeriod] = useState("full");
+  const [pick, setPick] = useState([]);
+  useEffect(() => { api("research").then((r) => r && r.rows && setRes(r)).catch(() => {}); }, []);
+  const run = async () => {
+    setBusy(true); setMsg("");
+    try { const r = await api("research/run", {}); if (r.busy) setMsg("already running…"); else setRes(r); }
+    catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  };
+  const rows = res ? [...res.rows].sort((a, b) => (b[period]?.sharpe ?? -9) - (a[period]?.sharpe ?? -9)) : [];
+  const btc = rows.find((r) => r.group === "Benchmark" && r.name.includes("Bitcoin"));
+  const shown = res ? [btc, ...rows.filter((r) => r !== btc && (pick.length ? pick.includes(r.name) : r.group !== "Benchmark")).slice(0, pick.length || 3)].filter(Boolean) : [];
+  const t0 = res ? Date.parse(res.from) / 1000 : 0;
+  const series = shown.map((r, i) => ({ id: r.name, name: r.name, color: COLORS[i % COLORS.length], bold: r === btc,
+    points: r.curve.map((v, k) => [t0 + k * 3 * 86400, (v - 1) * 100]) }));
+  const toggle = (name) => setPick((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]));
+  return (
+    <section className="panel lab research">
+      <div className="row-head">
+        <h3>2-YEAR TEST <span className="dim">· daily candles, real fees + spread, every strategy vs simply holding Bitcoin</span></h3>
+        <div className="row-tools">
+          {res && <Tabs value={period} options={PERIODS} onChange={setPeriod} />}
+          <button className="primary" onClick={run} disabled={busy}>{busy ? "loading 2 years of candles…" : res ? "run again" : "run the 2-year test"}</button>
+        </div>
+      </div>
+      <p className="dim small">Decides on each day's close, trades at the next day's open, pays {res?.cost_per_side_pct ?? 0.4}% per buy or sell. A strategy is only worth real money if it beats holding Bitcoin in <b>both halves</b> of the history (✓): one good stretch can be luck. Click rows to compare their curves.</p>
+      {msg && <p className="err-msg">{msg}</p>}
+      {res?.simulated && <p className="err-msg">Simulated prices (simulate mode): these numbers are not real.</p>}
+      {res && (
+        <>
+          <p className="dim small">{res.from} to {res.to} · {res.days} days · {res.coins.length} coins: {res.coins.join(", ")}</p>
+          <div className="legend small">{series.map((x) => <span key={x.id} style={{ color: x.color, marginRight: 16 }}>■ {x.name}</span>)}</div>
+          <LineChart series={series} height={240} unit="%" baseline={0} xfmt={dayFmt} />
+          <div className="scroll">
+            <table className="board">
+              <thead><tr><th>strategy</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th>fees</th><th>in coins</th><th title="beats holding Bitcoin (risk-adjusted) in both halves">both halves</th></tr></thead>
+              <tbody>
+                {rows.map((r) => {
+                  const st = r[period] || {};
+                  return (
+                    <tr key={r.name} className={`${r === btc ? "champ" : ""} ${pick.includes(r.name) ? "picked" : ""}`} onClick={() => toggle(r.name)} title={r.explain}>
+                      <td><b>{r.name}</b><div className="dim small">{r.group}</div></td>
+                      <td className={pctColor(st.return_pct)}>{st.return_pct == null ? "–" : `${st.return_pct > 0 ? "+" : ""}${st.return_pct}%`}</td>
+                      <td>{st.cagr_pct == null ? "–" : `${st.cagr_pct}%`}</td>
+                      <td className="down">{st.max_dd_pct}%</td>
+                      <td>{st.sharpe}</td>
+                      <td>{r.trades}</td>
+                      <td>{r.fees_pct}%</td>
+                      <td>{r.invested_pct}%</td>
+                      <td>{r.group === "Benchmark" ? "" : r.beats_btc_both_halves ? <span className="up">✓</span> : <span className="dim">–</span>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
 
 function BacktestLab({ board, reload }) {
   const [vid, setVid] = useState("");
