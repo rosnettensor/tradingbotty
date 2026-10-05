@@ -17,7 +17,7 @@ import time
 from . import fastlab, research
 
 DEFAULT = "Pump rider: up 15%+ in 1d, 2 slots, take +20% / stop -8%, max 2d, volume 3x"
-MIN_SLOT = 40.0      # per position: Fusion's 25 minimum, with room for a 35% drop before it can't be sold anymore
+MIN_SLOT = 32.0      # per position: Fusion's 25 (some coins 30) minimum, with room for a 20% drop before it can't be sold
 SETTLE = 120         # seconds after a candle closes before the exchange is sure to have it
 
 

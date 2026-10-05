@@ -800,7 +800,7 @@ class FastTrader(Agent):
                "Daily Brain's, never buys a coin the brain holds, and the brain leaves the pot's cash alone. After "
                "each 4-hour candle it asks its rule from the Fast Trader Lab what to hold, with its real positions "
                "(entry price, peak, entry time), exactly as in the test, and trades the difference through the Risk "
-               "Officer. Each coin gets at least 40 so it stays above Fusion's 25 minimum even after a drop.")
+               "Officer. Each coin gets at least 32 so it stays above Fusion's 25 (some coins 30) minimum even after a drop.")
     outputs = "fast buys and sells for the Risk Officer and the Live Desk"
 
     async def run(self, bb: Blackboard) -> None:

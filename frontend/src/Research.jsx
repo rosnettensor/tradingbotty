@@ -441,7 +441,7 @@ function FastPot({ state, lab, openAgent }) {
   useEffect(() => { if (f.mode) { setMode(f.mode); setChf(f.chf); setPct(f.pct); } }, [f.mode, f.chf, f.pct]);
   const total = w.total || 0;
   const pot = mode === "chf" ? Math.max(0, Number(chf) + (f.realized || 0)) : (total * pct) / 100;
-  const slots = Math.floor(pot / (f.min_slot || 40));
+  const slots = Math.floor(pot / (f.min_slot || 32));
   const row = (lab?.rows || []).find((r) => r.name === f.strategy);
   const save = async (body) => {
     setMsg("");
@@ -489,7 +489,7 @@ function FastPot({ state, lab, openAgent }) {
             <div className="pot-input"><input type="range" min="0" max="100" step="1" value={pct} onChange={(e) => setPct(e.target.value)} onMouseUp={() => save({ pct: Number(pct) })} onTouchEnd={() => save({ pct: Number(pct) })} />
               <input type="number" min="0" max="100" step="1" value={pct} onChange={(e) => setPct(e.target.value)} onBlur={() => save({ pct: Number(pct) })} /> %</div>
           )}
-          <div className={slots < 1 ? "err-msg" : "dim small"}>= {pot.toFixed(2)} {cur}{mode === "chf" && f.realized ? ` (incl. ${f.realized >= 0 ? "+" : ""}${f.realized.toFixed(2)} won or lost so far)` : ""} · {slots < 1 ? `too small: each coin needs at least ${f.min_slot || 40} ${cur} (Fusion's 25 minimum plus room to sell after a drop)` : `${Math.min(slots, 2)} coin${Math.min(slots, 2) === 1 ? "" : "s"} at a time`}</div>
+          <div className={slots < 1 ? "err-msg" : "dim small"}>= {pot.toFixed(2)} {cur}{mode === "chf" && f.realized ? ` (incl. ${f.realized >= 0 ? "+" : ""}${f.realized.toFixed(2)} won or lost so far)` : ""} · {slots < 1 ? `too small: each coin needs at least ${f.min_slot || 32} ${cur} (Fusion's 25 minimum plus room to sell after a drop)` : `${Math.min(slots, 2)} coin${Math.min(slots, 2) === 1 ? "" : "s"} at a time`}</div>
         </div>
         <div>
           <div className="dim small">STATUS</div>
