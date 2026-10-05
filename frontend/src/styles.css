@@ -807,3 +807,48 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
   .chart-tip { width: 150px; }
   input, select, textarea { font-size: 16px; }  /* stops iPhones from zooming into a field */
 }
+
+/* ---- phone cockpit: the core first, cards to swipe */
+.mcockpit { display: grid; gap: 10px; margin: -10px -10px 0; }
+.mhero { position: relative; height: min(62svh, 560px); overflow: hidden;
+  background: radial-gradient(ellipse at 50% 45%, rgba(0,240,255,0.10), rgba(255,43,214,0.05) 40%, transparent 72%); }
+.mhero .sphere { position: absolute; inset: 0; min-height: 0; }
+.mhero .sphere-gl { touch-action: pan-y; }   /* sideways turns the core, up and down scrolls the page */
+.mhero .core-vignette { display: none; }
+.mlabel { padding-top: 14px; }
+.mlabel .equity { font-size: 34px; line-height: 1.1; }
+.mlabel .equity small { font-size: 15px; color: var(--dim); }
+.mhero .core-tag { font-size: 10px; }
+.mhero .core-tools { right: 10px; bottom: 10px; }
+.mhud { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin: 0 10px; background: var(--line);
+  border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.mhud > div { background: var(--bg); padding: 6px 6px 7px; display: grid; gap: 2px; min-width: 0; }
+.mhud span { font-size: 8.5px; letter-spacing: 0.08em; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mhud b { font: 600 13px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mhud .cyan { color: var(--cyan); } .mhud .magenta { color: var(--magenta); }
+.mtabs { display: flex; gap: 6px; overflow-x: auto; padding: 2px 10px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.mtabs::-webkit-scrollbar { display: none; }
+.mtabs button { flex: none; font-size: 11px; padding: 6px 12px; border-radius: 999px; }
+.mtabs button.active { border-color: var(--cyan); color: var(--cyan); background: var(--faint); }
+.mtrack { display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; transition: height 0.25s ease; align-items: flex-start; }
+.mtrack::-webkit-scrollbar { display: none; }
+.mpage { flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; padding: 0 10px; display: grid; gap: 10px; min-width: 0; }
+.mpage .panel { min-width: 0; }
+.mpage .wallet-top { grid-template-columns: 1fr; }
+.mpage .brainbar, .mpage .fastbar { display: grid; gap: 8px; }
+.mpage .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mdots { display: flex; justify-content: center; gap: 6px; padding: 2px 0 6px; }
+.mdots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); transition: all 0.2s; }
+.mdots i.on { background: var(--cyan); width: 16px; border-radius: 3px; }
+@media (max-width: 640px) {
+  body { padding-top: env(safe-area-inset-top, 0px); }   /* under the Dynamic Island when started from the home screen */
+  .topbar .badge.ok { display: none; }
+  .skin-pick { max-width: 104px; }
+}
+.mpage .wallet-top { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.mpage .wallet-top > *, .mpage .wallet-split > * { min-width: 0; }
+.mpage .wallet-split * { white-space: normal; }
+.mpage .wallet-total .big { font-size: 24px; }
+.mpage .row-head h3 { font-size: 10px; }
+.mpage .bot-edge .edge-big { font-size: 32px; }

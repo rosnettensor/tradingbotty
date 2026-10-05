@@ -1213,10 +1213,20 @@ class Engine:
 
     # ------------------------------------------------------------------ loops
     async def run(self) -> None:
-        if self.mode == "live":
-            r = await self.set_mode("live")
+        if self.mode == "live":  # after a restart (crash, deploy, server maintenance): reconnect on its own
+            for attempt in range(6):
+                r = await self.set_mode("live")
+                if r["ok"] or self.db.get("moved"):
+                    break
+                self._log("Engine", "warn", f"Reconnect to Bitpanda failed ({r.get('error', '')[:80]}), trying again in 30 s.")
+                await asyncio.sleep(0 if self.settings.simulate else 30)
             if not r["ok"]:
                 self.db.set("mode", "paper")
+                self._notify_later(f"After a restart the bot could not reconnect to Bitpanda and is on STANDBY: {r.get('error', '')[:200]}. "
+                                   "Open the dashboard and switch LIVE again.", title="⚠️ TradingBotty on STANDBY", tags=["warning"], priority=5)
+            else:
+                self._notify_later("The server restarted and the bot is trading again, nothing lost.", title="🔄 TradingBotty restarted",
+                                   tags=["arrows_counterclockwise"], priority=2)
         self._log("Engine", "info", "Booting: loading prices" + (" (SIMULATED data)" if self.settings.simulate else ""))
         try:
             if not self.settings.simulate:

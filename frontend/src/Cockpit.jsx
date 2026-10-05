@@ -50,7 +50,24 @@ function coreData(state, w, energy) {
   };
 }
 
-export default function Cockpit({ state, pulse, focus, setFocus, openAgent }) {
+function usePhone() {
+  const q = "(max-width: 640px)";
+  const [phone, setPhone] = useState(() => window.matchMedia?.(q).matches ?? false);
+  useEffect(() => {
+    const m = window.matchMedia?.(q);
+    if (!m) return undefined;
+    const on = () => setPhone(m.matches);
+    m.addEventListener("change", on);
+    return () => m.removeEventListener("change", on);
+  }, []);
+  return phone;
+}
+
+export default function Cockpit(props) {
+  return usePhone() ? <PhoneCockpit {...props} /> : <DeskCockpit {...props} />;
+}
+
+function DeskCockpit({ state, pulse, focus, setFocus, openAgent }) {
   const w = state.wallet && !state.wallet.error ? state.wallet : null;
   const rows = state.trend?.rows || [];
   const near = rows.filter((r) => ["would buy", "breakout, no slot", "near breakout"].includes(r.state)).length;
@@ -106,6 +123,82 @@ export default function Cockpit({ state, pulse, focus, setFocus, openAgent }) {
       <section className="panel newsfeed">
         <News news={state.news || []} setFocus={setFocus} />
       </section>
+    </div>
+  );
+}
+
+/** Phone: the live core fills the screen, everything else sits on cards you swipe through. */
+function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
+  const w = state.wallet && !state.wallet.error ? state.wallet : null;
+  const rows = state.trend?.rows || [];
+  const near = rows.filter((r) => ["would buy", "breakout, no slot", "near breakout"].includes(r.state)).length;
+  const energy = Math.min(1, 0.15 + near / 6 + Object.keys(state.guard || {}).length / 4);
+  const symbol = focus && rows.some((r) => r.symbol === focus) ? focus : rows[0]?.symbol || "BTC";
+  const data = coreData(state, w, energy);
+  const cur = w?.currency || "CHF";
+  const live = state.mode === "live";
+  const edge = w?.bot_edge;
+  const pages = [
+    ["Konto", state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />],
+    ["Brain", <><BrainBar state={state} openAgent={openAgent} /><section className="panel"><Professor p={state.professor || {}} on={state.ai} openAgent={openAgent} /></section></>],
+    ["⚡ Fast", <FastPotCard state={state} openAgent={openAgent} />],
+    ["Watchlist", <section className="panel watch"><TrendWatch t={state.trend} brain={state.brain} guard={state.guard || {}} symbol={symbol} setFocus={setFocus} openAgent={openAgent} /></section>],
+    ["Chart", <><section className="panel focus"><FocusDaily symbol={symbol} state={state} /></section>
+      {w && <section className="panel"><h3>YOUR ACCOUNT ({cur})</h3>
+        <LineChart series={[{ id: "a", color: "var(--magenta)", bold: true, points: [...(w.history || []).map((h) => [h[0], h[1]]), [Date.now() / 1000, w.total]] }]} baseline={w.start_total} height={180} /></section>}</>],
+    ["Guardian", <section className="panel guardpanel"><Guardian guard={state.guard || {}} shocks={state.shocks || {}} openAgent={openAgent} /></section>],
+    ["Trades", <section className="panel positions"><LiveTrades trades={state.trades || []} cur={cur} setFocus={setFocus} /></section>],
+    ["Feed", <><section className="panel log"><Feed log={state.log || []} /></section><StatStrip state={state} openAgent={openAgent} /></>],
+    ["News", <section className="panel newsfeed"><News news={state.news || []} setFocus={setFocus} /></section>],
+  ];
+  const [page, setPage] = useState(() => { try { return Math.min(pages.length - 1, Number(localStorage.getItem("tb-mpage")) || 0); } catch { return 0; } });
+  const track = useRef(null);
+  const tabs = useRef(null);
+  const [h, setH] = useState(null);
+  const go = (i) => track.current?.children[i]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "start" });
+  useEffect(() => {  // start on the card you looked at last
+    const el = track.current?.children[page];
+    if (el) track.current.scrollLeft = el.offsetLeft;
+  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {  // the strip is as tall as the card you're on, not the tallest one
+    const el = track.current?.children[page];
+    if (!el) return undefined;
+    const fit = () => setH(el.scrollHeight);
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    try { localStorage.setItem("tb-mpage", String(page)); } catch { /* private window */ }
+    tabs.current?.children[page]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    return () => ro.disconnect();
+  }, [page]);
+  const onScroll = () => {
+    const t = track.current;
+    if (!t) return;
+    const i = Math.round(t.scrollLeft / t.clientWidth);
+    if (i !== page) setPage(i);
+  };
+  return (
+    <div className="mcockpit">
+      <section className={`mhero ${live ? "is-live" : ""}`}>
+        <Sphere data={data} pulse={pulse} label={
+          <div className="core-label mlabel">
+            <div className="dim">{live ? "● LIVE" : "STANDBY"} · YOUR ACCOUNT</div>
+            <div className="equity">{w ? <><Ticking value={w.total} /> <small>{cur}</small></> : "–"}</div>
+            {edge != null && <div className={pctColor(edge)}>bot {edge >= 0 ? "+" : ""}{edge.toFixed(2)} {cur} · {fmt.pct(w.change_pct)} since start</div>}
+          </div>} />
+      </section>
+      <div className="mhud">
+        {[...data.hud.left, ...data.hud.right].map(([k, v, tone]) => (
+          <div key={k}><span>{k}</span><b className={tone}>{v}</b></div>
+        ))}
+      </div>
+      <div className="mtabs" ref={tabs}>
+        {pages.map(([name], i) => <button key={name} className={i === page ? "active" : ""} onClick={() => go(i)}>{name}</button>)}
+      </div>
+      <div className="mtrack" ref={track} onScroll={onScroll} style={h ? { height: h } : undefined}>
+        {pages.map(([name, el]) => <div className="mpage" key={name}>{el}</div>)}
+      </div>
+      <div className="mdots">{pages.map(([name], i) => <i key={name} className={i === page ? "on" : ""} />)}</div>
     </div>
   );
 }
