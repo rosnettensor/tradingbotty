@@ -5,6 +5,7 @@ import asyncio
 import copy
 import json
 import math
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -872,6 +873,21 @@ class Engine:
             lv.say(f"Buy-now of {sym} failed: {ex}", "error")
             return {"ok": False, "why": str(ex)}
 
+    def _min_order(self, sym: str, pairs: dict | None = None) -> float:
+        """Fusion's smallest order for a coin: its listed minimum, or more if Fusion told us so in a rejection."""
+        pairs = pairs if pairs is not None else (getattr(self.live, "pairs", None) or {})
+        return max(float((pairs.get(sym) or {}).get("minOrderAmount") or 0), float(self.db.get("fusion_min", {}).get(sym, 0)))
+
+    def _learn_min(self, sym: str, ex: Exception) -> bool:
+        """Fusion says "Enter a higher amount than 30 CHF" when its list shows a lower minimum: remember the real one."""
+        m = re.search(r"higher amount than ([\d.]+)", str(ex))
+        if not m:
+            return False
+        mins = self.db.get("fusion_min", {})
+        mins[sym] = round(float(m.group(1)) * 1.02, 2)
+        self.db.set("fusion_min", mins)
+        return True
+
     async def _live_buy(self, sym: str, want: float, reason: str) -> tuple[float, float]:
         """One real buy of `want` in account currency, inside your caps, raising cash from your coins if allowed.
         Records it as the bot's coin. Returns (amount spent, quantity received)."""
@@ -883,7 +899,7 @@ class Engine:
             lv.say(f"{reason}: lowered {want:.2f} to {amount:.2f} {cur} for {sym} to stay inside your cap of {cfg['max_invest']:.0f} "
                    f"{cur} in bot trades (raise it in Controls, Live money).", "warn")
         pairs = getattr(self.live, "pairs", None) or {}
-        min_amt = float((pairs.get(sym) or {}).get("minOrderAmount") or 0)
+        min_amt = self._min_order(sym, pairs)
         if amount < max(min_amt, 1):
             raise ValueError(f"{amount:.2f} {cur} is below the minimum order ({max(min_amt, 1):g} {cur}) or your cap is full")
         bal = await self.live.balances()
@@ -897,7 +913,12 @@ class Engine:
                 raise ValueError(f"only {fiat:.2f} {cur} cash after selling your coins, below the {max(min_amt, 1):g} {cur} minimum")
             bal = await self.live.balances()
         before = self._live_held(bal, sym)
-        res = await self.live.buy(sym, amount)
+        try:
+            res = await self.live.buy(sym, amount)
+        except Exception as e:
+            if self._learn_min(sym, e):
+                raise ValueError(f"Fusion wants more than {amount:.2f} {cur} for {sym}; noted for next time") from e
+            raise
         ex = (res or {}).get("execution", {}) or {}
         got = float(ex.get("quantity", 0) or 0) or max(0.0, self._live_held(await self.live.balances(), sym) - before)
         cost = self.db.get("live_cost", {})
@@ -1033,14 +1054,19 @@ class Engine:
         bal = await self.live.balances()
         for sym in [s for s in owned if s not in target]:
             value = min(owned[sym], bal.get(sym, 0.0)) * prices.get(sym, 0.0)
-            min_amt = float((pairs.get(sym) or {}).get("minOrderAmount") or 0)
+            min_amt = self._min_order(sym, pairs)
             if 0 < value < min_amt:  # (0 = you sold it yourself: the sell below finds nothing and forgets it)
                 # Fusion rejects orders under its minimum, sells too: retrying every day would only log errors
                 done.append(f"{sym} ({value:.2f} {cur}) is below Fusion's {min_amt:g} {cur} minimum and can't be sold "
                             f"by the bot: sell it in the Bitpanda app, the bot then forgets it")
                 continue
+            errors = self.live_errors
             await self._mirror_live(sym, "SELL", 1.0, reason=f"daily brain: {name} no longer holds it")
-            done.append(f"sold {sym}")
+            if sym in self.db.get("live_qty", {}):
+                self.live_errors = errors  # one coin Fusion won't sell must not switch the whole bot to paper
+                done.append(f"Fusion refused to sell {sym}: sell it in the Bitpanda app, the bot then forgets it")
+            else:
+                done.append(f"sold {sym}")
         owned = self.db.get("live_qty", {})
         for sym, w in sorted(target.items(), key=lambda kv: -kv[1]):
             if pairs and sym not in pairs:
@@ -1049,7 +1075,7 @@ class Engine:
             want = w * budget - owned.get(sym, 0.0) * prices.get(sym, 0.0)
             if want < 0.25 * w * budget:
                 continue  # already about right: no trades for small drift
-            min_amt = max(float((pairs.get(sym) or {}).get("minOrderAmount") or 0), self.settings["risk"]["min_order_usd"])
+            min_amt = max(self._min_order(sym, pairs), self.settings["risk"]["min_order_usd"])
             if want < min_amt:
                 done.append(f"{sym}: {want:.2f} {cur} more would be below the minimum order")
                 continue
@@ -1064,8 +1090,8 @@ class Engine:
             for _ in range(parts):
                 try:
                     amount, _ = await self._live_buy(sym, chunk, f"daily brain: {name}")
-                except ValueError as ex:
-                    done.append(f"{sym} not bought: {ex}")
+                except Exception as ex:  # one refused order skips this coin today, never the whole decision
+                    done.append(f"{sym} not bought: {str(ex)[:160]}")
                     break
                 self._log("Buyer", "live", f"LIVE BUY {sym}: {amount:.2f} {cur} filled (daily brain: {name}).")
                 spent += amount
@@ -1112,10 +1138,18 @@ class Engine:
         for sym, (qty, value) in sorted(spare.items(), key=lambda kv: -kv[1][1]):
             if need <= 0:
                 break
+            low = max(self._min_order(sym, pairs), 1)
+            if value < low * 1.02:
+                continue  # worth less than Fusion's minimum order: it can't be sold, try the next coin
             frac = min(1.0, need * 1.01 / value)
-            if value * frac < float((pairs.get(sym) or {}).get("minOrderAmount") or 1):
-                frac = min(1.0, float((pairs.get(sym) or {}).get("minOrderAmount") or 1) * 1.05 / value)
-            res = await self.live.sell_fraction(sym, frac)
+            if value * frac < low:
+                frac = min(1.0, low * 1.05 / value)
+            try:
+                res = await self.live.sell_fraction(sym, frac)
+            except Exception as e:
+                self._learn_min(sym, e)
+                self.agent("livedesk").say(f"Couldn't sell your {sym} to fund a buy: {str(e)[:120]}", "warn")
+                continue
             got = float(((res or {}).get("execution") or {}).get("notional", 0) or 0) - \
                 float(((res or {}).get("execution") or {}).get("fee", 0) or 0)
             self.agent("livedesk").say(f"Sold {frac * 100:.0f}% of your {sym} for {got:.2f} {self.live.currency} "

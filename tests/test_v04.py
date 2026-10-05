@@ -599,3 +599,43 @@ def test_brain_finishes_the_day_when_cash_runs_short(tmp_path, monkeypatch):
     assert len(f.buys) == 1                                 # SOL 32.34; only 27.66 is left for BTC
     assert all(a >= 30 for _, a in f.buys)                    # no order under Fusion's minimum is ever sent
     assert b.get("day") and "not bought" in b["note"]         # the day is decided, not retried every 5 minutes
+
+
+def test_refused_orders_never_block_the_daily_decision(tmp_path, monkeypatch):
+    from tradingbotty import research
+    from tradingbotty.brokers.fusion import FusionError
+
+    class Picky(FakeFusion):
+        async def sell_fraction(self, symbol, fraction, owned=None):
+            if symbol == "AKT":
+                raise FusionError('POST /v1/account/orders -> 422: {"errors":[{"code":"ORDER_CREATION_ERROR"}]}')
+            return await super().sell_fraction(symbol, fraction, owned)
+
+        async def buy(self, symbol, amount):
+            if amount <= 30:
+                raise FusionError('POST /v1/account/orders -> 400: {"errors":[{"title":"Enter a higher amount than 30 CHF to create the order."}]}')
+            return await super().buy(symbol, amount)
+
+    f = Picky()
+    f.pairs = {s: {"minOrderAmount": "25"} for s in ("BTC", "SOL", "ETH", "AKT", "VSN")}
+    f.bal.update({"FIAT": 100.0, "AKT": 5.0, "VSN": 1.5})    # AKT: Fusion refuses it; VSN: yours, 15 CHF, too small
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 2000, "live.max_order": 150, "live.use_my_coins": True})
+    e.db.set("live_qty", {"AKT": 5.0}); e.db.set("live_cost", {"AKT": 50.0})
+    e.wallet = {"total": 165.0, "currency": "CHF"}
+    monkeypatch.setattr(research, "current_target", lambda cd, s: {"SOL": 0.34, "BTC": 0.33, "ETH": 0.33})
+    asyncio.run(e.set_brain(True, "Breakout 20/10 days, 3 slots, BTC filter 50d"))
+    for _ in range(3):
+        asyncio.run(e.brain_tick())
+    b = e.brain()
+    assert e.mode == "live" and b.get("day")                       # decided once, still live
+    assert "Fusion refused to sell AKT" in b["note"]
+    assert ("VSN", 1.5) not in f.sells                             # 15 CHF of VSN is never sent to be refused
+    assert [s for s, _ in f.buys] == ["SOL", "BTC"]                # ETH: no cash left today
+    assert "ETH not bought" in b["note"]
+    f.bal["FIAT"] = 40.0                                           # Fusion's list says 25, it really wants > 30
+    with pytest.raises(ValueError, match="noted"):
+        asyncio.run(e._live_buy("ETH", 28.0, "t"))
+    assert e.db.get("fusion_min")["ETH"] == 30.6
+    with pytest.raises(ValueError, match="minimum"):               # next time it isn't even sent
+        asyncio.run(e._live_buy("ETH", 28.0, "t"))
