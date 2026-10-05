@@ -582,3 +582,20 @@ def test_live_account_gets_tuned_once(tmp_path, monkeypatch):
     e2.set_controls({"live.max_order": 60})                 # your later change wins after the next start
     e3 = Engine(load_settings())
     assert e3.settings["live"]["max_order"] == 60
+
+
+def test_brain_finishes_the_day_when_cash_runs_short(tmp_path, monkeypatch):
+    from tradingbotty import research
+    f = FakeFusion()
+    f.pairs = {s: {"minOrderAmount": "30"} for s in ("BTC", "SOL")}
+    f.bal.update({"FIAT": 60.0})                            # plus 6 CHF of a coin Fusion can't sell
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 2000, "live.max_order": 150, "live.use_my_coins": True})
+    e.wallet = {"total": 66.0, "currency": "CHF"}
+    monkeypatch.setattr(research, "current_target", lambda cd, s: {"SOL": 0.5, "BTC": 0.5})
+    asyncio.run(e.set_brain(True, "Breakout 20/10 days, 3 slots, BTC filter 50d"))
+    asyncio.run(e.brain_tick())
+    b = e.brain()
+    assert len(f.buys) == 1                                 # SOL 32.34; only 27.66 is left for BTC
+    assert all(a >= 30 for _, a in f.buys)                    # no order under Fusion's minimum is ever sent
+    assert b.get("day") and "not bought" in b["note"]         # the day is decided, not retried every 5 minutes

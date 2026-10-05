@@ -893,6 +893,8 @@ class Engine:
                 raise ValueError(f"only {fiat:.2f} {cur} cash, and the bot may not sell your coins (Controls, Live money)")
             fiat = await self._raise_cash(amount - fiat, await self._spare_coins(bal), pairs)
             amount = min(amount, fiat)
+            if amount < max(min_amt, 1):  # selling your coins brought less than Fusion's minimum: don't send a doomed order
+                raise ValueError(f"only {fiat:.2f} {cur} cash after selling your coins, below the {max(min_amt, 1):g} {cur} minimum")
             bal = await self.live.balances()
         before = self._live_held(bal, sym)
         res = await self.live.buy(sym, amount)
