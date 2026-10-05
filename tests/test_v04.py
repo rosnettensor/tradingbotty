@@ -113,6 +113,8 @@ class FakeFusion:
         return self.spread
 
     async def buy(self, symbol, amount):
+        if amount > self.bal["FIAT"] * 0.9975 + 1e-9:       # like Fusion: the fee must fit in your cash too
+            raise RuntimeError("422: The order size/value is too big.")
         self.buys.append((symbol, amount))
         self.bal["FIAT"] -= amount
         self.bal[symbol] = self.bal.get(symbol, 0) + amount / 10
@@ -561,7 +563,7 @@ def test_brain_uses_the_whole_account_and_leaves_unsellable_dust(tmp_path, monke
     assert not f.sells and e.live_errors == 0               # dust isn't sent to Fusion to be rejected
     assert "sell it in the Bitpanda app" in e.brain()["note"]
     # half of the account each (minus 2% for fees) in orders under the 150 cap; the last one gets what cash is left
-    assert [(s, round(a, 2)) for s, a in f.buys] == [("SOL", 102.9), ("SOL", 102.9), ("BTC", 102.9), ("BTC", 91.3)]
+    assert [(s, round(a, 2)) for s, a in f.buys] == [("SOL", 102.9), ("SOL", 102.9), ("BTC", 102.9), ("BTC", 90.84)]
     e.set_controls({"live.max_order": 250})                 # changing a money limit re-decides now
     assert "day" not in e.brain()
     f.bal["AKT"] = 0.0                                      # you sold the dust in the app: the bot forgets it

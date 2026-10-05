@@ -903,15 +903,15 @@ class Engine:
         if amount < max(min_amt, 1):
             raise ValueError(f"{amount:.2f} {cur} is below the minimum order ({max(min_amt, 1):g} {cur}) or your cap is full")
         bal = await self.live.balances()
-        fiat = bal.get("FIAT", 0.0)
-        if amount > fiat:
-            if not cfg.get("use_my_coins"):
-                raise ValueError(f"only {fiat:.2f} {cur} cash, and the bot may not sell your coins (Controls, Live money)")
-            fiat = await self._raise_cash(amount - fiat, await self._spare_coins(bal), pairs)
-            amount = min(amount, fiat)
-            if amount < max(min_amt, 1):  # selling your coins brought less than Fusion's minimum: don't send a doomed order
-                raise ValueError(f"only {fiat:.2f} {cur} cash after selling your coins, below the {max(min_amt, 1):g} {cur} minimum")
-            bal = await self.live.balances()
+        room = bal.get("FIAT", 0.0) * 0.995  # Fusion adds its fee on top: an order of all your cash is "too big"
+        if amount > room:
+            if cfg.get("use_my_coins"):
+                room = await self._raise_cash(amount - room, await self._spare_coins(bal), pairs) * 0.995
+                bal = await self.live.balances()
+            amount = min(amount, room)
+            if amount < max(min_amt, 1):  # not enough cash for Fusion's minimum: don't send a doomed order
+                raise ValueError(f"only {room:.2f} {cur} cash usable, below the {max(min_amt, 1):g} {cur} minimum"
+                                 + ("" if cfg.get("use_my_coins") else " (the bot may not sell your coins)"))
         before = self._live_held(bal, sym)
         try:
             res = await self.live.buy(sym, amount)
@@ -1221,6 +1221,7 @@ class Engine:
         qty, cost = self.db.get("live_qty", {}), self.db.get("live_cost", {})
         coins = []
         for sym, q in qty.items():
+            q = min(q, bal.get(sym, 0.0))  # count only what's really in the account (you may have sold some by hand)
             px = prices.get(sym, 0.0)
             coins.append({"symbol": sym, "qty": q, "cost": round(cost.get(sym, 0.0), 2), "price": px,
                           "value": round(q * px, 2), "pnl": round(q * px - cost.get(sym, 0.0), 2) if px else None})
