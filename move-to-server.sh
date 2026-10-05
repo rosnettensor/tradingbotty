@@ -6,7 +6,13 @@ set -e
 URL="${1%/}"
 [ -n "$URL" ] || { echo "Usage: ./move-to-server.sh https://your-server.onrender.com"; exit 1; }
 read -s -p "Dashboard password of the server (TB_PASSWORD): " PW; echo
-curl -fsS -u "bot:$PW" "$URL/api/state" -o /dev/null || { echo "Server not reachable or wrong password. Nothing changed."; exit 1; }
+CODE=$(curl -s -o /dev/null -w "%{http_code}" -u "bot:$PW" "$URL/api/state")
+case "$CODE" in
+  200) ;;
+  401) echo "Wrong password (the server's TB_PASSWORD). Nothing changed."; exit 1 ;;
+  404) echo "No bot at $URL (404). Copy the address exactly from the top of the Render page. Nothing changed."; exit 1 ;;
+  *)   echo "Server not reachable ($CODE). Is it 'Live' on Render? Nothing changed."; exit 1 ;;
+esac
 LOCAL="${LOCAL:-http://localhost:8000}"
 TMP="$(mktemp -d)/tradingbotty.db"
 echo "1/2 This Mac goes to STANDBY and hands over its database..."
