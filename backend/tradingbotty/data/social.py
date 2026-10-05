@@ -128,7 +128,7 @@ class SocialFeed:
                     hit = mentions(f"{title} {body[:500]}", self.symbols)
                     weight = 1 + min(score, 5000) / 1000  # popular posts count more
                     for s in hit:
-                        counts[s] += weight
+                        counts[s] = counts.get(s, 0) + weight  # the Radar may add a coin mid-poll
                     if hit:
                         posts.append({"sub": sub, "title": title, "score": score, "symbols": hit})
                 ok = True
