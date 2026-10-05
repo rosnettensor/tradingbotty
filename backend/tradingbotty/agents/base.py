@@ -3,24 +3,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 
 @dataclass
 class Blackboard:
     """What agents share. Each agent reads from it and writes its own results into it."""
-    tech: dict[str, dict[str, float]] = field(default_factory=dict)     # symbol -> technical signals
-    hype: dict[str, float] = field(default_factory=dict)                # symbol -> -1..1
-    news: dict[str, float] = field(default_factory=dict)                # symbol -> -1..1
+    news: dict[str, float] = field(default_factory=dict)                # symbol -> news tone -1..1 (fades in hours)
     news_events: list[dict] = field(default_factory=list)               # scored headlines, newest first
-    market: dict[str, float] = field(default_factory=dict)              # symbol -> regime signal -1..1
-    regime: dict[str, Any] = field(default_factory=dict)                # summary for the dashboard
-    risk_appetite: float = 1.0                                          # Professor's multiplier 0.5..1.5
-    avoid: set[str] = field(default_factory=set)                        # symbols the Professor vetoed
-    btc_uptrend: bool = True                                            # Bitcoin above its 20-day average
-    scores: dict[str, dict[str, float]] = field(default_factory=dict)   # variant -> symbol -> score
-    signals: dict[str, dict[str, float]] = field(default_factory=dict)  # symbol -> every raw signal (for "why")
-    notes: list[str] = field(default_factory=list)
 
 
 class Agent:
@@ -32,6 +21,7 @@ class Agent:
     uses_ai = False
     explain = ""              # what it does, in plain words, for the dashboard
     outputs = ""              # what it hands to the next agents
+    cadence = ""              # how often it works, in plain words
     can_disable = False       # optional agents can be switched off from the dashboard
     default_prompt = ""       # AI agents: the instructions Claude gets (editable from the dashboard)
     default_model = ""        # AI agents: "fast" or "deep" or a model id
@@ -43,6 +33,9 @@ class Agent:
         self.last_run = 0.0
         self.runs = 0
         self.cost = 0.0
+        self.next_run = 0.0   # when its next real piece of work is due (0 = every tick)
+        # what the dashboard shows inside the agent: "did" = steps of its last real work, "facts" = [label, value]
+        # pairs, "table" = {"cols": [...], "rows": [[...]]}, plus agent-specific data
         self.detail: dict = {}
 
     def say(self, message: str, level: str = "info") -> None:
@@ -74,6 +67,7 @@ class Agent:
             "status": self.status, "summary": self.summary, "last_run": self.last_run, "runs": self.runs,
             "cost": round(self.cost, 4), "uses_ai": self.uses_ai, "detail": self.detail,
             "explain": self.explain, "outputs": self.outputs, "can_disable": self.can_disable, "enabled": self.enabled,
+            "cadence": self.cadence, "next_run": self.next_run,
         }
         if self.uses_ai:
             n.update(prompt=self.prompt, prompt_changed=self.prompt != self.default_prompt, model=self.model)
@@ -87,7 +81,8 @@ class Agent:
         self.status = "running"
         try:
             await self.run(bb)
-            self.status = "ok"
+            if self.status == "running":
+                self.status = "ok"
         except Exception as e:  # one broken agent must not stop the team
             self.status = "error"
             self.summary = f"error: {e}"

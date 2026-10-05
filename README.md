@@ -1,125 +1,84 @@
 # TradingBotty
 
-A playful multi-agent trading bot with a cyber dashboard. It trades crypto on real live prices, starts on paper
-money, and can switch to real money on Bitpanda with one (well-guarded) switch.
+A playful multi-agent crypto bot with a cyber dashboard that trades real money on Bitpanda Fusion. There is no
+paper money: every agent either feeds the real trades or the history test that picks the strategy for them.
 
 **It can lose your stake. It can never put you in debt:** it only places spot buy and sell orders, only buys with
 cash it has, and only sells coins it holds. There is no code for margin, leverage, shorting, futures or CFDs.
 
 ## Start it
 
-You need Python 3.11 or newer ([python.org](https://www.python.org/downloads/)). The dashboard is already built,
-so you don't need Node.
+You need Python 3.11 or newer. The dashboard is already built, so you don't need Node.
 
-- **Windows:** double-click `start.bat`.
-- **Mac/Linux:** run `./start.sh` in a terminal.
+- **Mac/Linux:** `./start.sh` (on a Mac that should stay awake: `caffeinate -i ./start.sh`)
+- **Windows:** double-click `start.bat`
 
-Then open http://localhost:8000. The first start takes a minute to install packages.
-Want to look around without internet data? Use `start.bat --simulate` or `./start.sh --simulate` (random-walk prices,
-marked SIMULATED DATA, stored in a separate database).
+Then open http://localhost:8000. `--simulate` runs on random-walk prices (marked SIMULATED DATA, separate database).
+`--check-live` reads your Fusion balance without trading.
 
-Without any keys the bot runs in **free math mode**: all agents work except the two AI ones (News Hunter falls back to
-keyword rules, the Professor rests). Add keys in `.env` (created on first start from `.env.example`):
+Keys go in `.env` (created on first start from `.env.example`), never in a chat:
 
-- `ANTHROPIC_API_KEY`: turns on the AI agents. Also set a spend limit in the Anthropic console as a second safety net.
-- `BITPANDA_API_KEY`: only needed for live trading. Give it **Read + Trade, never Withdraw**.
+- `BITPANDA_FUSION_API_KEY`: Read + Trade, **never Withdraw**.
+- `ANTHROPIC_API_KEY`: turns on the News Hunter (Haiku) and the Professor (Opus). Without it they use free rules.
+- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`: the daily briefing on your phone (optional).
 
-## What you see
+## How the real money is traded
 
-Press 1-5 to switch tabs.
-
-- **Cockpit:** a stat strip (equity, cash, realized P&L, fees, trades, win rate, mood, Fear & Greed, risk appetite,
-  US market status), the sphere with the Professor's latest take, a price chart of the selected symbol with buy/sell
-  markers, the champion's equity, every score with its buy and sell lines, and a "why" breakdown showing which
-  signals push the selected score up or down and why it isn't buying. Below: positions and trades, the agent feed
-  (filter by trades, AI or problems) and rated news with social buzz. Click any symbol anywhere to focus it.
-- **Markets:** a tile per coin and stock: price, 24h move, 1-hour sparkline, score, all seven signals, buzz and news.
-  Sort and filter, click a tile for a big chart (1h to 7d) with every strategy's trades.
-- **Agents:** the node graph plus an inspector: each agent's job in plain words, what it reads and hands on, an
-  on/off switch for optional agents, and for the AI agents their Claude model and editable instructions.
-- **Lab:** backtest any strategy on recorded prices, auto-tune it (tries many variations and ranks them), adopt a
-  winner as a new paper strategy, and compare all running strategies on the live leaderboard.
-- **Controls:** sliders for every bot setting (risk limits, fees, speed, AI, Optimizer) and every strategy setting
-  (when to buy, how much, when to sell, signal weights, crypto/stocks), with a 24h backtest button. Plus your
-  sources: add or remove coins, stocks, subreddits and RSS feeds (each is tested before it's used).
-- **Top bar:** AI budget meter, PAPER/LIVE switch, KILL switch (stops all new buys instantly).
-
-Settings changed in the dashboard are saved in `data/` and win over `config.toml` until you reset them.
-
-## Live trading venue
-
-The default live broker is **Bitpanda Fusion** (same Bitpanda account, order API, about 0.25% per trade instead of
-about 1.5% in the app). Put `BITPANDA_FUSION_API_KEY` in `.env` (Read + Trade only, never withdrawals) and run
-`python run.py --check-live`. To use the old app-quote broker set `broker = "bitpanda"` in `config.toml`.
-
-**Market Radar** (tab 2): every few minutes one Kraken request reads the 24h stats of every coin with a USD market,
-keeps what Fusion can trade, filters out thin, wide-spread and already-pumped coins, and adds the hottest to the
-watchlist so every strategy can trade them. Your own coin list always stays; radar coins leave again once they
-cool off, unless a strategy holds them.
-
-**Live money brakes** (Controls → Live money): a cap on how much is in coins at once, a cap per order, a spread check
-on Fusion's order book before every buy, and leftover coins of an old champion get sold. By default the bot only
-sells coins it bought itself. Switch on "Bot may also use my existing coins" to let it sell your other coins for cash
-when it needs it; worst case you lose what's in the account, never more, because nothing can borrow.
-
-Stocks (US, Swiss `.SW`, German `.DE`, and other European suffixes) are paper-only: Bitpanda has no stock trading
-API. Every strategy is measured against the **Buy & Hold** yardstick in the Lab.
-
-## Your own visuals
-
-Drop a background video, a logo or agent portraits into the `media/` folder (see `media/README.md`) and reload the
-page. Image and video generators like Higgsfield are good for this.
+1. **Research.** Every night the Researcher re-runs about 37 strategies on all daily candles since 2017 for 22 big
+   coins, with real fees and spread, against simply holding Bitcoin. "Robust" means it wins in both halves of
+   history, in most calendar years, and passes a correction for testing many strategies at once.
+2. **Decision.** Once a day, right after 00:00 UTC, the Daily Brain runs the picked strategy (default: buy 20-day-high
+   breakouts, at most 3 coins, only while Bitcoin is above its 50-day average; sell under the 10-day low or a
+   trailing stop). If its strategy fails the robustness check three nights in a row, it switches to the best robust one.
+3. **Guards.** The Guardian blocks buys after hack or delisting news or a crash, and sells a held coin early when two
+   witnesses agree. The Professor reviews each decision and may veto a buy for 24 hours, never force a sell.
+4. **Orders.** The Risk Officer checks every order (kill switch, caps, Fusion's minimum, spread, cash with fee room)
+   before the Live Desk sends it.
 
 ## The team
 
-| Agent | What it does | Costs AI money |
+| Agent | What it does for the real trades | AI |
 |---|---|---|
-| Crypto Analyst | Momentum, trend, dips and breakouts per coin from 1-minute prices | no |
-| Market Analyst | S&P 500 / Nasdaq / BTC trend and Fear & Greed: risk-on or risk-off | no |
-| Hype Scout | Reddit buzz, CoinGecko trending, sudden chatter spikes | no |
-| Hype vs Price Detective | Early hype (price still flat) is a signal; hype after a pump is a trap | no |
-| News Hunter | Rates every headline's direction and impact (mergers, ETFs, hacks, regulation, macro) | yes, Haiku (cheap) |
-| The Professor | A few times a day: big-picture review, sets risk appetite, names coins to avoid, proposes ideas | yes, Opus (rare) |
-| Predictor | Blends all signals into one score per coin, per strategy variant | no |
-| Risk Officer | Plain code, not AI: size caps, daily loss stop, cash-only, kill switch | no |
-| Buyer | Places paper orders for every variant, and live orders for the champion when LIVE is on | no |
-| Optimizer | Breeds new variants from the best, retires losers, suggests (or auto-promotes) a new champion | no |
+| Fusion Scout | Which coins Fusion really trades, minimum orders, crash alerts (≤ -20% in 24h and ≤ -15% vs Bitcoin) | no |
+| Trend Watch | Runs the brain's exact rules on live prices every 2 minutes: tonight's likely trades, distance to each line | no |
+| Data Collector | Free daily data with years of history: Fear & Greed, futures funding, Wikipedia views, stablecoins, hash rate | no |
+| News Hunter | Rates headlines and spots hacks and delistings for the Guardian | Haiku |
+| Pattern Hunter | Tests every free signal against next week's price, with random controls and multiple-testing correction | no |
+| Researcher | The nightly history test; warns and self-heals when the live strategy stops being robust | no |
+| Guardian | 72-hour buy blocks, two-witness emergency sells (never BTC or ETH) | no |
+| The Professor | Daily review and briefing, 24-hour buy veto | Opus |
+| Daily Brain | Decides once a day what the bot holds | no |
+| Risk Officer | Hard limits on every order, in plain code | no |
+| Live Desk | Sends orders to Fusion, reads your account every 30 seconds | no |
 
-## Money rules (config.toml)
+## The dashboard
 
-- **AI budget:** hard cap of 20 USD in total, spread over 30 days (about 0.67 USD a day). 10% of realized profit is
-  added to the budget, so the bot can spend more on AI only when it earns more. When the budget is used up, the AI
-  agents fall back to free rules and everything keeps running.
-- **Risk:** max 25% of equity per position, max 5 positions, no new buys after losing 30% within a day.
-  Percentages, so the limits grow with the account. The Optimizer can't change these.
-- **Fees:** paper trading charges 1.5% per side, matching Bitpanda app quotes, so paper results are honest about
-  costs. Fees are the biggest enemy of a small account: the strategies are tuned to trade rarely.
+Press 1-4 to switch tabs.
 
-## Going live (do this together the first time)
+- **Cockpit:** your account, the bot's own gain or loss (coin price swings excluded), the Daily Brain and tonight's
+  likely trades, the watchlist with each coin's distance to its buy and sell line, Guardian blocks, the Professor's
+  review, a daily chart per coin with the brain's lines and real trades, real trades, the agent feed and rated news.
+- **Agents:** the node graph and an inspector that shows what each agent just did, step by step, its key facts and
+  tables, its own log, and for the AI agents their model and instructions.
+- **Research:** the history test (pick which strategy trades live), the Pattern Hunt and the free data.
+- **Controls:** money limits, AI switches, news feeds, and the Telegram briefing.
 
-1. Let it run on paper for at least a few days and watch the Experiments tab.
-2. Fusion uses the same wallet as the Bitpanda app. The bot trades from `currency` in `config.toml` (CHF by default).
-3. Add `BITPANDA_FUSION_API_KEY` to `.env`, then check it without trading: `start.bat --check-live` or
-   `./start.sh --check-live`. It lists your balance and which coins are tradable.
-4. Set the live caps in Controls → Live money, then click PAPER and type `REAL MONEY`. From then on the champion's
-   trades are copied to Fusion in the same proportions, inside your caps.
-5. Three live errors in a row switch it back to paper automatically.
+## Money rules
 
-The Bitpanda connector is built from Bitpanda's public API docs and tested against a fake server, not yet against
-your real account. Make the first live trade a tiny one and check it in the Bitpanda app.
+- **AI budget:** 20 USD in total, spread over 30 days, plus 10% of the bot's gains. When it runs out, the AI agents
+  fall back to free rules and everything keeps running.
+- **Fees:** Fusion charges about 0.25% per side; the history test charges 0.4% per side to include spread.
+- Three failed orders in a row switch the bot to standby.
 
 ## Experimenting
 
-- Edit `backend/tradingbotty/strategy.py` → `SEED_VARIANTS` to add your own strategy personalities.
-- Add an agent: subclass `Agent` in `backend/tradingbotty/agents/team.py`, set `inputs` to the nodes it reads, write
-  to the `Blackboard`, and add it to the team list in `engine.py`. It appears in the node view automatically.
-- Run the safety tests after changes: `.venv/bin/python -m pytest tests`.
-- Stocks: strategies with "Trade US stocks" on paper-trade your watchlist during the US session (9:30-16:00 New York).
-  Live trading stays crypto-only.
+- Strategies live in `backend/tradingbotty/research.py`, agents in `backend/tradingbotty/agents/crew.py`.
+- Run the tests after changes: `.venv/bin/python -m pytest tests`.
+- Your own visuals: drop a background, logo or agent portraits into `media/` (see `media/README.md`).
 
-## Data sources
+## Data sources (all free)
 
-Kraken public API (crypto prices), Yahoo Finance chart API (US stocks), Reddit, CoinGecko trending,
-alternative.me Fear & Greed, and news RSS from CoinDesk, Cointelegraph, Yahoo Finance, CNBC, Decrypt and
-MarketWatch. All free, and all editable in Controls > Sources.
-X (Twitter) is not used yet because reading posts costs about 0.005 USD each.
+Bitpanda Fusion (your account), Kraken (live prices), Binance, Coinbase and Kraken (daily history), alternative.me
+(Fear & Greed), Binance futures (funding), Wikimedia (page views), DefiLlama (stablecoins), blockchain.com (hash rate),
+and news RSS from CoinDesk, Cointelegraph, Decrypt, The Block, Bitcoin Magazine, CryptoSlate, CryptoPotato,
+The Defiant, Yahoo Finance, CNBC and MarketWatch (editable in Controls).

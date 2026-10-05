@@ -1,72 +1,59 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sphere from "./Sphere.jsx";
-import { LineChart, PriceChart } from "./charts.jsx";
-import { ScoreBar, SignalBars, Stat, Tabs, SIGNAL_LABELS } from "./components.jsx";
-import { ago, api, fmt, pctColor, usePoll } from "./useBot.js";
+import { DailyChart, LineChart } from "./charts.jsx";
+import { Stat, Tabs } from "./components.jsx";
+import { ago, fmt, pctColor, usePoll } from "./useBot.js";
 
-const RANGES = [["60", "1h"], ["240", "4h"], ["1440", "24h"]];
+const hm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const dayhm = (ts) => new Date(ts * 1000).toLocaleString([], { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+const nextMidnightUTC = () => (Math.floor(Date.now() / 86400000) + 1) * 86400;
 
-export default function Cockpit({ state, pulse, focus, setFocus }) {
-  const champ = state.champion;
-  const [curve, setCurve] = useState([]);
-  useEffect(() => {
-    let alive = true;
-    const load = () => api("experiments").then((e) => alive && champ && setCurve(e.curves[champ.id] || [])).catch(() => {});
-    load();
-    const t = setInterval(load, 60000);
-    return () => { alive = false; clearInterval(t); };
-  }, [champ?.id]);
-
-  const ret = champ ? (champ.equity / champ.start - 1) * 100 : 0;
+export default function Cockpit({ state, pulse, focus, setFocus, openAgent }) {
   const w = state.wallet && !state.wallet.error ? state.wallet : null;
-  const scores = Object.entries(state.scores || {}).sort((a, b) => b[1] - a[1]);
-  const energy = Math.min(1, scores.reduce((s, [, v]) => s + Math.abs(v), 0) / Math.max(1, scores.length) * 2);
-  const points = champ ? [...curve, [Date.now() / 1000, champ.equity]] : [];
-  const symbol = focus && state.signals?.[focus] ? focus : scores[0]?.[0];
+  const rows = state.trend?.rows || [];
+  const near = rows.filter((r) => ["would buy", "breakout, no slot", "near breakout"].includes(r.state)).length;
+  const energy = Math.min(1, 0.15 + near / 6 + Object.keys(state.guard || {}).length / 4);
+  const symbol = focus && rows.some((r) => r.symbol === focus) ? focus : rows[0]?.symbol || "BTC";
 
   return (
-    <div className="cockpit2">
-      {state.wallet && <LiveWallet state={state} setFocus={setFocus} />}
-      <StatStrip state={state} ret={ret} />
+    <div className="cockpit3">
+      {state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />}
+      <BrainBar state={state} openAgent={openAgent} />
+      <StatStrip state={state} openAgent={openAgent} />
 
       <section className="panel core">
-        <Sphere mood={(w ? w.change_pct : ret) / 5} energy={energy} pulse={pulse} label={w ? (
+        <Sphere mood={(w ? w.bot_edge_pct ?? w.change_pct : 0) / 5} energy={energy} pulse={pulse} label={w ? (
           <div className="core-label">
-            <div className="dim">YOUR ACCOUNT · {state.mode.toUpperCase()}</div>
+            <div className="dim">YOUR ACCOUNT · {state.mode === "live" ? "LIVE" : "STANDBY"}</div>
             <div className="equity">{w.total.toFixed(2)} {w.currency}</div>
             <div className={pctColor(w.change_pct)}>{fmt.pct(w.change_pct)} since start</div>
           </div>
-        ) : (
-          <div className="core-label">
-            <div className="dim">{champ?.name || "–"} · paper test</div>
-            <div className="equity">{fmt.usd(champ?.equity)}</div>
-            <div className={ret >= 0 ? "up" : "down"}>{fmt.pct(ret)} since start</div>
-          </div>
-        )} />
-        <Professor state={state} />
+        ) : <div className="core-label"><div className="dim">NO ACCOUNT CONNECTED</div></div>} />
+        <Professor p={state.professor || {}} on={state.ai} openAgent={openAgent} />
+      </section>
+
+      <section className="panel watch">
+        <TrendWatch t={state.trend} brain={state.brain} guard={state.guard || {}} symbol={symbol} setFocus={setFocus} openAgent={openAgent} />
+      </section>
+
+      <section className="panel guardpanel">
+        <Guardian guard={state.guard || {}} shocks={state.shocks || {}} openAgent={openAgent} />
       </section>
 
       <section className="panel focus">
-        <FocusChart symbol={symbol} state={state} />
+        <FocusDaily symbol={symbol} state={state} />
       </section>
 
       <section className="panel equity-panel">
         {w ? <>
           <h3>YOUR ACCOUNT ({w.currency}) <span className="dim">· real money · dashed line = where it started</span></h3>
-          <LineChart series={[{ id: "a", color: "var(--magenta)", bold: true, points: [...(w.history || []), [Date.now() / 1000, w.total]] }]}
-            baseline={w.start_total} height={170} />
-        </> : <>
-          <h3>CHAMPION TEST (USD) <span className="dim">· dashed line = start</span></h3>
-          <LineChart series={[{ id: "c", color: "var(--cyan)", bold: true, points }]} baseline={champ?.start} height={170} />
-        </>}
-      </section>
-
-      <section className="panel why">
-        <Scores state={state} scores={scores} symbol={symbol} setFocus={setFocus} />
+          <LineChart series={[{ id: "a", color: "var(--magenta)", bold: true, points: [...(w.history || []).map((h) => [h[0], h[1]]), [Date.now() / 1000, w.total]] }]}
+            baseline={w.start_total} height={200} />
+        </> : <div className="empty">your account chart appears once the Fusion key works</div>}
       </section>
 
       <section className="panel positions">
-        <Positions state={state} setFocus={setFocus} />
+        <LiveTrades trades={state.trades || []} cur={w?.currency || "CHF"} setFocus={setFocus} />
       </section>
 
       <section className="panel log">
@@ -74,9 +61,18 @@ export default function Cockpit({ state, pulse, focus, setFocus }) {
       </section>
 
       <section className="panel newsfeed">
-        <News state={state} setFocus={setFocus} />
+        <News news={state.news || []} setFocus={setFocus} />
       </section>
     </div>
+  );
+}
+
+function NoWallet() {
+  return (
+    <section className="panel wallet">
+      <h3>BITPANDA FUSION</h3>
+      <p className="dim">No Fusion key yet: the bot can't see or trade your account. Add BITPANDA_FUSION_API_KEY to .env and restart.</p>
+    </section>
   );
 }
 
@@ -112,7 +108,7 @@ function BotEdge({ w, cur }) {
   if (edge != null) pts.push([Date.now() / 1000, edge]);
   const tone = edge == null ? "" : edge > 0 ? "up" : edge < 0 ? "down" : "flat";
   return (
-    <div className={`bot-edge ${tone}`} title="Your account now minus what it would be worth if nobody had traded: the cash and coins you had when this started, at today's prices. BTC and other price swings cancel out, so this is only what the bot's trades added or lost. Paying in or withdrawing money moves it too.">
+    <div className={`bot-edge ${tone}`} title="Your account now minus what it would be worth if nobody had traded: the cash and coins you had when this started, at today's prices. Coin price swings cancel out, so this is only what the bot's trades added or lost. Paying in or withdrawing moves it too.">
       <div className="edge-label">🤖 BOT'S OWN GAIN / LOSS</div>
       <div className="edge-big">{edge == null ? "–" : <Ticking value={edge} signed />} <span className="unit">{cur}</span></div>
       <div className="stat-sub">
@@ -139,7 +135,7 @@ function LiveWallet({ state, setFocus }) {
   return (
     <section className={`panel wallet ${live ? "is-live" : ""}`}>
       <div className="row-head">
-        <h3>{live ? "● LIVE · YOUR ACCOUNT" : "YOUR ACCOUNT · watching, not trading"} <span className="dim">· {w.venue} · real money · updated {ago(w.ts)}</span></h3>
+        <h3>{live ? "● LIVE · YOUR ACCOUNT" : "YOUR ACCOUNT · standby, nothing trades"} <span className="dim">· {w.venue} · real money · updated {ago(w.ts)}</span></h3>
       </div>
       <div className="wallet-top">
         <div className="wallet-total">
@@ -162,214 +158,206 @@ function LiveWallet({ state, setFocus }) {
           </div>
           <div className="wallet-coins">
             {(w.all_coins || []).map((c) => (
-              <button key={c.symbol} className="tag coin-own" onClick={() => setFocus(c.symbol)}
-                title={`${c.qty} ${c.symbol}${c.bot ? " · bought by the bot" : ""}${c.tradable ? "" : " · not tradable on Fusion"}`}>
+              <button key={c.symbol} className={`tag ${c.bot ? "coin-bot" : "coin-own"}`} onClick={() => setFocus(c.symbol)}
+                title={`${c.qty} ${c.symbol}${c.bot ? " · bought by the bot" : " · yours from before"}${c.tradable ? "" : " · not tradable on Fusion"}`}>
                 {c.bot ? "🤖 " : ""}{c.symbol} {c.price ? `${c.value.toFixed(2)}` : `${c.qty} (no price)`}
+                {c.bot && c.pnl != null && <span className={pctColor(c.pnl)}> {sign(c.pnl)}</span>}
               </button>
             ))}
           </div>
-          {live && !state.brain?.on && <BuyNow state={state} cur={cur} />}
-          <div className="stat-sub">Limits: max {caps.max_invest} {cur} in bot trades · {caps.max_order}/order · spread ≤ {caps.max_spread_pct}% · {caps.use_my_coins ? "may use all coins" : "only uses cash"}</div>
+          <div className="stat-sub">Limits: max {caps.max_invest} {cur} in coins · {caps.max_order} per order · spread ≤ {caps.max_spread_pct}% · {caps.use_my_coins ? "may use all your coins" : "only uses cash"}</div>
         </div>
       </div>
-      {state.brain?.on ? <BrainStatus b={state.brain} /> : <Blockers state={state} />}
     </section>
   );
 }
 
-/** Your button: a real buy of the amount you choose, in the best coin right now. */
-function BuyNow({ state, cur }) {
-  const [amount, setAmount] = useState(10);
-  const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
-  const pending = state.force_buy;
-  const go = async () => {
-    if (!window.confirm(`Real money: buy ${amount} ${cur} of the best coin right now?\n\nThe champion then manages it with its own stop loss and sell rules.`)) return;
-    setBusy(true); setMsg("");
-    try {
-      const r = await api("buy_now", { amount: Number(amount) });
-      setMsg(r.ok ? `✓ Bought ${r.amount} ${r.currency} of ${r.symbol}` : r.waiting ? `Waiting: ${r.why}` : `Not bought: ${r.why}`);
-    } catch (e) { setMsg(e.message); } finally { setBusy(false); }
-  };
-  return (
-    <div className="buynow">
-      <span className="buynow-label">BUY NOW</span>
-      <input type="number" min={1} step={1} value={amount} onChange={(e) => setAmount(e.target.value)} />
-      <span className="dim">{cur}</span>
-      <button className="primary" disabled={busy || !!pending} onClick={go}>{busy ? "buying…" : "buy the best coin"}</button>
-      {pending && <span className="warn-msg">searching until {new Date(pending.until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{pending.why ? `: ${pending.why}` : "…"}
-        <button className="mini" onClick={() => api("buy_now/cancel", {})}>cancel</button></span>}
-      {msg && !pending && <span className="small">{msg}</span>}
-    </div>
-  );
-}
-
-/** The daily brain: which strategy runs the real money, what it holds and why. */
-function BrainStatus({ b }) {
-  const when = b.ts ? new Date(b.ts * 1000).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "pending";
-  const nextDay = new Date((Math.floor(Date.now() / 86400000) + 1) * 86400000);
+/** The Daily Brain: which tested strategy runs the real money, what it holds, what tonight likely brings. */
+function BrainBar({ state, openAgent }) {
+  const b = state.brain || {};
+  const t = state.trend || {};
+  const pv = t.preview || {};
   const holds = Object.entries(b.target || {});
+  const mins = Math.max(0, Math.round((nextMidnightUTC() - Date.now() / 1000) / 60));
+  const live = state.mode === "live";
   return (
-    <div className="brain-status">
-      <span className="brain-label">DAILY BRAIN</span>
-      <b>{b.strategy}</b>
-      {b.btc_ok != null && <span className={b.btc_ok ? "up" : "down"}>Bitcoin {b.btc_ok ? "above" : "below"} its {b.regime_days}-day average{b.btc_ok ? "" : ": cash"}</span>}
-      <span>holds {holds.length ? holds.map(([s, w]) => `${s} ${Math.round(w * 100)}%`).join(" · ") : "nothing (cash)"}</span>
-      <span className="dim">decided {when} · next check after {nextDay.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-      {b.note && <span className="dim small brain-note">{b.note}</span>}
-    </div>
+    <section className={`panel brainbar ${b.on && live ? "on" : ""}`}>
+      <button className="brain-label" onClick={() => openAgent("brain")} title="open the Daily Brain">DAILY BRAIN {b.on ? (live ? "● LIVE" : "· STANDBY") : "· OFF"}</button>
+      <div className="bb-main">
+        <b>{b.strategy || "no strategy picked"}</b>
+        <span>holds {holds.length ? holds.map(([s, x]) => `${s} ${Math.round(x * 100)}%`).join(" · ") : "nothing (cash)"}</span>
+        {t.btc && <span className={t.btc.ok ? "up" : "down"}>Bitcoin {t.btc.gap_pct > 0 ? "+" : ""}{t.btc.gap_pct}% vs its {t.btc.days}-day average{t.btc.ok ? "" : ": brain stays in cash"}</span>}
+      </div>
+      <div className="bb-next">
+        <span className="dim">next decision in {Math.floor(mins / 60)}h {mins % 60}m ({hm(nextMidnightUTC())})</span>
+        {b.on && (pv.buy?.length || pv.sell?.length
+          ? <span>at today's prices: {pv.buy?.length ? <b className="up">buy {pv.buy.join(", ")}</b> : null}{pv.buy?.length && pv.sell?.length ? " · " : ""}{pv.sell?.length ? <b className="down">sell {pv.sell.join(", ")}</b> : null}</span>
+          : <span className="dim">at today's prices: no trades tonight</span>)}
+        {b.ts && <span className="dim">last decision {dayhm(b.ts)}</span>}
+      </div>
+      {b.note && <div className="dim small brain-note">{b.note}</div>}
+    </section>
   );
 }
 
-/** Why the champion isn't buying right now, grouped by reason, so you can see if rules block each other. */
-function Blockers({ state }) {
-  const b = Object.entries(state.blockers || {});
-  if (!b.length) return null;
-  const total = b.reduce((n, [, s]) => n + s.length, 0);
-  return (
-    <div className="blockers">
-      <span className="dim">WHY {state.champion?.name?.toUpperCase()} ISN'T BUYING:</span>
-      {b.map(([why, syms]) => (
-        <span key={why} className="blocker" title={syms.join(", ")}>
-          <i style={{ width: `${(syms.length / total) * 100}%` }} />{why} <b>{syms.length}</b>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function StatStrip({ state, ret }) {
-  const c = state.champion || {};
-  const s = state.stats || {};
-  const r = state.regime || {};
-  const cfg = state.champion_config || {};
-  const nextProf = state.next_professor ? Math.max(0, Math.round((state.next_professor - Date.now() / 1000) / 60)) : null;
+function StatStrip({ state, openAgent }) {
+  const lt = state.live_trades || {};
+  const r = state.research || {};
+  const p = state.professor || {};
+  const g = Object.keys(state.guard || {});
+  const rows = state.trend?.rows || [];
+  const near = rows.filter((x) => ["would buy", "breakout, no slot", "near breakout"].includes(x.state));
   return (
     <section className="panel stats">
-      <Stat label={`Champion: ${c.name || "–"}`} value={<span className={pctColor(ret)}>{fmt.pct(ret)}</span>} sub="its test run, sized like your account"
-        title="The strategy whose trades are copied to your account. Every strategy is tested in parallel on an account the size of yours." />
-      <Stat label="Realized P&L (test)" value={fmt.usd(s.realized)} tone={pctColor(s.realized)} sub="champion's closed trades" />
-      <Stat label="Fees (test)" value={fmt.usd(s.fees)} tone="down" sub={`${s.trades ?? 0} trades total`} />
-      <Stat label="Trades 24h" value={s.trades_24h ?? 0} sub={`${s.buys_1h ?? 0}/${cfg.max_buys_per_hour ?? "–"} buys this hour`} />
-      <Stat label="Win rate" value={s.win_rate == null ? "–" : `${s.win_rate}%`} sub="of closed trades" />
-      <Stat label="Market mood" value={r.mood || "…"} tone={r.mood === "risk-on" ? "up" : r.mood === "risk-off" ? "down" : ""}
-        sub={state.stocks_enabled ? `crypto ${r.crypto ?? "–"} · stocks ${r.stocks ?? "–"}` : `crypto ${r.crypto ?? "–"}`} />
-      <Stat label="Fear & Greed" value={r.fear_greed ?? "…"} sub={r.fear_greed_label} />
-      <Stat label="Risk appetite" value={state.risk_appetite?.toFixed(2)} sub={nextProf == null ? "" : `Professor in ${nextProf}m`}
-        title="Set by the Professor: scales every position size (0.5 defensive to 1.5 aggressive)" />
-      <Stat label="Real trades" value={state.live_trades?.n ?? 0} tone={state.live_trades?.n ? "up" : "dim"}
-        sub={state.live_trades?.last ? `last ${ago(state.live_trades.last)}` : "none yet"}
-        title="Orders placed on your real Bitpanda account (buys and sells, including the buy-now button)" />
+      <Stat label="Real trades" value={lt.n ?? 0} tone={lt.n ? "up" : "dim"} sub={lt.last ? `last ${ago(lt.last)}` : "none yet"}
+        title="Orders placed on your real Bitpanda account" />
+      <Stat label="Near a breakout" value={near.length} tone={near.length ? "up" : "dim"} sub={near.slice(0, 4).map((x) => x.symbol).join(" ") || "none"}
+        title="Coins within 3% of their 20-day high while Bitcoin is in an uptrend (Trend Watch)" />
+      <Stat label="Robust strategies" value={r.tested ? `${r.robust}/${r.tested}` : "–"} tone={r.robust ? "up" : "dim"}
+        sub={r.ts ? `history test ${ago(r.ts)}` : "test pending"} title="Strategies that pass every check of the history test (Researcher)" />
+      <Stat label="Guardian blocks" value={g.length} tone={g.length ? "down" : "dim"} sub={g.join(" ") || "all clear"}
+        title="Coins blocked from buying after hack or delisting news, a crash, or a Professor warning" />
+      <Stat label="Professor" value={p.ts ? ago(p.ts) : "–"} sub={p.block?.length ? `blocked ${p.block.map((x) => x.symbol).join(", ")}` : p.ts ? "no veto" : "after next decision"}
+        title="Daily review by Claude Opus after each brain decision" />
+      <Stat label="Phone briefing" value={state.telegram ? "on" : "off"} tone={state.telegram ? "up" : "dim"} sub={state.telegram ? "Telegram, daily" : "set up in Controls"} />
+      <div className="stat-links">
+        {["trend", "guardian", "researcher"].map((id) => <button key={id} className="mini" onClick={() => openAgent(id)}>{id}</button>)}
+      </div>
     </section>
   );
 }
 
-function Professor({ state }) {
-  const p = state.professor || {};
+function Professor({ p, on, openAgent }) {
   return (
     <div className="prof">
       <div className="prof-head">
-        <span className="who">The Professor</span>
-        <span className="dim">{p.ts ? ago(p.ts) : "first review after warm-up"}</span>
+        <button className="who linkish" onClick={() => openAgent("professor")}>The Professor</button>
+        <span className="dim">{p.ts ? `${ago(p.ts)} · $${(p.cost || 0).toFixed(3)}` : on ? "first review after the next daily decision" : "AI off (no Anthropic key)"}</span>
       </div>
-      {p.assessment ? <p>{p.assessment}</p> : <p className="dim">Waiting for enough fresh market, news and sentiment data.</p>}
+      {p.assessment ? <p>{p.assessment}</p> : <p className="dim">{p.skipped || "Reviews each daily decision with the news, the history test and the patterns. Can veto a buy for 24h, never forces a sell."}</p>}
+      {p.watch && <p><b>Watch:</b> {p.watch}</p>}
       {p.idea && <p className="idea"><b>Idea:</b> {p.idea}</p>}
-      {state.avoid?.length > 0 && <p className="down">Avoiding: {state.avoid.join(", ")}</p>}
+      {p.block?.length > 0 && <p className="down">Vetoed for 24h: {p.block.map((x) => `${x.symbol} (${x.reason})`).join("; ")}</p>}
     </div>
   );
 }
 
-function FocusChart({ symbol, state }) {
-  const [range, setRange] = useState(() => localStorage.getItem("tb-range") || "240");
+const STATE_TONE = { "would buy": "up", "would sell": "down", holding: "held", "breakout, no slot": "warn", "near breakout": "near", waiting: "dim" };
+
+function TrendWatch({ t, brain, guard, symbol, setFocus, openAgent }) {
   const [all, setAll] = useState(false);
-  useEffect(() => { try { localStorage.setItem("tb-range", range); } catch { /* ignore */ } }, [range]);
-  const [data] = usePoll(symbol ? `candles/${symbol}?minutes=${range}` : null, 20000, [state.trades?.length]);
+  if (!t?.rows) return <><h3>TONIGHT'S WATCHLIST</h3><div className="empty">Trend Watch is loading daily history…</div></>;
+  const rows = all ? t.rows : t.rows.filter((r) => r.state !== "waiting").concat(t.rows.filter((r) => r.state === "waiting").slice(0, 6));
+  return (
+    <>
+      <div className="row-head">
+        <h3>TONIGHT'S WATCHLIST <span className="dim">· the brain's rules on live prices · {ago(t.ts)}</span></h3>
+        <div className="row-tools">
+          <label className="toggle"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> all {t.rows.length}</label>
+          <button className="mini" onClick={() => openAgent("trend")}>how</button>
+        </div>
+      </div>
+      <p className="dim small">Buy = price closes above the {t.entry_days}-day high while Bitcoin is above its {t.btc?.days}-day average. Sell = close under the {t.exit_days}-day low or the trailing stop. Click a coin for its chart.</p>
+      <div className="scroll" style={{ maxHeight: 380 }}>
+        <table className="watch-table">
+          <thead><tr><th>coin</th><th>state</th><th title="how far the price must rise to break the 20-day high">to buy line</th><th title="how far the price may fall before a sell">to sell line</th><th>30d</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.symbol} className={`click ${r.symbol === symbol ? "sel" : ""}`} onClick={() => setFocus(r.symbol)}>
+                <td><b>{r.symbol}</b>{r.held && <i className="held" title="the bot holds it">●</i>}{guard[r.symbol] && <span className="down" title="Guardian block"> ⛔</span>}</td>
+                <td><span className={`st-chip ${STATE_TONE[r.state] || ""}`}>{r.state}</span></td>
+                <td><Dist pct={r.to_breakout_pct} up /></td>
+                <td><Dist pct={r.to_exit_pct} /></td>
+                <td className={pctColor(r.strength_30d)}>{r.strength_30d == null ? "–" : `${r.strength_30d > 0 ? "+" : ""}${r.strength_30d}%`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {brain?.on === false && <p className="warn-msg small">The Daily Brain is off: this list is information only.</p>}
+    </>
+  );
+}
+
+/** distance bar: how close the price is to a line (buy line above, sell line below). */
+function Dist({ pct, up }) {
+  if (pct == null) return <span className="dim">–</span>;
+  const closeness = Math.max(0, 1 - Math.abs(pct) / 15);
+  const crossed = up ? pct <= 0 : pct >= 0;
+  return (
+    <span className="dist" title={`${pct > 0 ? "+" : ""}${pct}%`}>
+      <i style={{ width: `${crossed ? 100 : closeness * 100}%`, background: up ? "var(--green)" : "var(--red)" }} />
+      <em>{crossed ? (up ? "above" : "under") : `${pct > 0 ? "+" : ""}${pct}%`}</em>
+    </span>
+  );
+}
+
+function Guardian({ guard, shocks, openAgent }) {
+  const g = Object.entries(guard);
+  const s = Object.entries(shocks);
+  return (
+    <>
+      <div className="row-head">
+        <h3>GUARDIAN <span className="dim">· hacks, delistings, crashes</span></h3>
+        <button className="mini" onClick={() => openAgent("guardian")}>details</button>
+      </div>
+      {!g.length && !s.length && <div className="all-clear">✓ all clear<div className="dim small">no hack, delisting, crash or Professor veto on any coin</div></div>}
+      {g.map(([sym, x]) => (
+        <div key={sym} className="guard-item">
+          <div><b>{sym}</b> <span className="down">no buys until {dayhm(x.until)}</span>{x.sold && <span className="down"> · SOLD</span>}</div>
+          <div className="dim small">{x.reason} · witnesses: {(x.sources || []).join(", ") || "–"}</div>
+          {(x.titles || []).slice(-2).map((tt, i) => <div key={i} className="small">“{tt}”</div>)}
+        </div>
+      ))}
+      {s.length > 0 && <h4>CRASH ALERTS (FUSION SCOUT)</h4>}
+      {s.map(([sym, x]) => (
+        <div key={sym} className="guard-item">
+          <b>{sym}</b> <span className="down">{x.change}% in 24h while Bitcoin moved {x.btc}%</span> <span className="dim">· {ago(x.ts)}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function FocusDaily({ symbol, state }) {
+  const [days, setDays] = useState(() => { try { return localStorage.getItem("tb-days") || "120"; } catch { return "120"; } });
+  useEffect(() => { try { localStorage.setItem("tb-days", days); } catch { /* ignore */ } }, [days]);
+  const [d] = usePoll(symbol ? `daily/${symbol}?days=${days}` : null, 120000, [state.live_trades?.n]);
+  const lv = d?.levels;
   const t = (state.ticker || []).find((x) => x.symbol === symbol);
   return (
     <>
       <div className="row-head">
-        <h3>{symbol || "–"} <span className="dim">{t ? fmt.price(t.price) : ""}</span>{" "}
+        <h3>{symbol} · DAILY <span className="dim">{t ? fmt.price(t.price) : ""}</span>{" "}
           {t && <span className={pctColor(t.change)}>{fmt.pct(t.change)} 24h</span>}
-          {data && !data.tradable && <span className="badge dim-badge">market closed</span>}
+          {lv && <span className={`st-chip ${STATE_TONE[lv.state] || ""}`} style={{ marginLeft: 8 }}>{lv.state}</span>}
         </h3>
-        <div className="row-tools">
-          <label className="toggle"><input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> all strategies</label>
-          <Tabs value={range} options={RANGES} onChange={setRange} />
-        </div>
+        <Tabs value={days} options={[["60", "2m"], ["120", "4m"], ["365", "1y"], ["1000", "3y"]]} onChange={setDays} />
       </div>
-      {data ? <PriceChart candles={data.candles} trades={data.trades} showAll={all} height={210} /> : <div className="empty" style={{ height: 210 }}>loading…</div>}
+      <DailyChart d={d && d.symbol === symbol ? d : null} entry={state.trend?.entry_days || 20} exit={state.trend?.exit_days || 10} height={260} />
+      <p className="dim small">
+        <span className="up">- - buy line</span> = {state.trend?.entry_days || 20}-day high · <span className="down">- - sell line</span> = {state.trend?.exit_days || 10}-day low · arrows = the bot's real trades · last candle = today so far
+        {lv?.stop ? ` · trailing stop ${fmt.price(lv.stop)}` : ""}
+      </p>
     </>
   );
 }
 
-function Scores({ state, scores, symbol, setFocus }) {
-  const cfg = state.champion_config || {};
-  const w = state.weights || {};
-  const sig = state.signals?.[symbol] || {};
-  const norm = Object.values(w).reduce((s, x) => s + Math.abs(x), 0) || 1;
-  const contrib = Object.fromEntries(Object.keys(SIGNAL_LABELS).map((k) => [k, ((w[k] || 0) * (sig[k] || 0)) / norm * 2]));
-  const held = new Set((state.champion?.positions || []).map((p) => p.symbol));
-  const why = state.why_not?.[symbol];
-  const score = state.scores?.[symbol];
+function LiveTrades({ trades, cur, setFocus }) {
   return (
     <>
-      <h3>PREDICTOR SCORES <span className="dim">· ▲ buy line {cfg.entry_score} · ▼ sell line {cfg.exit_score}</span></h3>
-      <div className="scores2">
-        {scores.map(([sym, v]) => (
-          <button key={sym} className={`score2 ${sym === symbol ? "sel" : ""}`} onClick={() => setFocus(sym)}>
-            <span className="sym">{sym}{held.has(sym) && <i className="held" title="held">●</i>}</span>
-            <ScoreBar score={v} entry={cfg.entry_score} exit={cfg.exit_score} />
-            <span className={pctColor(v)}>{v.toFixed(2)}</span>
-          </button>
-        ))}
-      </div>
-      {symbol && (
-        <div className="whybox">
-          <div className="row-head">
-            <h3>WHY {symbol} SCORES {score?.toFixed(2) ?? "–"}</h3>
-            <span className={`verdict ${held.has(symbol) ? "up" : why ? "dim" : "up"}`}>
-              {held.has(symbol) ? "holding" : why ? `not buying: ${why}` : score >= cfg.entry_score ? "buy signal" : ""}
-            </span>
-          </div>
-          <SignalBars values={contrib} scale={Math.max(0.15, ...Object.values(contrib).map(Math.abs))} />
-          <p className="dim small">Each bar = signal × the champion's weight. They add up to the score. Change the weights in Controls.</p>
-        </div>
-      )}
-    </>
-  );
-}
-
-function Positions({ state, setFocus }) {
-  const champ = state.champion;
-  const trades = (state.trades || []).filter((t) => t.champion || t.mode === "live").slice(0, 40);
-  return (
-    <>
-      <h3>OPEN POSITIONS</h3>
-      {!champ?.positions.length && <div className="empty small">no open positions: the team is watching</div>}
-      <table>
-        <tbody>
-          {champ?.positions.map((p) => (
-            <tr key={p.symbol} onClick={() => setFocus(p.symbol)} className="click">
-              <td><b>{p.symbol}</b></td>
-              <td>{fmt.usd(p.value)}</td>
-              <td className={pctColor(p.pnl_pct)}>{fmt.pct(p.pnl_pct)}</td>
-              <td className="dim">{ago(p.opened).replace(" ago", "")}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <h3 style={{ marginTop: 12 }}>TRADES</h3>
-      <div className="scroll" style={{ maxHeight: 260 }}>
+      <h3>REAL TRADES <span className="dim">· your Bitpanda account</span></h3>
+      {!trades.length && <div className="empty small">no real trades yet</div>}
+      <div className="scroll" style={{ maxHeight: 340 }}>
         <table>
           <tbody>
             {trades.map((t, i) => (
-              <tr key={i} className={`click ${t.mode === "live" ? "live-row" : ""}`} onClick={() => setFocus(t.symbol)}>
-                <td className="dim">{fmt.time(t.ts)}</td>
+              <tr key={i} className="click live-row" onClick={() => setFocus(t.symbol)} title={t.reason}>
+                <td className="dim">{new Date(t.ts * 1000).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</td>
                 <td className={t.side === "BUY" ? "up" : "down"}>{t.side}</td>
                 <td><b>{t.symbol}</b></td>
-                <td>{fmt.usd(t.notional)}</td>
-                <td className={t.pnl > 0 ? "up" : t.pnl < 0 ? "down" : "dim"}>{t.pnl == null ? "" : fmt.usd(t.pnl)}</td>
-                <td className="dim reason" title={t.reason}>{t.mode === "live" ? "LIVE" : t.reason}</td>
+                <td>{t.notional?.toFixed(2)} {cur}</td>
+                <td className="dim reason">{t.reason}</td>
               </tr>
             ))}
           </tbody>
@@ -386,9 +374,8 @@ function Feed({ log }) {
   const [filter, setFilter] = useState("all");
   const shown = useMemo(() => log.filter((l) => filter === "all"
     || (filter === "trade" && (l.level === "trade" || l.level === "live"))
-    || (filter === "ai" && ["News Hunter", "The Professor", "Optimizer"].includes(l.agent))
+    || (filter === "ai" && ["News Hunter", "The Professor"].includes(l.agent))
     || (filter === "warn" && (l.level === "warn" || l.level === "error"))).slice().reverse(), [log, filter]);
-  // newest on top: stay pinned to the top unless the reader scrolled down to read older lines
   useEffect(() => {
     const el = ref.current;
     if (el && el.scrollTop < 120) el.scrollTop = 0;
@@ -412,52 +399,27 @@ function Feed({ log }) {
   );
 }
 
-function News({ state, setFocus }) {
-  const [tab, setTab] = useState("news");
-  const news = [...(state.news || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
-  const hype = state.hype || {};
-  const mentions = Object.entries(hype.mentions || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).slice(0, 8);
+const EVENT_LABEL = { hack: "HACK", delisting: "DELISTING", listing: "listing", regulation: "regulation", partnership: "partnership", upgrade: "upgrade", macro: "macro" };
+
+function News({ news, setFocus }) {
+  const sorted = [...news].sort((a, b) => (b.ts || 0) - (a.ts || 0));
   return (
     <>
-      <div className="row-head">
-        <h3>{tab === "news" ? "NEWS, RATED" : "SOCIAL BUZZ"} <span className="dim">· newest on top</span></h3>
-        <Tabs value={tab} options={[["news", "news"], ["hype", "buzz"]]} onChange={setTab} />
-      </div>
-      <div className="scroll" style={{ maxHeight: 330 }}>
-        {tab === "news" && (news.length ? news.map((n, i) => (
-          <div key={i} className="news-item">
+      <h3>NEWS, RATED <span className="dim">· by the News Hunter · hacks and delistings go to the Guardian</span></h3>
+      <div className="scroll" style={{ maxHeight: 340 }}>
+        {sorted.length ? sorted.map((n, i) => (
+          <div key={i} className={`news-item ${["hack", "delisting"].includes(n.event) ? "alarm" : ""}`}>
             <div className="news-meta">
               <span className={`sent ${n.sentiment > 0.1 ? "up" : n.sentiment < -0.1 ? "down" : "dim"}`}>
-                {n.sentiment > 0.1 ? "▲" : n.sentiment < -0.1 ? "▼" : "•"} {(n.impact * 100).toFixed(0)}%
+                {n.sentiment > 0.1 ? "▲" : n.sentiment < -0.1 ? "▼" : "•"} {((n.impact || 0) * 100).toFixed(0)}%
               </span>
-              {n.symbols.map((s) => <button key={s} className="tag" onClick={() => setFocus(s)}>{s}</button>)}
+              {n.event && n.event !== "none" && <span className={`tag ${["hack", "delisting"].includes(n.event) ? "down" : ""}`}>{EVENT_LABEL[n.event] || n.event}</span>}
+              {(n.symbols || []).map((s) => <button key={s} className="tag" onClick={() => setFocus(s)}>{s}</button>)}
               <span className="dim">{n.source} · {ago(n.ts)}{n.ai ? "" : " · keywords"}</span>
             </div>
             <a href={n.link?.startsWith("http") ? n.link : undefined} target="_blank" rel="noreferrer">{n.title}</a>
           </div>
-        )) : <div className="empty small">no rated headlines yet</div>)}
-        {tab === "hype" && (
-          <>
-            <p className="dim small">Trending on CoinGecko: {(hype.trending || []).join(", ") || "–"}</p>
-            <table>
-              <tbody>
-                {mentions.map(([s, v]) => (
-                  <tr key={s} className="click" onClick={() => setFocus(s)}>
-                    <td><b>{s}</b></td><td>{v} mentions</td>
-                    <td className={pctColor(hype.scores?.[s])}>{hype.scores?.[s] != null ? `hype ${hype.scores[s] >= 0 ? "+" : ""}${hype.scores[s]}` : ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <h3 style={{ marginTop: 10 }}>HOT POSTS</h3>
-            {(hype.posts || []).map((p, i) => (
-              <div key={i} className="news-item">
-                <div className="news-meta"><span className="dim">r/{p.sub}</span>{p.symbols.map((s) => <span key={s} className="tag">{s}</span>)}</div>
-                <span>{p.title}</span>
-              </div>
-            ))}
-          </>
-        )}
+        )) : <div className="empty small">no rated headlines yet</div>}
       </div>
     </>
   );

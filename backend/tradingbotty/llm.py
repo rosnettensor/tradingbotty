@@ -24,6 +24,7 @@ class Budget:
     def __init__(self, db, cfg: dict):
         self.db = db
         self.cfg = cfg  # read live, so dashboard changes apply at once
+        self.profit = lambda: 0.0  # the bot's own real gain, set by the engine
 
     @property
     def total(self) -> float:
@@ -45,11 +46,8 @@ class Budget:
         return self.db.query("SELECT COALESCE(SUM(cost_usd),0) s FROM llm_calls WHERE ts>?", (since,))[0]["s"]
 
     def realized_profit(self) -> float:
-        # profit of whatever drives the real decisions (the champion), across paper and live
-        rows = self.db.query(
-            "SELECT COALESCE(SUM(t.pnl),0) p FROM trades t JOIN variants v ON v.id=t.variant_id WHERE v.is_champion=1"
-        )
-        return rows[0]["p"]
+        # the bot's own gain on the real account (coin price swings excluded): 10% of it grows the AI budget
+        return float(self.profit() or 0.0)
 
     def cap_total(self) -> float:
         return self.total + self.share * max(0.0, self.realized_profit())

@@ -70,100 +70,86 @@ function useWidth(deps) {
   return [box, W];
 }
 
-// Price line with buy/sell markers and a hover readout. candles: [[ts, close]], trades: [{ts, side, price, ...}]
-export function PriceChart({ candles, trades = [], height = 240, showAll = false }) {
-  const [box, W] = useWidth([candles.length < 2]);
+// Daily candles with the Daily Brain's lines: buy above the 20-day high (dashed green), sell under the 10-day low
+// (dashed red), today's live price as a last candle, and the bot's real trades as arrows.
+export function DailyChart({ d, entry = 20, exit = 10, height = 260 }) {
+  const [box, W] = useWidth([!!d]);
   const [hover, setHover] = useState(null);
-  if (!candles || candles.length < 2) return <div ref={box} className="empty" style={{ height }}>no price history yet</div>;
-  const H = height, padL = 58, padB = 20, padT = 10, padR = 12;
-  const xs = candles.map((c) => c[0]), ys = candles.map((c) => c[1]);
-  const x0 = xs[0], x1 = xs[xs.length - 1];
-  let y0 = Math.min(...ys), y1 = Math.max(...ys);
-  if (y1 - y0 < y1 * 1e-6) { y0 *= 0.999; y1 *= 1.001; }
-  const pad = (y1 - y0) * 0.1; y0 -= pad; y1 += pad;
-  const sx = (x) => padL + ((x - x0) / (x1 - x0 || 1)) * (W - padL - padR);
+  if (!d || !d.c?.length) return <div ref={box} className="empty" style={{ height }}>loading daily candles…</div>;
+  const n = d.c.length;
+  const days = [...d.days], o = [...d.o], h = [...d.h], l = [...d.l], c = [...d.c];
+  if (d.live && Date.now() / 1000 - days[n - 1] > 86400 && d.live < c[n - 1] * 2 && d.live > c[n - 1] / 2) {  // today, not closed yet
+    const last = c[n - 1];
+    days.push(days[n - 1] + 86400); o.push(last); c.push(d.live); h.push(Math.max(last, d.live)); l.push(Math.min(last, d.live));
+  }
+  const N = c.length;
+  const hiLine = c.map((_, i) => (i >= entry ? Math.max(...h.slice(i - entry, i).filter((x) => x != null)) : null));
+  const loLine = c.map((_, i) => (i >= exit ? Math.min(...l.slice(i - exit, i).filter((x) => x != null)) : null));
+  const vals = [...h, ...l, ...hiLine, ...loLine].filter((x) => x != null && isFinite(x));
+  let y0 = Math.min(...vals), y1 = Math.max(...vals);
+  const pad = (y1 - y0) * 0.06 || y1 * 0.01; y0 -= pad; y1 += pad;
+  const H = height, padL = 58, padB = 20, padT = 8, padR = 10;
+  const cw = (W - padL - padR) / N;
+  const sx = (i) => padL + (i + 0.5) * cw;
   const sy = (y) => padT + (1 - (y - y0) / (y1 - y0)) * (H - padT - padB);
-  const line = candles.map((c) => `${sx(c[0]).toFixed(1)},${sy(c[1]).toFixed(1)}`).join(" ");
-  const area = `${sx(x0)},${H - padB} ${line} ${sx(x1)},${H - padB}`;
-  const up = ys[ys.length - 1] >= ys[0];
-  const color = up ? "var(--green)" : "var(--red)";
-  const shown = trades.filter((t) => (showAll || t.champion) && t.ts >= x0 - 60);
-  const ticks = [0, 0.33, 0.66, 1].map((f) => y0 + pad + f * (y1 - y0 - 2 * pad));
+  const path = (arr) => arr.map((v, i) => (v == null ? null : `${sx(i).toFixed(1)},${sy(v).toFixed(1)}`)).filter(Boolean).join(" ");
   const pf = (p) => (p >= 1000 ? p.toFixed(0) : p >= 1 ? p.toFixed(2) : p.toPrecision(3));
-  const tf = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const df = (ts) => new Date(ts * 1000).toLocaleDateString([], { day: "2-digit", month: "short" });
-  const multiDay = x1 - x0 > 86400;
+  const ticks = [0.1, 0.4, 0.7, 0.95].map((f) => y0 + f * (y1 - y0));
+  const idx = (ts) => Math.max(0, Math.min(N - 1, Math.floor((ts - days[0]) / 86400)));
   const onMove = (e) => {
     const r = e.currentTarget.getBoundingClientRect();
-    const t = x0 + ((e.clientX - r.left - padL) / (W - padL - padR)) * (x1 - x0);
-    let i = 0, best = Infinity;
-    for (let k = 0; k < candles.length; k++) { const d = Math.abs(candles[k][0] - t); if (d < best) { best = d; i = k; } }
-    const near = shown.find((tr) => Math.abs(sx(tr.ts) - sx(candles[i][0])) < 6);
-    setHover({ c: candles[i], near });
+    const i = Math.max(0, Math.min(N - 1, Math.floor((e.clientX - r.left - padL) / cw)));
+    setHover(i);
   };
-  const gid = `g${Math.round(x0)}${up ? "u" : "d"}`;
   return (
     <div ref={box} className="pricechart" style={{ height: H }}>
       <svg width={W} height={H} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
-        <defs>
-          <linearGradient id={gid} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={up ? "#39ff88" : "#ff3b5c"} stopOpacity="0.28" />
-            <stop offset="100%" stopColor={up ? "#39ff88" : "#ff3b5c"} stopOpacity="0" />
-          </linearGradient>
-        </defs>
         {ticks.map((t) => (
           <g key={t}>
             <line x1={padL} x2={W - padR} y1={sy(t)} y2={sy(t)} className="grid" />
             <text x={padL - 6} y={sy(t) + 4} className="axis" textAnchor="end">{pf(t)}</text>
           </g>
         ))}
-        <polygon points={area} fill={`url(#${gid})`} />
-        <polyline points={line} fill="none" stroke={color} strokeWidth="1.6" />
-        {shown.map((t, i) => {
-          const x = sx(Math.max(x0, Math.min(x1, t.ts))), y = sy(t.price);
-          const buy = t.side === "BUY";
-          const s = t.champion ? 7 : 4;
+        <polyline points={path(hiLine)} fill="none" stroke="var(--green)" strokeDasharray="4 3" strokeWidth="1.2" opacity="0.8" />
+        <polyline points={path(loLine)} fill="none" stroke="var(--red)" strokeDasharray="4 3" strokeWidth="1.2" opacity="0.8" />
+        {c.map((cl, i) => {
+          if (cl == null || o[i] == null) return null;
+          const up = cl >= o[i];
+          const col = up ? "var(--green)" : "var(--red)";
+          const x = sx(i), bw = Math.max(1, cw * 0.62);
           return (
-            <g key={i} className={`marker ${buy ? "buy" : "sell"} ${t.champion ? "champ" : ""}`}>
-              <line x1={x} x2={x} y1={padT} y2={H - padB} className="marker-line" />
-              <polygon points={buy ? `${x},${y + 3} ${x - s},${y + 3 + s * 1.5} ${x + s},${y + 3 + s * 1.5}` : `${x},${y - 3} ${x - s},${y - 3 - s * 1.5} ${x + s},${y - 3 - s * 1.5}`} />
+            <g key={i} opacity={i === N - 1 && N > n ? 0.55 : 1}>
+              <line x1={x} x2={x} y1={sy(h[i] ?? cl)} y2={sy(l[i] ?? cl)} stroke={col} strokeWidth="1" />
+              <rect x={x - bw / 2} width={bw} y={sy(Math.max(o[i], cl))} height={Math.max(1, Math.abs(sy(o[i]) - sy(cl)))} fill={col} />
             </g>
           );
         })}
-        <text x={padL} y={H - 4} className="axis">{multiDay ? df(x0) + " " : ""}{tf(x0)}</text>
-        <text x={W - padR} y={H - 4} className="axis" textAnchor="end">{multiDay ? df(x1) + " " : ""}{tf(x1)}</text>
-        {hover && (
-          <g>
-            <line x1={sx(hover.c[0])} x2={sx(hover.c[0])} y1={padT} y2={H - padB} className="cross" />
-            <circle cx={sx(hover.c[0])} cy={sy(hover.c[1])} r="3.5" fill={color} />
-          </g>
-        )}
+        {(d.trades || []).map((t, k) => {
+          const i = idx(t.ts), buy = t.side === "BUY";
+          const y = sy(t.price || c[i]);
+          const x = sx(i);
+          return (
+            <g key={k} className={`marker ${buy ? "buy" : "sell"} champ`}>
+              <polygon points={buy ? `${x},${y + 4} ${x - 6},${y + 14} ${x + 6},${y + 14}` : `${x},${y - 4} ${x - 6},${y - 14} ${x + 6},${y - 14}`} />
+            </g>
+          );
+        })}
+        <text x={padL} y={H - 4} className="axis">{df(days[0])}</text>
+        <text x={W - padR} y={H - 4} className="axis" textAnchor="end">{N > n ? "today (live)" : df(days[N - 1])}</text>
+        {hover != null && <line x1={sx(hover)} x2={sx(hover)} y1={padT} y2={H - padB} className="cross" />}
       </svg>
-      {hover && (
-        <div className="chart-tip" style={{ left: Math.min(W - 190, Math.max(0, sx(hover.c[0]) + 10)) }}>
-          <div>{multiDay ? df(hover.c[0]) + " " : ""}{tf(hover.c[0])} · <b>{pf(hover.c[1])}</b></div>
-          {hover.near && (
-            <div className={hover.near.side === "BUY" ? "up" : "down"}>
-              {hover.near.variant ? `${hover.near.variant}: ` : ""}{hover.near.side} ${hover.near.notional?.toFixed?.(2)}
-              {hover.near.pnl != null ? ` (P&L ${hover.near.pnl >= 0 ? "+" : ""}${hover.near.pnl.toFixed(2)})` : ""}
-              <div className="dim">{hover.near.reason}</div>
-            </div>
-          )}
+      {hover != null && (
+        <div className="chart-tip" style={{ left: Math.min(W - 210, Math.max(0, sx(hover) + 10)) }}>
+          <div>{hover === N - 1 && N > n ? "today, live" : df(days[hover])} · close <b>{pf(c[hover])}</b></div>
+          <div className="dim">high {pf(h[hover])} · low {pf(l[hover])}</div>
+          {hiLine[hover] != null && <div className="up">buy above {pf(hiLine[hover])} ({entry}-day high)</div>}
+          {loLine[hover] != null && <div className="down">sell under {pf(loLine[hover])} ({exit}-day low)</div>}
+          {(d.trades || []).filter((t) => idx(t.ts) === hover).map((t, k) => (
+            <div key={k} className={t.side === "BUY" ? "up" : "down"}>{t.side} {t.notional?.toFixed(2)} · {t.reason}</div>
+          ))}
         </div>
       )}
     </div>
-  );
-}
-
-// Tiny ring gauge, value 0..1
-export function Ring({ value, size = 44, color = "var(--cyan)", label }) {
-  const r = size / 2 - 4, c = 2 * Math.PI * r;
-  return (
-    <svg width={size} height={size} className="ring">
-      <circle cx={size / 2} cy={size / 2} r={r} className="ring-bg" />
-      <circle cx={size / 2} cy={size / 2} r={r} stroke={color} strokeDasharray={`${c * Math.max(0, Math.min(1, value))} ${c}`}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`} className="ring-fg" />
-      <text x="50%" y="54%" textAnchor="middle" dominantBaseline="middle">{label}</text>
-    </svg>
   );
 }

@@ -41,6 +41,24 @@ class Candles:
                 out.o[sym][i], out.h[sym][i], out.l[sym][i], out.c[sym][i] = o, h, l, c
         return out
 
+    def attach(self, alt: dict[str, dict[int, float]], stale_days: int = 10) -> None:
+        """Line up alternative data with the candle calendar. The value used on day i is the newest one from day
+        i-1 or earlier (at most `stale_days` old): a day's figure is only known after that day, so nothing peeks."""
+        self.alt = {}
+        for key, by_day in alt.items():
+            col: list[float | None] = []
+            last, last_d = None, None
+            for d in self.days:
+                prev = int(d) - 86400
+                if prev in by_day:
+                    last, last_d = by_day[prev], prev
+                col.append(last if last_d is not None and prev - last_d <= stale_days * 86400 else None)
+            self.alt[key] = col
+
+    def feat(self, key: str, i: int) -> float | None:
+        col = getattr(self, "alt", {}).get(key)
+        return col[i] if col else None
+
     def day_no(self, i: int) -> int:
         return int(self.days[i] // 86400)
 
@@ -266,12 +284,29 @@ class Donchian(Strategy):
     """Time-series trend per coin: buy a breakout to a new N-day high, sell on an M-day low or a 3xATR trailing stop."""
     group = "Trend following"
 
-    def __init__(self, entry: int, exit_: int, slots: int = 3, regime: int | None = 50, atr_mult: float = 3.0):
+    # extra entry rules from alternative data: (name suffix, explanation, check(cd, sym, i) -> may buy)
+    FILTERS = {
+        "funding": (", skip overheated funding", " Skips a buy while that coin's futures funding averaged above "
+                    "0.03% per 8 hours over the last week: too many leveraged buyers already.",
+                    lambda cd, s, i: _avg_feat(cd, f"funding:{s}", i, 7, default=0.0) <= 0.0003),
+        "greed": (", no buys in extreme greed", " No new buys while the Fear & Greed index is above 80.",
+                  lambda cd, s, i: (cd.feat("fear_greed", i) or 0) <= 80),
+        "stables": (", only while stablecoins grow", " New buys only while total stablecoin supply grew over the "
+                    "last 30 days: fresh money waiting to buy.",
+                    lambda cd, s, i: _growth(cd, "stablecoins", i, 30) is None or _growth(cd, "stablecoins", i, 30) > 0),
+    }
+
+    def __init__(self, entry: int, exit_: int, slots: int = 3, regime: int | None = 50, atr_mult: float = 3.0,
+                 filt: str | None = None):
         self.entry, self.exit, self.slots, self.regime, self.atr_mult = entry, exit_, slots, regime, atr_mult
+        self.filt = filt
         f = f", BTC filter {regime}d" if regime else ", no filter"
-        self.name = f"Breakout {entry}/{exit_} days, {slots} slots{f}"
+        self.name = f"Breakout {entry}/{exit_} days, {slots} slots{f}" + (self.FILTERS[filt][0] if filt else "")
         self.explain = (f"Buys a coin at a new {entry}-day high, sells at an {exit_}-day low or {atr_mult:g}x its "
-                        f"daily range below the peak. At most {slots} coins at once.")
+                        f"daily range below the peak. At most {slots} coins at once."
+                        + (self.FILTERS[filt][1] if filt else ""))
+        if filt:
+            self.group = "Trend + alternative data"
         self.peak: dict[str, float] = {}
 
     def target(self, cd, i, held):
@@ -298,12 +333,22 @@ class Donchian(Strategy):
                     continue
                 highs = [x for x in cd.h[s][i - self.entry:i] if x is not None]
                 xs = cd.closes(s, i, 31)
-                if highs and xs and cd.c[s][i] > max(highs):
+                if highs and xs and cd.c[s][i] > max(highs) and (not self.filt or self.FILTERS[self.filt][2](cd, s, i)):
                     cands.append((xs[-1] / xs[0], s))
             for _, s in sorted(cands, reverse=True)[:self.slots - len(keep)]:
                 keep[s] = 1 / self.slots
                 self.peak[s] = cd.c[s][i]
         return keep if set(keep) != set(held) else None
+
+
+def _avg_feat(cd: Candles, key: str, i: int, n: int, default: float | None = None) -> float | None:
+    xs = [x for x in (cd.feat(key, k) for k in range(max(0, i - n + 1), i + 1)) if x is not None]
+    return sum(xs) / len(xs) if xs else default
+
+
+def _growth(cd: Candles, key: str, i: int, n: int) -> float | None:
+    a, b = cd.feat(key, i - n) if i >= n else None, cd.feat(key, i)
+    return b / a - 1 if a and b else None
 
 
 def all_strategies() -> list[Strategy]:
@@ -319,6 +364,7 @@ def all_strategies() -> list[Strategy]:
         out.append(Donchian(e, x))
     out += [Donchian(20, 10, regime=None), Donchian(20, 10, slots=4), Donchian(55, 20, slots=2),
             Donchian(15, 7), Donchian(25, 12), Donchian(20, 10, regime=100)]
+    out += [Donchian(20, 10, filt=f) for f in Donchian.FILTERS]  # the Pattern Hunter's data, tested as trading rules
     return out
 
 

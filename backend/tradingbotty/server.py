@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -14,7 +13,6 @@ from pydantic import BaseModel
 from .config import ROOT, load_settings
 from .engine import Engine
 from .llm import PRICES
-from .strategy import StrategyConfig
 
 DIST = ROOT / "frontend" / "dist"
 MEDIA = ROOT / "media"
@@ -43,10 +41,6 @@ class ToggleIn(BaseModel):
     on: bool
 
 
-class BuyNowIn(BaseModel):
-    amount: float
-
-
 class ControlsIn(BaseModel):
     changes: dict
 
@@ -65,33 +59,9 @@ class AgentIn(BaseModel):
     run_now: bool = False
 
 
-class VariantConfigIn(BaseModel):
-    changes: dict
-    as_new: bool = False
-    name: str = ""
-
-
-class BacktestIn(BaseModel):
-    variant_id: str | None = None
-    config: dict | None = None
-    hours: float = 24
-    n: int = 40
-
-
-def _cfg_for(body: BacktestIn) -> StrategyConfig:
-    v = engine.variants.get(body.variant_id or "") or engine.champion()
-    base = v.config.to_dict() if v else {}
-    return StrategyConfig.from_dict({**base, **(body.config or {})}).clamped()
-
-
 @app.get("/api/state")
 def get_state():
     return engine.state()
-
-
-@app.get("/api/experiments")
-def get_experiments():
-    return engine.experiments()
 
 
 @app.get("/api/trades")
@@ -112,47 +82,6 @@ def kill(body: ToggleIn):
     return {"ok": True, "kill_switch": body.on}
 
 
-@app.post("/api/buy_now")
-async def buy_now(body: BuyNowIn):
-    """Your button: a real buy of `amount` in the best coin right now (or within an hour, or a clear reason why not)."""
-    try:
-        return await engine.force_buy(body.amount)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-
-@app.post("/api/buy_now/cancel")
-def buy_now_cancel():
-    engine.cancel_force_buy()
-    return {"ok": True}
-
-
-@app.post("/api/auto_promote")
-def auto_promote(body: ToggleIn):
-    engine.db.set("auto_promote", body.on)
-    return {"ok": True}
-
-
-@app.post("/api/promote/{vid}")
-def promote(vid: str):
-    try:
-        engine.promote(vid)
-    except KeyError:
-        raise HTTPException(404, "no such variant")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return {"ok": True}
-
-
-@app.post("/api/variants/{vid}/clone")
-def clone(vid: str):
-    v = engine.variants.get(vid)
-    if not v:
-        raise HTTPException(404, "no such variant")
-    child = engine.add_variant(v.config.mutate(engine.agent("optimizer").rng), parent_id=vid, note="cloned by you")
-    return {"ok": True, "id": child.id, "name": child.name}
-
-
 @app.get("/api/controls")
 def get_controls():
     return engine.controls()
@@ -169,11 +98,6 @@ def set_controls(body: ControlsIn):
 @app.get("/api/sources")
 def get_sources():
     return engine.sources_info()
-
-
-@app.get("/api/radar")
-def get_radar():
-    return engine.radar()
 
 
 @app.post("/api/sources/add")
@@ -199,28 +123,6 @@ def set_agent(aid: str, body: AgentIn):
         raise HTTPException(404, "no such agent")
     except ValueError as e:
         raise HTTPException(400, str(e))
-
-
-@app.post("/api/variants/{vid}/config")
-def set_variant_config(vid: str, body: VariantConfigIn):
-    try:
-        v = engine.set_variant_config(vid, body.changes, body.as_new, body.name)
-    except KeyError:
-        raise HTTPException(404, "no such variant")
-    except (TypeError, ValueError) as e:
-        raise HTTPException(400, str(e))
-    return {"ok": True, "id": v.id, "name": v.name, "config": v.config.to_dict()}
-
-
-@app.post("/api/variants/{vid}/retire")
-def retire(vid: str):
-    v = engine.variants.get(vid)
-    if not v:
-        raise HTTPException(404, "no such variant")
-    if v.champion:
-        raise HTTPException(400, "promote another strategy before retiring the champion")
-    engine.retire_variant(vid)
-    return {"ok": True}
 
 
 class BrainIn(BaseModel):
@@ -249,28 +151,24 @@ async def research_get():
     return engine.db.get("research", {}) or {}
 
 
-@app.post("/api/backtest")
-async def run_backtest(body: BacktestIn):
-    try:
-        return await asyncio.to_thread(engine.backtest_sync, _cfg_for(body), max(2.0, min(168.0, body.hours)))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+@app.get("/api/patterns")
+async def patterns_get():
+    return engine.db.get("patterns", {}) or {}
 
 
-@app.post("/api/autotune")
-async def run_autotune(body: BacktestIn):
-    try:
-        ranked = await asyncio.to_thread(engine.autotune_sync, _cfg_for(body), max(5, min(120, body.n)),
-                                         max(2.0, min(168.0, body.hours)))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    top = ranked[:12]
-    current = next((r for r in ranked if r["label"] == "current settings"), None)
-    if current and current not in top:
-        top.append(current)
-    for i, r in enumerate(ranked):
-        r["rank"] = i + 1
-    return {"results": top, "tested": len(ranked)}
+@app.get("/api/report")
+def report():
+    return {"text": engine.daily_report(), "telegram": bool(settings.telegram_token and settings.telegram_chat)}
+
+
+@app.post("/api/telegram/test")
+async def telegram_test():
+    if not (settings.telegram_token and settings.telegram_chat):
+        raise HTTPException(400, "Add TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to .env and restart first.")
+    ok = await engine.notify("TradingBotty test message: your phone briefing works.\n\n" + engine.daily_report())
+    if not ok:
+        raise HTTPException(400, "Telegram refused the message: check the token and chat id (see the agent feed).")
+    return {"ok": True}
 
 
 @app.get("/api/candles/{symbol}")
@@ -279,6 +177,16 @@ def candles(symbol: str, minutes: int = 240):
         return engine.candles(symbol.upper(), max(30, min(7 * 1440, minutes)))
     except KeyError:
         raise HTTPException(404, "unknown symbol")
+
+
+@app.get("/api/daily/{symbol}")
+async def daily(symbol: str, days: int = 120):
+    try:
+        return await engine.daily(symbol.upper(), max(30, min(1000, days)))
+    except KeyError:
+        raise HTTPException(404, "unknown symbol")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/media")

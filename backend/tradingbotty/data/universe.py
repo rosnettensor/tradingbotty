@@ -107,35 +107,3 @@ class Universe:
                         "volume_usd": vol, "spread_pct": max(0.01, 40 / math.sqrt(vol)),
                         "range_pos": rnd.random(), "high": 0, "low": 0})
         return out
-
-
-def rank(rows: list[dict], *, fusion: set[str] | None, min_volume_usd: float, max_spread_pct: float,
-         trending: list[str] = (), mentions: dict | None = None) -> list[dict]:
-    """Score every coin. heat > 0 = worth a closer look. Coins that fail a hard rule get heat None and a reason."""
-    mentions = mentions or {}
-    out = []
-    for r in rows:
-        r = dict(r)
-        s = r["symbol"]
-        r["on_fusion"] = None if fusion is None else s in fusion
-        why = None
-        if fusion is not None and s not in fusion:
-            why = "not on Fusion"
-        elif r["volume_usd"] < min_volume_usd:
-            why = "too little trading"
-        elif r["spread_pct"] > max_spread_pct:
-            why = "spread too wide"
-        elif r["change"] > 60:
-            why = "already pumped"
-        if why:
-            r["heat"], r["why"] = None, why
-        else:
-            momentum = math.tanh(r["change"] / 12)               # +12% in 24h ~ 0.76
-            position = (r["range_pos"] - 0.5) * 2                  # near the 24h high = +1
-            liquidity = min(1.0, math.log10(max(r["volume_usd"], 1) / min_volume_usd + 1) / 2)
-            buzz = (0.3 if s in trending else 0.0) + min(0.3, mentions.get(s, 0) * 0.05)
-            r["heat"] = round(0.45 * momentum + 0.25 * position + 0.2 * liquidity + buzz, 3)
-            r["why"] = ""
-        out.append(r)
-    out.sort(key=lambda r: (r["heat"] is not None, r["heat"] or 0, r["volume_usd"]), reverse=True)
-    return out

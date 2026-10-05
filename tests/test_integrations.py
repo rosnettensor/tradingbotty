@@ -45,7 +45,7 @@ def test_llm_records_cost_and_parses(tmp_path):
 
 def test_news_hunter_with_ai(tmp_path):
     from tradingbotty.agents.base import Blackboard
-    from tradingbotty.agents.team import NewsHunter
+    from tradingbotty.agents.crew import NewsHunter
     from tradingbotty.data.social import Headline
 
     db = DB(tmp_path / "n.db")
@@ -56,7 +56,7 @@ def test_news_hunter_with_ai(tmp_path):
         "takeaway": "SOL ETF news",
     }))
     ctx = SimpleNamespace(db=db, llm=llm, bus=SimpleNamespace(publish=lambda *a: None),
-                          prices=SimpleNamespace(quotes={"SOL": 1, "BTC": 1}), settings={"ai": {"news_ai": True}})
+                          news_symbols=lambda: ["SOL", "BTC"], settings={"ai": {"news_ai": True}})
     agent = NewsHunter(ctx)
     agent.queue([Headline("Test", "Solana ETF approved", "x", time.time(), ["SOL"])])
     bb = Blackboard()
@@ -105,45 +105,6 @@ def test_bitpanda_buy_sell_flow():
         assert await b.sell_fraction("BTC", 1.0) is None  # nothing held: no short
 
     asyncio.run(run())
-
-
-def test_reddit_rss_fallback():
-    from tradingbotty.data.social import SocialFeed, parse_atom
-
-    atom = b"""<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
-    <entry><title>Solana to the moon</title><content type="html">&lt;p&gt;SOL is pumping, Bitcoin too&lt;/p&gt;</content></entry>
-    <entry><title>Daily discussion</title><content>nothing</content></entry></feed>"""
-    assert parse_atom(atom)[0][0] == "Solana to the moon"
-
-    def handler(req):
-        if req.url.path.endswith(".json"):
-            return httpx.Response(403, text="<html>blocked</html>")
-        if req.url.path.endswith(".rss"):
-            return httpx.Response(200, content=atom)
-        if "coingecko" in req.url.host:
-            return httpx.Response(200, json={"coins": [{"item": {"symbol": "sol"}}]})
-        return httpx.Response(200, json={"data": [{"value": "60", "value_classification": "Greed"}]})
-
-    feed = SocialFeed(["SOL", "BTC", "ETH"])
-    feed.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    asyncio.run(feed.poll_hype())
-    assert feed.healthy["reddit"]
-    assert feed.mention_counts["SOL"] > 0 and feed.mention_counts["BTC"] > 0
-    assert feed.trending == ["SOL"] and feed.fear_greed == 60
-
-
-def test_professor_waits_for_data(tmp_path):
-    from tradingbotty.agents.base import Blackboard
-    from tradingbotty.agents.team import Professor
-
-    calls = []
-    llm = SimpleNamespace(json_call=lambda *a, **k: calls.append(1))
-    ctx = SimpleNamespace(db=DB(tmp_path / "p.db"), llm=llm, bus=SimpleNamespace(publish=lambda *a: None),
-                          social=SimpleNamespace(fear_greed=None), settings={"ai": {"professor_on": True}})
-    prof = Professor(ctx)
-    prof.next_due = 0  # pretend warm-up is over
-    asyncio.run(prof.step(Blackboard()))
-    assert not calls and "waiting" in prof.summary
 
 
 def test_news_skips_stale_and_duplicate_headlines():
@@ -212,50 +173,4 @@ def test_fusion_buy_sell_flow():
         assert sent[-1]["quantity"] == "0.00020"
         n = len(sent)
         assert await b.sell_fraction("BTC", 1.0, owned=0.0) is None and len(sent) == n
-    asyncio.run(run())
-
-
-def test_live_mirror_never_sells_your_own_coins():
-    from types import SimpleNamespace
-    from tradingbotty.engine import Engine
-
-    class FakeLive:
-        currency = "CHF"
-        def __init__(self):
-            self.bal = {"FIAT": 30.0, "BTC": 0.00345}  # 0.00345 BTC was yours before the bot
-            self.sells = []
-        async def balances(self):
-            return dict(self.bal)
-        async def buy(self, symbol, amount):
-            self.bal["FIAT"] -= amount
-            self.bal[symbol] = self.bal.get(symbol, 0) + 0.0001
-            return {"execution": {"quantity": 0.0001, "price": amount / 0.0001, "notional": amount, "fee": 0}}
-        async def sell_fraction(self, symbol, fraction, owned=None):
-            qty = min(self.bal.get(symbol, 0), owned) * fraction
-            self.sells.append(qty)
-            self.bal[symbol] -= qty
-            return {"execution": {"quantity": qty, "price": 1, "notional": qty, "fee": 0}}
-
-    store = {}
-    eng = Engine.__new__(Engine)
-    eng.live = FakeLive()
-    eng.live_errors = 0
-    eng.settings = {"risk": {"min_order_usd": 1},
-                    "live": {"max_invest": 25.0, "max_order": 10.0, "max_spread_pct": 1.0, "sell_orphans": True}}
-    eng.agent = lambda _id: SimpleNamespace(say=lambda *a: None)
-    eng.throttled_say = lambda *a: None
-    eng.db = SimpleNamespace(get=lambda k, d=None: store.get(k, d), set=store.__setitem__, execute=lambda *a: None)
-    eng.champion = lambda: SimpleNamespace(id="v1")
-    eng._log = lambda *a: None
-    eng.bus = SimpleNamespace(publish=lambda *a: None)
-
-    async def run():
-        await eng._mirror_live("BTC", "SELL", 1.0)  # bot owns no BTC yet: nothing sold
-        assert eng.live.sells == []
-        await eng._mirror_live("BTC", "BUY", 0.2)
-        await eng._mirror_live("BTC", "SELL", 1.0)
-        assert eng.live.sells == [0.0001]
-        assert abs(eng.live.bal["BTC"] - 0.00345) < 1e-12  # your own BTC untouched
-        await eng._mirror_live("BTC", "SELL", 1.0)
-        assert len(eng.live.sells) == 1
     asyncio.run(run())

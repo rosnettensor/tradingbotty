@@ -1,28 +1,26 @@
 import { useEffect, useState } from "react";
 import { api, fmt, useBot, usePoll } from "./useBot.js";
 import Cockpit from "./Cockpit.jsx";
-import Markets from "./Markets.jsx";
-import Radar from "./Radar.jsx";
 import Agents from "./Agents.jsx";
-import Lab from "./Lab.jsx";
+import Research from "./Research.jsx";
 import Controls from "./Controls.jsx";
-import Insights from "./Insights.jsx";
 import { Sparkline } from "./charts.jsx";
 
-const TABS = ["cockpit", "insights", "radar", "markets", "agents", "lab", "controls"];
+const TABS = ["cockpit", "agents", "research", "controls"];
 
 export default function App() {
   const { state, connected, pulse } = useBot();
   const [media] = usePoll("media", 0);
   const [tab, setTab] = useState(() => {
-    try { return localStorage.getItem("tb-tab") || "cockpit"; } catch { return "cockpit"; }
+    try { const t = localStorage.getItem("tb-tab"); return TABS.includes(t) ? t : "cockpit"; } catch { return "cockpit"; }
   });
   const [focus, setFocus] = useState(() => {
     try { return localStorage.getItem("tb-focus") || null; } catch { return null; }
   });
+  const [agent, setAgent] = useState(null);  // jump to one agent's inspector from anywhere
   useEffect(() => { try { localStorage.setItem("tb-tab", tab); } catch { /* private mode */ } }, [tab]);
   useEffect(() => { try { if (focus) localStorage.setItem("tb-focus", focus); } catch { /* private mode */ } }, [focus]);
-  useEffect(() => {  // keys 1-7 switch tabs
+  useEffect(() => {  // keys 1-4 switch tabs
     const onKey = (e) => {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
       const i = Number(e.key) - 1;
@@ -31,22 +29,20 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  const openAgent = (id) => { setAgent(id); setTab("agents"); };
 
   if (!state) {
-    return <div className="boot"><div className="boot-text">CONNECTING TO TRADINGBOTTY{connected ? "…" : " (is run.py running?)"}</div></div>;
+    return <div className="boot"><div className="boot-text">CONNECTING TO TRADINGBOTTY{connected ? "…" : " (is the bot running?)"}</div></div>;
   }
   return (
     <div className={`app ${state.mode === "live" ? "is-live" : ""}`}>
       {media?.background && <Backdrop src={media.background} />}
       <TopBar state={state} connected={connected} tab={tab} setTab={setTab} logo={media?.logo} />
-      <Ticker items={state.ticker || []} onPick={(s) => { setFocus(s); if (tab !== "markets") setTab("cockpit"); }} />
+      <Ticker items={state.ticker || []} onPick={(s) => { setFocus(s); setTab("cockpit"); }} />
       <main>
-        {tab === "cockpit" && <Cockpit state={state} pulse={pulse} focus={focus} setFocus={setFocus} />}
-        {tab === "insights" && <Insights state={state} setFocus={setFocus} setTab={setTab} />}
-        {tab === "radar" && <Radar state={state} setFocus={setFocus} setTab={setTab} />}
-        {tab === "markets" && <Markets state={state} focus={focus} setFocus={setFocus} />}
-        {tab === "agents" && <Agents nodes={state.nodes || []} avatars={media?.avatars || {}} />}
-        {tab === "lab" && <Lab state={state} />}
+        {tab === "cockpit" && <Cockpit state={state} pulse={pulse} focus={focus} setFocus={setFocus} openAgent={openAgent} />}
+        {tab === "agents" && <Agents state={state} avatars={media?.avatars || {}} want={agent} />}
+        {tab === "research" && <Research state={state} openAgent={openAgent} />}
         {tab === "controls" && <Controls state={state} />}
       </main>
     </div>
@@ -65,20 +61,22 @@ function Backdrop({ src }) {
 function TopBar({ state, connected, tab, setTab, logo }) {
   const [busy, setBusy] = useState(false);
   const b = state.budget || {};
+  const live = state.mode === "live";
   const toggleMode = async () => {
     setBusy(true);
     try {
-      if (state.mode === "live") {
+      if (live) {
+        if (!window.confirm("Switch to STANDBY?\n\nNothing trades while on standby. The bot's coins stay where they are.")) return;
         await api("mode", { mode: "paper" });
       } else {
-        const typed = prompt(
-          "LIVE TRADING uses REAL MONEY on Bitpanda.\n\nThe champion strategy's trades will be copied to your account.\nSpot only: it can lose money but can never put you in debt.\n\nType REAL MONEY to continue:");
+        const typed = window.prompt(
+          "LIVE uses REAL MONEY on Bitpanda Fusion.\n\nThe Daily Brain buys and sells the coins its tested strategy picks, inside your limits (Controls).\nSpot only: it can lose money but can never put you in debt.\n\nType REAL MONEY to continue:");
         if (typed !== "REAL MONEY") return;
         const r = await api("mode", { mode: "live", confirm: typed });
-        if (!r.ok) alert(r.error);
+        if (!r.ok) window.alert(r.error);
       }
     } catch (e) {
-      alert(e.message);
+      window.alert(e.message);
     } finally {
       setBusy(false);
     }
@@ -95,15 +93,16 @@ function TopBar({ state, connected, tab, setTab, logo }) {
       <div className="spacer" />
       {state.simulate && <span className="badge warn" title="Random-walk prices for testing">SIMULATED DATA</span>}
       <span className={`badge ${connected ? "ok" : "bad"}`}>{connected ? "● LINK" : "○ OFFLINE"}</span>
-      <div className="budget" title="AI spend: last 24h vs daily allowance, and total vs your hard cap">
+      <div className="budget" title="AI spend: last 24h vs daily allowance, and total vs your hard cap (grows with 10% of the bot's gains)">
         <span>AI {state.ai ? "" : "(off) "}{fmt.usd(b.spent_today)}/{fmt.usd(b.cap_today)} today</span>
         <div className="bar"><div style={{ width: `${Math.min(100, (b.spent_total / (b.cap_total || 1)) * 100)}%` }} /></div>
         <span className="dim">{fmt.usd(b.spent_total)} of {fmt.usd(b.cap_total)} total</span>
       </div>
-      <button className={`mode ${state.mode}`} onClick={toggleMode} disabled={busy}>
-        {state.mode === "live" ? "● LIVE" : "PAPER"}
+      <button className={`mode ${live ? "live" : "paper"}`} onClick={toggleMode} disabled={busy}
+        title={live ? "Real money is trading. Click for standby." : "Standby: nothing trades. Click to go LIVE."}>
+        {live ? "● LIVE" : "STANDBY"}
       </button>
-      <button className={`kill ${state.kill_switch ? "on" : ""}`} onClick={kill} title="Stops all new buys immediately">
+      <button className={`kill ${state.kill_switch ? "on" : ""}`} onClick={kill} title="Stops all decisions and buys immediately">
         {state.kill_switch ? "KILL SWITCH ON" : "KILL"}
       </button>
     </header>

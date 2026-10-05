@@ -1,10 +1,5 @@
-// Small shared building blocks: sliders, toggles, chip lists, stat tiles, signal bars.
+// Small shared building blocks: sliders, toggles, chip lists, stat tiles, tabs.
 import { useEffect, useState } from "react";
-
-export const SIGNAL_LABELS = {
-  momentum: "Momentum", trend: "Trend", reversion: "Dip", breakout: "Breakout", swing: "Multi-day",
-  hype: "Hype", news: "News", market: "Market", radar: "Radar", relstr: "vs BTC",
-};
 
 // A slider that only reports when you let go, so dragging doesn't spam the bot.
 export function Slider({ label, help, min, max, step, value, onCommit, changed, onReset, int, format, disabled }) {
@@ -99,37 +94,6 @@ export function Stat({ label, value, sub, tone, title }) {
       <div className="stat-label">{label}</div>
       <div className={`stat-value ${tone || ""}`}>{value}</div>
       {sub != null && <div className="stat-sub">{sub}</div>}
-    </div>
-  );
-}
-
-// Horizontal bars centered on zero, one per signal. values: {name: number}, scale: max abs value.
-export function SignalBars({ values, scale = 1, labels = SIGNAL_LABELS, compact }) {
-  return (
-    <div className={`sigbars ${compact ? "compact" : ""}`}>
-      {Object.entries(values).map(([k, v]) => {
-        const w = Math.min(50, (Math.abs(v) / (scale || 1)) * 50);
-        return (
-          <div className="sigbar" key={k} title={`${labels[k] || k}: ${v >= 0 ? "+" : ""}${v.toFixed(3)}`}>
-            {!compact && <span className="sig-name">{labels[k] || k}</span>}
-            <div className="track"><div className={v >= 0 ? "pos" : "neg"} style={{ width: `${w}%`, [v >= 0 ? "left" : "right"]: "50%" }} /></div>
-            {!compact && <span className={`sig-val ${v >= 0 ? "up" : "down"}`}>{v >= 0 ? "+" : ""}{v.toFixed(2)}</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-// Score bar with the strategy's buy and sell thresholds drawn on it.
-export function ScoreBar({ score, entry, exit }) {
-  const pos = (x) => `${Math.max(0, Math.min(100, (x + 1) * 50))}%`;
-  const w = Math.min(50, Math.abs(score) * 50);
-  return (
-    <div className="scorebar">
-      <div className={score >= 0 ? "pos" : "neg"} style={{ width: `${w}%`, [score >= 0 ? "left" : "right"]: "50%" }} />
-      {entry != null && <i className="mark buy" style={{ left: pos(entry) }} title={`buy above ${entry}`} />}
-      {exit != null && <i className="mark sell" style={{ left: pos(exit) }} title={`sell below ${exit}`} />}
     </div>
   );
 }

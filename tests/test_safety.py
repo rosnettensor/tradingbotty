@@ -1,94 +1,31 @@
-"""Safety tests: the bot must never borrow, short, or spend past its AI budget."""
+"""Safety tests: the bot must never borrow, short, sell your coins without permission, or spend past its AI budget."""
 import asyncio
-import random
 import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from tradingbotty.brokers.paper import PaperBroker  # noqa: E402
+from tradingbotty import controls  # noqa: E402
 from tradingbotty.config import load_settings  # noqa: E402
 from tradingbotty.db import DB  # noqa: E402
 from tradingbotty.llm import LLM, Budget  # noqa: E402
-from tradingbotty.strategy import SEED_VARIANTS, StrategyConfig, technical_signals  # noqa: E402
+
+from fakes import FakeFusion, _engine  # noqa: E402
 
 
-def test_paper_cannot_spend_more_than_cash():
-    b = PaperBroker(100, 1.5, 0.05)
-    b.buy("BTC", 60, 50_000)
-    with pytest.raises(ValueError):
-        b.buy("ETH", 41, 2_000)  # only 40 left
-    assert b.cash >= 0
-
-
-def test_paper_cannot_short_or_oversell():
-    b = PaperBroker(100, 1.5, 0.05)
-    with pytest.raises(ValueError):
-        b.sell("BTC", 0.001, 50_000)  # nothing held: no short selling
-    b.buy("BTC", 50, 50_000)
-    qty = b.positions["BTC"].qty
-    with pytest.raises(ValueError):
-        b.sell("BTC", qty * 2, 50_000)
-
-
-def test_round_trip_pays_fees_both_ways():
-    b = PaperBroker(100, 1.5, 0.0)
-    b.buy("BTC", 100, 50_000)
-    fill = b.sell("BTC", b.positions["BTC"].qty, 50_000)
-    assert b.cash == pytest.approx(100 * 0.985 * 0.985)
-    assert fill.pnl == pytest.approx(b.cash - 100)
-
-
-def test_equity_never_negative_under_random_trading():
-    rng = random.Random(7)
-    b = PaperBroker(100, 1.5, 0.05)
-    price = {"A": 10.0, "B": 3.0}
-    for _ in range(2000):
-        for k in price:
-            price[k] *= 1 + rng.gauss(0, 0.05)
-        s = rng.choice(list(price))
-        if rng.random() < 0.5 and b.cash > 1:
-            b.buy(s, rng.uniform(0.5, b.cash), price[s])
-        elif s in b.positions:
-            b.sell(s, b.positions[s].qty * rng.uniform(0.1, 1), price[s])
-        assert b.cash >= -1e-9
-        assert b.equity(price) >= -1e-9
-
-
-def _risk_ctx(tmp_path, kill=False):
-    from tradingbotty.agents.team import RiskOfficer
-    s = load_settings()
-    db = DB(tmp_path / "t.db")
-    ctx = SimpleNamespace(settings=s, db=db, kill_switch=kill, bus=SimpleNamespace(publish=lambda *a: None))
-    return RiskOfficer(ctx)
-
-
-def _variant(cash=100.0):
-    return SimpleNamespace(broker=PaperBroker(cash, 1.5, 0.05), day_start_equity=100.0)
-
-
-def test_risk_caps_position_size(tmp_path):
-    r = _risk_ctx(tmp_path)
-    usd, why = r.check_buy(_variant(), "BTC", 80, {"BTC": 50_000})
-    assert why is None and usd == pytest.approx(25.0)  # 25% of equity
-
-
-def test_risk_kill_switch_blocks_buys(tmp_path):
-    r = _risk_ctx(tmp_path, kill=True)
-    usd, why = r.check_buy(_variant(), "BTC", 10, {"BTC": 50_000})
-    assert usd == 0 and "kill" in why
-
-
-def test_risk_daily_loss_stop(tmp_path):
-    r = _risk_ctx(tmp_path)
-    v = _variant(cash=65.0)  # down 35% vs 100 at day start
-    usd, why = r.check_buy(v, "BTC", 10, {"BTC": 50_000})
-    assert usd == 0 and "daily loss" in why
+def test_controls_are_clamped_and_never_unlock_debt():
+    assert controls.coerce("live.max_order", 9999) == 500
+    assert controls.coerce("live.max_invest", -5) == 2
+    for key in ("risk.allow_margin", "risk.allow_short", "paper.fee_pct"):
+        with pytest.raises(ValueError):
+            controls.coerce(key, True)  # not a dashboard setting at all
+    raw = load_settings().raw
+    controls.apply(raw, {"live.max_order": 40, "nope.nope": 1})
+    assert raw["live"]["max_order"] == 40 and raw["risk"]["allow_margin"] is False
 
 
 def test_budget_blocks_calls_past_cap(tmp_path):
@@ -101,42 +38,81 @@ def test_budget_blocks_calls_past_cap(tmp_path):
     llm = LLM("sk-test", budget, db, "claude-haiku-4-5", "claude-opus-5-5")
     res = asyncio.run(llm.json_call("x", "sys", "p" * 100, {"type": "object"}, max_tokens=100_000))
     assert res == {"_over_budget": True}  # refused before any network call
+    budget.profit = lambda: 50.0          # 10% of the bot's real gain grows the budget
+    assert budget.cap_total() == pytest.approx(6.0)
 
 
-def test_mutations_stay_in_bounds():
-    rng = random.Random(1)
-    cfg = StrategyConfig()
-    for _ in range(500):
-        cfg = cfg.mutate(rng, 0.6)
-        assert 5 <= cfg.position_pct <= 50
-        assert cfg.exit_score < cfg.entry_score
-        assert all(-2 <= w <= 2 for w in cfg.weights().values())
+def test_kill_switch_blocks_every_real_buy(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 100, "live.max_order": 50})
+    e.set_kill_switch(True)
+    with pytest.raises(ValueError, match="kill switch"):
+        asyncio.run(e._live_buy("BTC", 20, "t"))
+    assert not f.buys and "not sent" in e.risk_log[-1]["result"]
 
 
-def test_signals_bounded():
-    rng = random.Random(3)
-    p, closes = 100.0, []
-    for _ in range(600):
-        p *= 1 + rng.gauss(0, 0.01)
-        closes.append(p)
-    sig = technical_signals(closes)
-    for k in ("momentum", "trend", "reversion", "breakout"):
-        assert -1 <= sig[k] <= 1
-    assert set(SEED_VARIANTS) >= {"Balanced"}
+def test_caps_spread_and_cash_are_checked_on_every_buy(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 30, "live.max_order": 50, "live.use_my_coins": False})
+    amount, _ = asyncio.run(e._live_buy("BTC", 25, "t"))
+    assert amount == 25 and e.risk_log[-1]["result"] == "sent"
+    assert [c[0] for c in e.risk_log[-1]["checks"]] == ["kill switch", "cap on money in coins", "Fusion minimum",
+                                                       "spread", "cash incl. fee room"]
+    amount, _ = asyncio.run(e._live_buy("SOL", 25, "t"))           # only 5 left under the 30 cap
+    assert amount == 5
+    with pytest.raises(ValueError, match="minimum|cap"):           # cap full
+        asyncio.run(e._live_buy("SOL", 25, "t"))
+    e.db.set("live_cost", {})
+    f.spread = 3.0
+    with pytest.raises(ValueError, match="spread"):                # 3% > 1% limit
+        asyncio.run(e._live_buy("BTC", 10, "t"))
+    f.spread = 0.1
+    f.bal["FIAT"] = 12.0
+    amount, _ = asyncio.run(e._live_buy("BTC", 20, "t"))           # never more than 99.5% of the cash
+    assert amount == pytest.approx(12 * 0.995) and f.bal["FIAT"] >= 0
 
 
-def test_mutation_keeps_exit_threshold_negative_side():
-    rng = random.Random(5)
-    neg = sum(StrategyConfig().mutate(rng).exit_score < 0 for _ in range(200))
-    assert neg > 150  # default exit -0.15 must not flip positive by scaling
-    assert all(StrategyConfig().mutate(rng).min_edge_pct == 0 for _ in range(50))
+def test_bot_only_sells_its_own_coins(tmp_path, monkeypatch):
+    f = FakeFusion()
+    f.bal.update({"BTC": 0.5})                                     # yours, from before the bot
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 100, "live.max_order": 50})
+    asyncio.run(e._live_sell("BTC", "t"))                          # the bot owns no BTC: nothing sold
+    assert f.sells == []
+    asyncio.run(e._live_buy("BTC", 20, "t"))
+    asyncio.run(e._live_sell("BTC", "t"))
+    assert f.sells == [("BTC", 2.0)] and f.bal["BTC"] == pytest.approx(0.5)
+    assert "BTC" not in e.db.get("live_qty")
 
 
-def test_fee_guard_blocks_quiet_coins():
-    from tradingbotty.agents.base import Blackboard
-    from tradingbotty.agents.team import expected_move_pct
-    bb = Blackboard(tech={"BTC": {"vol": 0.0005}})
-    quiet = SimpleNamespace(symbol="BTC", change_24h_pct=1.0)
-    assert expected_move_pct(bb, quiet) < 6.0
-    wild = SimpleNamespace(symbol="BTC", change_24h_pct=-9.0)
-    assert expected_move_pct(bb, wild) >= 6.0
+def test_your_coins_are_only_used_when_allowed(tmp_path, monkeypatch):
+    f = FakeFusion()
+    f.pairs.update({"HBAR": {}, "BTC": {"minOrderAmount": "15"}})
+    f.bal = {"FIAT": 2.0, "HBAR": 5.0, "VSN": 3.0}                 # HBAR worth 50; VSN has no Fusion pair
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 100, "live.max_order": 20, "live.use_my_coins": False})
+    with pytest.raises(ValueError, match="may not sell your coins"):
+        asyncio.run(e._live_buy("BTC", 20, "t"))
+    assert f.sells == []
+    e.set_controls({"live.use_my_coins": True})
+    asyncio.run(e._live_buy("BTC", 20, "t"))
+    assert f.sells and f.sells[0][0] == "HBAR" and f.bal["VSN"] == 3.0 and f.bal["FIAT"] >= -1e-9
+    e._brain_target = {"SOL": 0.5}
+    f.pairs["SOL"] = {}
+    f.bal["SOL"] = 4.0
+    spare = asyncio.run(e._spare_coins(f.bal))
+    assert "SOL" not in spare and "BTC" not in spare and "VSN" not in spare  # about to be bought, the bot's, untradable
+
+
+def test_three_failed_orders_stop_live_trading(tmp_path, monkeypatch):
+    class Broken(FakeFusion):
+        async def sell_fraction(self, symbol, fraction, owned=None):
+            raise RuntimeError("503")
+    f = Broken()
+    e = _engine(tmp_path, monkeypatch, f)
+    e.db.set("live_qty", {"BTC": 1.0, "SOL": 1.0, "ETH": 1.0})
+    for s in ("BTC", "SOL", "ETH"):
+        asyncio.run(e._live_sell(s, "t"))
+    assert e.mode == "paper"                                       # standby: nothing trades until you switch it on
