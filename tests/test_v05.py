@@ -107,6 +107,25 @@ def test_history_test_includes_the_alternative_data_strategies(tmp_path, monkeyp
     alt = [r for r in res["rows"] if r["group"] == "Trend + alternative data"]
     assert len(alt) == 3 and res["strategies_tested"] == len(research.all_strategies())
     assert e.db.get("patterns")["rows"]
+    assert {r["group"] for r in res["rows"]} >= {"Mix", "Trend + calm coins"}
+    assert all(r["fees2x"] for r in res["rows"] if r["group"] != "Benchmark")
+
+
+def test_reality_checks_use_only_the_past_and_rerun_on_fewer_coins():
+    cd = research.Candles.from_rows(research.synthetic_rows(research.UNIVERSE[:9], days=1200))
+    live = "Breakout 20/10 days, 3 slots, BTC filter 50d"
+    res = research.run_all(cd, focus=live)
+    wf = res["walk_forward"]
+    assert wf["live"] == live and len(wf["years"]) == len(res["years"]) - 1   # the first year only teaches
+    names = {r["name"] for r in res["rows"]}
+    assert all(y["pick"] in names and y["pick"] != research.HoldBTC.name for y in wf["years"])
+    luck = res["coin_luck"]
+    assert luck[0]["name"] == live and luck[0]["rounds"] == 8 and luck[0]["worst_cagr"] <= luck[0]["median_cagr"]
+    sub = cd.subset(["BTC", "ETH"])
+    assert sub.coins == ["BTC", "ETH"] and sub.days is cd.days
+    mix = research.by_name("Mix: half Breakout 20/10, half Bitcoin above its 50-day average")
+    held = research.current_target(cd, mix)
+    assert sum(held.values()) <= 1.0 + 1e-9
 
 
 def _brain_engine(tmp_path, monkeypatch, target):

@@ -300,7 +300,7 @@ class Engine:
             if not self.settings.simulate:
                 await altdata.update(self.prices.client, self.db, cd.coins, self._log)
                 cd.attach(altdata.load(self.db, cd.coins))
-            res = await asyncio.to_thread(research.run_all, cd)
+            res = await asyncio.to_thread(research.run_all, cd, None, self.brain().get("strategy"))
             res["simulated"] = bool(self.settings.simulate)
             self.db.set("research", res)
             robust = [r for r in res["rows"] if r["robust"]]

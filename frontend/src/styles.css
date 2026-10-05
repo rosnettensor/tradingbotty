@@ -603,3 +603,5 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .patterns-panel td { white-space: normal; }
 .patterns-panel td .dim.small { max-width: 360px; }
 pre.report { font-size: 11px; white-space: pre-wrap; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 4px; max-height: 300px; overflow-y: auto; }
+.reality-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); align-items: start; }
+.reality-grid > div { min-width: 0; overflow-x: auto; }

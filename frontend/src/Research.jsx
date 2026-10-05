@@ -14,6 +14,7 @@ export default function Research({ state, openAgent }) {
   return (
     <div className="research-tab">
       <HistoryTest state={state} res={res} setRes={(r) => { setRes(r); reloadPat(); }} openAgent={openAgent} />
+      {res && <RealityChecks res={res} live={state.brain?.strategy} />}
       <PatternHunt p={pat} openAgent={openAgent} />
       <FreeData node={(state.nodes || []).find((n) => n.id === "collector")} openAgent={openAgent} />
     </div>
@@ -76,7 +77,7 @@ function HistoryTest({ state, res, setRes, openAgent }) {
           </div>
           <div className="scroll">
             <table className="board">
-              <thead><tr><th>strategy</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th title="fees and spread paid per year, as a share of the account">fees/yr</th><th>in coins</th><th title="calendar years in which it beat holding Bitcoin, risk-adjusted">years won</th><th title="deflated Sharpe: chance the result is skill, not luck">skill</th><th>robust</th><th /></tr></thead>
+              <thead><tr><th>strategy</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th title="fees and spread paid per year, as a share of the account">fees/yr</th><th title="per year if every trade cost twice as much: wider spreads, worse fills">at 2x fees</th><th>in coins</th><th title="calendar years in which it beat holding Bitcoin, risk-adjusted">years won</th><th title="deflated Sharpe: chance the result is skill, not luck">skill</th><th>robust</th><th /></tr></thead>
               <tbody>
                 {rows.map((r) => {
                   const st = r[period] || {};
@@ -90,6 +91,7 @@ function HistoryTest({ state, res, setRes, openAgent }) {
                       <td>{st.sharpe}</td>
                       <td>{r.trades}</td>
                       <td>{r.fees_pct}%</td>
+                      <td className={pctColor(r.fees2x?.cagr_pct)}>{r.fees2x?.cagr_pct == null ? "–" : `${r.fees2x.cagr_pct}%`}</td>
                       <td>{r.invested_pct}%</td>
                       <td>{r.group === "Benchmark" ? "" : `${r.years_won ?? "–"}/${r.years_total ?? "–"}`}</td>
                       <td>{r.skill_prob == null ? "–" : `${Math.round(r.skill_prob * 100)}%`}</td>
@@ -170,6 +172,91 @@ function FreeData({ node, openAgent }) {
           </table>
         </div>
       ) : <div className="empty small">Downloads on the first history test (needs internet on your Mac).</div>}
+    </section>
+  );
+}
+
+function RealityChecks({ res, live }) {
+  const btc = res.rows.find((r) => r.name === "Hold Bitcoin");
+  const mine = res.rows.find((r) => r.name === live);
+  const wf = res.walk_forward;
+  const luck = res.coin_luck || [];
+  const pc = (x) => (x == null ? "–" : `${x > 0 ? "+" : ""}${x}%`);
+  return (
+    <section className="panel reality">
+      <h3>REALITY CHECKS <span className="dim">· would it have worked if we had used it back then?</span></h3>
+      <div className="reality-grid">
+        {mine && btc && (
+          <div>
+            <h4>LIVE STRATEGY, YEAR BY YEAR</h4>
+            <p className="dim small">{mine.name} vs holding Bitcoin, return in each calendar year.</p>
+            <table className="board">
+              <thead><tr><th>year</th><th>live strategy</th><th>Bitcoin</th><th>worst drop</th></tr></thead>
+              <tbody>
+                {Object.keys(mine.years).map((y) => (
+                  <tr key={y}>
+                    <td>{y}</td>
+                    <td className={pctColor(mine.years[y].return_pct)}><b>{pc(mine.years[y].return_pct)}</b></td>
+                    <td className={pctColor(btc.years[y]?.return_pct)}>{pc(btc.years[y]?.return_pct)}</td>
+                    <td className="down">{mine.years[y].max_dd_pct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {wf && (
+          <div>
+            <h4>CHASING THE LEADER (WALK-FORWARD)</h4>
+            <p className="dim small">At the start of each year, switch to whatever looked best on all the years before, using only the past. If this beats sticking with one strategy, chasing the top of the list pays; if not, the list's leader is partly luck.</p>
+            <table className="board">
+              <thead><tr><th>year</th><th>picked from the past</th><th>its year</th><th>live strategy</th><th>Bitcoin</th></tr></thead>
+              <tbody>
+                {wf.years.map((y) => (
+                  <tr key={y.year}>
+                    <td>{y.year}</td>
+                    <td className="small" style={{ whiteSpace: "normal" }}>{y.pick}</td>
+                    <td className={pctColor(y.pick_ret)}>{pc(y.pick_ret)}</td>
+                    <td className={pctColor(y.live_ret)}>{pc(y.live_ret)}</td>
+                    <td className={pctColor(y.btc_ret)}>{pc(y.btc_ret)}</td>
+                  </tr>
+                ))}
+                <tr className="champ">
+                  <td><b>per year</b></td><td className="small">{wf.switches} switches</td>
+                  <td className={pctColor(wf.pick_cagr)}><b>{pc(wf.pick_cagr)}</b></td>
+                  <td className={pctColor(wf.live_cagr)}><b>{pc(wf.live_cagr)}</b></td>
+                  <td className={pctColor(wf.btc_cagr)}><b>{pc(wf.btc_cagr)}</b></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+        {luck.length > 0 && (
+          <div>
+            <h4>COIN LUCK</h4>
+            <p className="dim small">Each strategy re-run {luck[0].rounds} times on a random two-thirds of the coins. A real edge keeps working whichever coins are missing; one that only won thanks to a few lucky coins collapses here.</p>
+            <table className="board">
+              <thead><tr><th>strategy</th><th>all coins</th><th>median</th><th>worst</th><th>worst drop</th><th>positive</th></tr></thead>
+              <tbody>
+                {luck.map((l) => {
+                  const full = res.rows.find((r) => r.name === l.name)?.full?.cagr_pct;
+                  return (
+                    <tr key={l.name} className={l.name === live ? "live-strat" : ""}>
+                      <td className="small" style={{ whiteSpace: "normal" }}><b>{l.name}</b></td>
+                      <td>{pc(full)}</td>
+                      <td className={pctColor(l.median_cagr)}><b>{pc(l.median_cagr)}</b></td>
+                      <td className={pctColor(l.worst_cagr)}>{pc(l.worst_cagr)}</td>
+                      <td className="down">{l.worst_dd}%</td>
+                      <td>{l.beat_zero}/{l.rounds}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p className="dim small">Numbers are per year. Remember: the coins are today's survivors, so all of these are rosier than the future will be.</p>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

@@ -66,6 +66,13 @@ class Candles:
     def coins(self) -> list[str]:
         return list(self.c)
 
+    def subset(self, coins: list[str]) -> "Candles":
+        """The same calendar with only some coins (for the coin-luck check)."""
+        out = Candles(self.days, *({s: getattr(self, k)[s] for s in coins} for k in ("o", "h", "l", "c")))
+        if hasattr(self, "alt"):
+            out.alt = self.alt
+        return out
+
     def closes(self, sym: str, i: int, n: int) -> list[float] | None:
         """The last n closes up to and including day i, or None if any is missing."""
         if i - n + 1 < 0:
@@ -296,18 +303,49 @@ class Donchian(Strategy):
                     lambda cd, s, i: _growth(cd, "stablecoins", i, 30) is None or _growth(cd, "stablecoins", i, 30) > 0),
     }
 
+    # price-based rules from the Pattern Hunter's finding that wild coins tend to have worse weeks
+    CALM = {
+        "calm": (", skip the wildest coins", " Skips coins whose last-30-day swings are in the wildest third of all "
+                 "coins (the Pattern Hunter found wild coins tend to have worse weeks)."),
+        "calmfirst": (", calmest breakouts first", " When more coins break out than slots are free, it takes the "
+                      "calmest ones instead of the strongest."),
+    }
+
     def __init__(self, entry: int, exit_: int, slots: int = 3, regime: int | None = 50, atr_mult: float = 3.0,
                  filt: str | None = None):
         self.entry, self.exit, self.slots, self.regime, self.atr_mult = entry, exit_, slots, regime, atr_mult
         self.filt = filt
         f = f", BTC filter {regime}d" if regime else ", no filter"
-        self.name = f"Breakout {entry}/{exit_} days, {slots} slots{f}" + (self.FILTERS[filt][0] if filt else "")
+        rule = self.FILTERS.get(filt) or self.CALM.get(filt) or ("", "")
+        self.name = f"Breakout {entry}/{exit_} days, {slots} slots{f}" + rule[0]
         self.explain = (f"Buys a coin at a new {entry}-day high, sells at an {exit_}-day low or {atr_mult:g}x its "
-                        f"daily range below the peak. At most {slots} coins at once."
-                        + (self.FILTERS[filt][1] if filt else ""))
-        if filt:
+                        f"daily range below the peak. At most {slots} coins at once." + rule[1])
+        if filt in self.FILTERS:
             self.group = "Trend + alternative data"
+        elif filt in self.CALM:
+            self.group = "Trend + calm coins"
         self.peak: dict[str, float] = {}
+        self._vols: tuple[int, dict[str, float]] | None = None
+
+    def _vol(self, cd, i) -> dict[str, float]:
+        if not self._vols or self._vols[0] != i:
+            vs = {}
+            for s in cd.coins:
+                xs = cd.closes(s, i, 31)
+                if xs:
+                    vs[s] = daily_vol(xs)
+            self._vols = (i, vs)
+        return self._vols[1]
+
+    def _may_buy(self, cd, s, i) -> bool:
+        if self.filt in self.FILTERS:
+            return self.FILTERS[self.filt][2](cd, s, i)
+        if self.filt == "calm":
+            vs = self._vol(cd, i)
+            if s in vs and len(vs) >= 6:
+                cut = sorted(vs.values())[len(vs) * 2 // 3]
+                return vs[s] < cut
+        return True
 
     def target(self, cd, i, held):
         if i < max(self.entry, self.exit) + 1:
@@ -333,12 +371,40 @@ class Donchian(Strategy):
                     continue
                 highs = [x for x in cd.h[s][i - self.entry:i] if x is not None]
                 xs = cd.closes(s, i, 31)
-                if highs and xs and cd.c[s][i] > max(highs) and (not self.filt or self.FILTERS[self.filt][2](cd, s, i)):
-                    cands.append((xs[-1] / xs[0], s))
+                if highs and xs and cd.c[s][i] > max(highs) and self._may_buy(cd, s, i):
+                    cands.append((-daily_vol(xs) if self.filt == "calmfirst" else xs[-1] / xs[0], s))
             for _, s in sorted(cands, reverse=True)[:self.slots - len(keep)]:
                 keep[s] = 1 / self.slots
                 self.peak[s] = cd.c[s][i]
         return keep if set(keep) != set(held) else None
+
+
+class Mix(Strategy):
+    """Half the money in each of two strategies from different families: when one has a bad phase, the other
+    may not."""
+    group = "Mix"
+
+    def __init__(self, a: Strategy, b: Strategy, label: str):
+        self.a, self.b = a, b
+        self.name = f"Mix: half {label}"
+        self.explain = f"Half the money follows \"{a.name}\", the other half \"{b.name}\"."
+        self.held_a: dict[str, float] = {}
+        self.held_b: dict[str, float] = {}
+
+    def target(self, cd, i, held):
+        changed = False
+        for strat, attr in ((self.a, "held_a"), (self.b, "held_b")):
+            want = strat.target(cd, i, getattr(self, attr))
+            if want is not None and want != getattr(self, attr):
+                setattr(self, attr, dict(want))
+                changed = True
+        if not changed and held:
+            return None
+        out: dict[str, float] = {}
+        for part in (self.held_a, self.held_b):
+            for s, w in part.items():
+                out[s] = out.get(s, 0.0) + w / 2
+        return out
 
 
 def _avg_feat(cd: Candles, key: str, i: int, n: int, default: float | None = None) -> float | None:
@@ -365,6 +431,9 @@ def all_strategies() -> list[Strategy]:
     out += [Donchian(20, 10, regime=None), Donchian(20, 10, slots=4), Donchian(55, 20, slots=2),
             Donchian(15, 7), Donchian(25, 12), Donchian(20, 10, regime=100)]
     out += [Donchian(20, 10, filt=f) for f in Donchian.FILTERS]  # the Pattern Hunter's data, tested as trading rules
+    out += [Donchian(20, 10, filt=f) for f in Donchian.CALM]
+    out += [Mix(Donchian(20, 10), Rotation(30, 3), "Breakout 20/10, half Top 3 by 30-day strength"),
+            Mix(Donchian(20, 10), BtcRegime(50), "Breakout 20/10, half Bitcoin above its 50-day average")]
     return out
 
 
@@ -482,7 +551,77 @@ def deflated_sharpe(rets: list[float], trial_sharpes: list[float]) -> float:
     return round(nd.cdf((sr - sr0) * math.sqrt(t - 1) / denom), 3)
 
 
-def run_all(cd: Candles, strategies: list[Strategy] | None = None) -> dict:
+def _sharpe(eq: list[float]) -> float:
+    rets = _daily_rets(eq)
+    if len(rets) < 30:
+        return -9.0
+    m = sum(rets) / len(rets)
+    sd = math.sqrt(sum((x - m) ** 2 for x in rets) / (len(rets) - 1)) or 1e-12
+    return m / sd * math.sqrt(365)
+
+
+def walk_forward(sims: list[Result], years: dict[int, tuple[int, int]], focus: str | None) -> dict:
+    """Would picking the leader have worked? At the start of each year, take the strategy that looked best on all
+    the years before (highest Sharpe among those that beat Bitcoin in most past years), hold it for that year,
+    and compare with simply keeping one strategy and with holding Bitcoin. Only past data decides each pick."""
+    btc = next(r for r in sims if r.name == HoldBTC.name)
+    live = next((r for r in sims if r.name == focus), None)
+    cands = [r for r in sims if r.group != "Benchmark"]
+    ys = sorted(years)
+    out, acc = [], {"pick": 1.0, "live": 1.0, "btc": 1.0}
+    for k, y in enumerate(ys[1:], start=1):
+        a, b = years[y]
+        past = ys[:k]
+
+        def beat_share(r):
+            won = sum(1 for p in past if _sharpe(r.equity[years[p][0]:years[p][1] + 1])
+                      > _sharpe(btc.equity[years[p][0]:years[p][1] + 1]))
+            return won / len(past)
+        ok = [r for r in cands if beat_share(r) >= 0.6] or cands
+        pick = max(ok, key=lambda r: _sharpe(r.equity[:a + 1]))
+        ret = lambda r: r.equity[b] / r.equity[a] - 1 if r.equity[a] > 0 else 0.0  # noqa: E731
+        row = {"year": str(y), "pick": pick.name, "pick_ret": round(ret(pick) * 100, 1),
+               "btc_ret": round(ret(btc) * 100, 1), "live_ret": round(ret(live) * 100, 1) if live else None}
+        acc["pick"] *= 1 + ret(pick)
+        acc["btc"] *= 1 + ret(btc)
+        if live:
+            acc["live"] *= 1 + ret(live)
+        out.append(row)
+    n_years = sum((years[y][1] - years[y][0]) for y in ys[1:]) / 365 or 1
+    cagr = lambda x: round((x ** (1 / n_years) - 1) * 100, 1) if x > 0 else -100.0  # noqa: E731
+    return {"years": out, "pick_cagr": cagr(acc["pick"]), "btc_cagr": cagr(acc["btc"]),
+            "live_cagr": cagr(acc["live"]) if live else None, "live": focus,
+            "switches": sum(1 for p, q in zip(out, out[1:]) if p["pick"] != q["pick"])}
+
+
+def coin_luck(cd: Candles, names: list[str], start: int, rounds: int = 8, seed: int = 21) -> list[dict]:
+    """Does a strategy only work thanks to a few lucky coins? Re-run it on random two-thirds of the coins (Bitcoin
+    always stays, for the filter). A real edge keeps working on most subsets; a lucky one collapses."""
+    import random
+    rng = random.Random(seed)
+    others = [c for c in cd.coins if c != "BTC"]
+    subsets = [["BTC"] + rng.sample(others, max(3, len(others) * 2 // 3)) for _ in range(rounds)]
+    out = []
+    for name in names:
+        cagrs, dds = [], []
+        for sub in subsets:
+            strat = by_name(name)
+            if not strat:
+                break
+            st = simulate(cd.subset(sub), strat, start).stats()
+            if st.get("cagr_pct") is not None:
+                cagrs.append(st["cagr_pct"])
+                dds.append(st["max_dd_pct"])
+        if cagrs:
+            cagrs.sort()
+            out.append({"name": name, "median_cagr": cagrs[len(cagrs) // 2], "worst_cagr": cagrs[0],
+                        "best_cagr": cagrs[-1], "worst_dd": min(dds), "rounds": len(cagrs),
+                        "beat_zero": sum(1 for x in cagrs if x > 0)})
+    return out
+
+
+def run_all(cd: Candles, strategies: list[Strategy] | None = None, focus: str | None = None,
+            checks: bool = True) -> dict:
     """Every strategy over the whole history, plus the robustness checks: each half, every calendar year against
     Bitcoin, recent windows, and the deflated Sharpe ratio that corrects for testing many strategies at once."""
     strategies = strategies or all_strategies()
@@ -503,9 +642,15 @@ def run_all(cd: Candles, strategies: list[Strategy] | None = None) -> dict:
         m = sum(rets) / len(rets)
         sd = math.sqrt(sum((x - m) ** 2 for x in rets) / max(1, len(rets) - 1)) or 1e-12
         trial_sr.append(m / sd)
+    stress = {}
+    if checks:  # same strategies at twice the cost: wider spreads on smaller coins, worse fills
+        for st in strategies:
+            if st.group != "Benchmark":
+                fresh = by_name(st.name) or st
+                stress[st.name] = simulate(cd, fresh, start, cost=2 * (FEE + SPREAD)).stats()
     rows = []
     for r in sims:
-        rows.append({"name": r.name, "group": r.group, "explain": r.explain, "trades": r.trades,
+        rows.append({"name": r.name, "fees2x": stress.get(r.name), "group": r.group, "explain": r.explain, "trades": r.trades,
                      "fees_pct": r.fees, "invested_pct": r.invested, "full": r.stats(),
                      "first_half": r.stats(0, half + 1), "second_half": r.stats(half),
                      "last_2y": r.stats(max(0, n - 730)), "last_1y": r.stats(max(0, n - 365)),
@@ -524,7 +669,13 @@ def run_all(cd: Candles, strategies: list[Strategy] | None = None) -> dict:
         r["robust"] = (r["group"] != "Benchmark" and r["beats_btc_both_halves"] and r["skill_prob"] >= 0.8
                        and r["years_won"] >= max(1, math.ceil(r["years_total"] * 0.6)))
     day = lambda i: time.strftime("%Y-%m-%d", time.gmtime(cd.days[i]))
-    return {"ts": time.time(), "from": day(start), "to": day(len(cd.days) - 1), "days": n,
+    extra = {}
+    if checks:
+        extra["walk_forward"] = walk_forward(sims, years, focus)
+        top = [r["name"] for r in sorted(rows, key=lambda r: -r["full"].get("sharpe", -9)) if r["robust"]]
+        names = ([focus] if focus and any(r["name"] == focus for r in rows) else []) + [x for x in top if x != focus]
+        extra["coin_luck"] = coin_luck(cd, names[:5], start)
+    return {**extra, "ts": time.time(), "from": day(start), "to": day(len(cd.days) - 1), "days": n,
             "coins": cd.coins, "cost_per_side_pct": round((FEE + SPREAD) * 100, 2), "curve_step": step,
             "years": [str(y) for y in years], "strategies_tested": len(strategies),
             "rows": sorted(rows, key=lambda r: (-r["robust"], -r["full"].get("sharpe", -9)))}
