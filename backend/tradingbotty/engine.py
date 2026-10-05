@@ -650,9 +650,21 @@ class Engine:
                     return
                 min_amt = float(((pairs or {}).get(symbol) or {}).get("minOrderAmount") or 0)
                 if amount < min_amt:
-                    self.throttled_say(self.agent("livedesk"), f"Skipped live BUY {symbol}: {amount:.2f} is below Fusion's "
-                                       f"minimum of {min_amt:g} {self.live.currency}.", 1800)
-                    return
+                    # Fusion won't take smaller orders: round up to its minimum when your caps and money allow it,
+                    # otherwise a small account could never trade at all
+                    room = min(lv["max_order"], lv["max_invest"] - invested, fiat + sum(v for _, v in spare.values()))
+                    need = round(min_amt * 1.02, 2)
+                    if lv["max_order"] >= min_amt:
+                        need = min(need, lv["max_order"])  # exactly the minimum still counts
+                    if need > room:
+                        why = (f"raise 'Biggest single live order' to at least {need:.0f} {self.live.currency}"
+                               if lv["max_order"] < need else "your cap or your money doesn't leave room for it")
+                        self.throttled_say(self.agent("livedesk"), f"Skipped live BUY {symbol}: {amount:.2f} is below "
+                                           f"Fusion's minimum of {min_amt:g} {self.live.currency}, and {why}.", 1800)
+                        return
+                    self.agent("livedesk").say(f"Rounded the live BUY of {symbol} up from {amount:.2f} to {need:.2f} "
+                                               f"{self.live.currency}: Fusion's minimum order is {min_amt:g}.")
+                    amount = need
                 if hasattr(self.live, "spread_pct"):
                     spread = await self.live.spread_pct(symbol)
                     if spread > lv["max_spread_pct"]:

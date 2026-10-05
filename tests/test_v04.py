@@ -405,3 +405,19 @@ def test_champion_positions_missing_live_are_copied_once(tmp_path, monkeypatch):
     assert len(f.buys) == 1 and f.buys[0][0] == "SOL" and "SOL" in e.db.get("live_qty")
     asyncio.run(e._reconcile_live())                                # already copied: no second buy
     assert len(f.buys) == 1
+
+
+def test_small_live_orders_round_up_to_fusions_minimum(tmp_path, monkeypatch):
+    f = FakeFusion()
+    f.pairs = {"BTC": {"minOrderAmount": "25"}, "SOL": {"minOrderAmount": "30"}}
+    e = _engine(tmp_path, monkeypatch, f)
+    e.set_controls({"live.max_invest": 99, "live.max_order": 25})
+    asyncio.run(e._mirror_live("BTC", "BUY", 0.2))          # 20% of 99 = 19.80 -> Fusion's 25
+    assert f.buys == [("BTC", 25)]
+    asyncio.run(e._mirror_live("SOL", "BUY", 0.2))          # needs 30.60, but your per-order cap is 25: skipped, with why
+    assert len(f.buys) == 1
+    assert any("raise 'Biggest single live order'" in r["message"]
+               for r in e.db.query("SELECT message FROM agent_log ORDER BY id DESC LIMIT 5"))
+    e.set_controls({"live.max_order": 35})
+    asyncio.run(e._mirror_live("SOL", "BUY", 0.2))
+    assert f.buys[-1] == ("SOL", 30.6)
