@@ -2,11 +2,53 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Sphere from "./Sphere.jsx";
 import { DailyChart, LineChart } from "./charts.jsx";
 import { Stat, Tabs } from "./components.jsx";
-import { ago, fmt, pctColor, usePoll } from "./useBot.js";
+import { ago, api, fmt, pctColor, usePoll } from "./useBot.js";
 
 const hm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const dayhm = (ts) => new Date(ts * 1000).toLocaleString([], { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 const nextMidnightUTC = () => (Math.floor(Date.now() / 86400000) + 1) * 86400;
+
+// Everything the live core shows, from real data (see Sphere.jsx for the layers)
+function coreData(state, w, energy) {
+  const tick = state.ticker || [];
+  const ch = tick.map((t) => t.change).filter((x) => x != null);
+  const market = ch.length ? ch.reduce((a, b) => a + b, 0) / ch.length : 0;
+  const breadth = ch.length ? ch.filter((x) => x > 0).length / ch.length : null;
+  const held = (w?.coins || []).filter((c) => c.value > 0.5);
+  const spikes = held.map((c) => {
+    const pct = c.cost ? (c.value / c.cost - 1) * 100 : 0;
+    return { symbol: c.symbol, kind: "held", pct, len: Math.min(1.6, 0.35 + Math.abs(pct) / 12), text: `${c.symbol} ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%` };
+  });
+  for (const c of (w?.fast_coins || []).filter((c) => c.value > 0.5)) {
+    const pct = c.cost ? (c.value / c.cost - 1) * 100 : 0;
+    spikes.push({ symbol: `fast:${c.symbol}`, kind: "held", pct, len: Math.min(1.6, 0.35 + Math.abs(pct) / 8), text: `⚡${c.symbol} ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%` });
+  }
+  const mine = new Set([...held, ...(w?.fast_coins || [])].map((c) => c.symbol));
+  for (const r of (state.trend?.rows || []).filter((r) => !mine.has(r.symbol)).slice(0, 14)) {
+    const gap = r.to_breakout_pct ?? 30;
+    const close = Math.max(0, 1 - Math.max(0, gap) / 25);
+    const hot = ["would buy", "breakout, no slot", "near breakout", "would sell"].includes(r.state);
+    spikes.push({ symbol: r.symbol, kind: "watch", state: r.state, len: 0.08 + close * 0.55,
+      text: hot ? `${r.symbol} ${r.state === "would buy" ? "BUY TONIGHT" : gap <= 0 ? "at its high" : `${gap.toFixed(1)}% to buy`}` : "" });
+  }
+  const edge = w ? w.bot_edge_pct ?? w.change_pct : 0;
+  const cashShare = w && w.total ? (w.fiat || 0) / w.total : null;
+  const fast = state.fast || {};
+  const pc = (x) => `${x >= 0 ? "+" : ""}${(x || 0).toFixed(2)}%`;
+  const btc = state.trend?.btc || {};
+  const hud = {
+    left: [["MARKET TODAY", pc(market), market >= 0 ? "up" : "down"], ["COINS UP 24H", breadth == null ? "–" : `${Math.round(breadth * 100)}%`, breadth >= 0.5 ? "up" : "down"],
+      ["CASH", cashShare == null ? "–" : `${Math.round(cashShare * 100)}%`, "cyan"], ["BOT'S OWN", pc(edge), edge >= 0 ? "up" : "down"]],
+    right: [["BITCOIN FILTER", btc.ok == null ? "–" : btc.ok ? "OPEN" : "CASH", btc.ok ? "up" : "down"], ["DAILY BRAIN", `${held.length} coin${held.length === 1 ? "" : "s"}`, held.length ? "up" : "dim"],
+      ["FAST POT", fast.on ? `${(fast.pot || 0).toFixed(0)} ${w?.currency || ""}` : "off", fast.on ? "magenta" : "dim"], ["GUARDIAN", Object.keys(state.guard || {}).length ? `${Object.keys(state.guard).length} blocked` : "clear", Object.keys(state.guard || {}).length ? "down" : "up"]],
+  };
+  return {
+    mood: edge, market, breadth, energy, cashShare, spikes, hud,
+    btcOk: state.trend?.btc?.ok ?? state.brain?.btc_ok ?? null, btcGap: state.trend?.btc?.gap_pct ?? 0,
+    guard: Object.keys(state.guard || {}).length, lastSide: (state.trades || [])[0]?.side,
+    facts: `Right now: bot ${edge >= 0 ? "+" : ""}${(edge || 0).toFixed(2)}% · market ${market >= 0 ? "+" : ""}${market.toFixed(2)}% today · ${breadth == null ? "?" : Math.round(breadth * 100)}% of coins up · Bitcoin filter ${state.trend?.btc?.ok ? "open" : "closed"} · cash ${cashShare == null ? "?" : Math.round(cashShare * 100)}% · ${held.length} bot coins · ${Object.keys(state.guard || {}).length} Guardian blocks`,
+  };
+}
 
 export default function Cockpit({ state, pulse, focus, setFocus, openAgent }) {
   const w = state.wallet && !state.wallet.error ? state.wallet : null;
@@ -19,10 +61,11 @@ export default function Cockpit({ state, pulse, focus, setFocus, openAgent }) {
     <div className="cockpit3">
       {state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />}
       <BrainBar state={state} openAgent={openAgent} />
+      <FastPotCard state={state} openAgent={openAgent} />
       <StatStrip state={state} openAgent={openAgent} />
 
       <section className="panel core">
-        <Sphere mood={(w ? w.bot_edge_pct ?? w.change_pct : 0) / 5} energy={energy} pulse={pulse} label={w ? (
+        <Sphere data={coreData(state, w, energy)} pulse={pulse} label={w ? (
           <div className="core-label">
             <div className="dim">YOUR ACCOUNT · {state.mode === "live" ? "LIVE" : "STANDBY"}</div>
             <div className="equity">{w.total.toFixed(2)} {w.currency}</div>
@@ -108,7 +151,7 @@ function BotEdge({ w, cur }) {
   if (edge != null) pts.push([Date.now() / 1000, edge]);
   const tone = edge == null ? "" : edge > 0 ? "up" : edge < 0 ? "down" : "flat";
   return (
-    <div className={`bot-edge ${tone}`} title="Your account now minus what it would be worth if nobody had traded: the cash and coins you had when this started, at today's prices. Coin price swings cancel out, so this is only what the bot's trades added or lost. Paying in or withdrawing moves it too.">
+    <div className={`bot-edge ${tone}`} title="Your account now minus what it would be worth if nobody had traded: the cash and coins you had when this started, at today's prices, plus what you paid in or took out since. Coin price swings cancel out, so this is only what the bot's trades added or lost.">
       <div className="edge-label">🤖 BOT'S OWN GAIN / LOSS</div>
       <div className="edge-big">{edge == null ? "–" : <Ticking value={edge} signed />} <span className="unit">{cur}</span></div>
       <div className="stat-sub">
@@ -116,6 +159,35 @@ function BotEdge({ w, cur }) {
         vs doing nothing{w.bot_edge_since ? ` since ${new Date(w.bot_edge_since * 1000).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}
       </div>
       {pts.length > 1 && <div className="edge-spark"><LineChart series={[{ id: "e", color: edge >= 0 ? "var(--green)" : "var(--red)", bold: true, points: pts }]} baseline={0} height={54} /></div>}
+      <Flows w={w} cur={cur} />
+    </div>
+  );
+}
+
+// Deposits and withdrawals are spotted automatically; this is for ones made before that, or to correct one.
+function Flows({ w, cur }) {
+  const [open, setOpen] = useState(false);
+  const [amt, setAmt] = useState("");
+  const [msg, setMsg] = useState("");
+  const last = (w.flows || []).slice(-1)[0];
+  const book = async (sign) => {
+    const a = Number(String(amt).replace(",", "."));
+    if (!a) return;
+    try { await api("account/flow", { amount: sign * Math.abs(a) }); setMsg(`${sign > 0 ? "paid in" : "taken out"} ${Math.abs(a).toFixed(2)} ${cur}: not counted as gain or loss`); setAmt(""); setOpen(false); }
+    catch (e) { setMsg(e.message); }
+  };
+  return (
+    <div className="flows small">
+      {last && <span className="dim">{last.amount > 0 ? "paid in" : "taken out"} {Math.abs(last.amount).toFixed(2)} {cur} {ago(last.ts)} ({last.how}) · </span>}
+      {!open ? <button className="mini linkish" onClick={() => setOpen(true)}>paid in or out?</button> : (
+        <span className="flow-form">
+          <input type="number" min="0" step="1" placeholder="amount" value={amt} onChange={(e) => setAmt(e.target.value)} />
+          <button className="mini primary" onClick={() => book(1)}>paid in</button>
+          <button className="mini" onClick={() => book(-1)}>took out</button>
+          <button className="mini linkish" onClick={() => setOpen(false)}>cancel</button>
+        </span>
+      )}
+      {msg && <div className="dim">{msg}</div>}
     </div>
   );
 }
@@ -159,8 +231,8 @@ function LiveWallet({ state, setFocus }) {
           <div className="wallet-coins">
             {(w.all_coins || []).map((c) => (
               <button key={c.symbol} className={`tag ${c.bot ? "coin-bot" : "coin-own"}`} onClick={() => setFocus(c.symbol)}
-                title={`${c.qty} ${c.symbol}${c.bot ? " · bought by the bot" : " · yours from before"}${c.tradable ? "" : " · not tradable on Fusion"}`}>
-                {c.bot ? "🤖 " : ""}{c.symbol} {c.price ? `${c.value.toFixed(2)}` : `${c.qty} (no price)`}
+                title={`${c.qty} ${c.symbol}${c.fast ? " · bought by the fast pot" : c.bot ? " · bought by the bot" : " · yours from before"}${c.tradable ? "" : " · not tradable on Fusion"}`}>
+                {c.fast ? "⚡ " : c.bot ? "🤖 " : ""}{c.symbol} {c.price ? `${c.value.toFixed(2)}` : `${c.qty} (no price)`}
                 {c.bot && c.pnl != null && <span className={pctColor(c.pnl)}> {sign(c.pnl)}</span>}
               </button>
             ))}
@@ -422,5 +494,38 @@ function News({ news, setFocus }) {
         )) : <div className="empty small">no rated headlines yet</div>}
       </div>
     </>
+  );
+}
+
+function FastPotCard({ state, openAgent }) {
+  const f = state.fast || {};
+  const w = state.wallet || {};
+  const cur = w.currency || "CHF";
+  const coins = Object.fromEntries((w.fast_coins || []).map((c) => [c.symbol, c]));
+  const pos = Object.entries(f.pos || {});
+  const mins = f.next ? Math.max(0, Math.round((f.next - Date.now() / 1000) / 60)) : null;
+  const live = state.mode === "live";
+  const goLab = () => { try { localStorage.setItem("tb-lab", "fast"); } catch { /* private window */ } window.dispatchEvent(new CustomEvent("tb-tab", { detail: "research" })); };
+  return (
+    <section className={`panel fastbar ${f.on && live ? "on" : ""}`}>
+      <span className="fast-badge">⚡ FAST POT</span>
+      {f.on ? (
+        <>
+          <span><b>{(f.pot || 0).toFixed(2)} {cur}</b> <span className="dim">{f.mode === "chf" ? "your amount + its gains" : `${f.pct}% of the account`}</span></span>
+          <span className={f.realized >= 0 ? "up" : "down"}>{f.realized >= 0 ? "+" : ""}{(f.realized || 0).toFixed(2)} {cur} booked · {f.trades} trades{f.trades ? `, ${f.wins} won` : ""}</span>
+          <span className="fast-pos">{pos.length ? pos.map(([s, p]) => {
+            const c = coins[s];
+            return <span key={s} className={`tag ${c?.pnl >= 0 ? "up" : "down"}`}>{s} {c ? `${c.pnl >= 0 ? "+" : ""}${c.pnl?.toFixed(2)}` : ""}</span>;
+          }) : <span className="dim">no coin right now: waiting for a pump on {f.slots} slot{f.slots === 1 ? "" : "s"}</span>}</span>
+          <span className="dim">{live ? `next look in ${mins} min` : "standby: LIVE is off"}</span>
+          {!f.robust && <span className="play">play money: the rule doesn't pass every check</span>}
+        </>
+      ) : <span className="dim">off · a small, separate pot of real money for one fast rule, every 4 hours, next to the Daily Brain</span>}
+      <span className="fast-note dim small">{f.note ? `last: ${f.note}` : ""}</span>
+      <span className="row-tools">
+        <button className="mini" onClick={() => openAgent("fast")}>agent</button>
+        <button className={f.on ? "mini" : "mini primary"} onClick={goLab}>{f.on ? "settings" : "set it up"}</button>
+      </span>
+    </section>
   );
 }

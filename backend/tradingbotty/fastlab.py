@@ -275,12 +275,13 @@ async def fetch_4h(client, sym: str, since: float) -> list[tuple]:
     return rows
 
 
-async def update_4h(client, db, coins: list[str], log=lambda *a: None) -> dict[str, list[tuple]]:
+async def update_4h(client, db, coins: list[str], log=lambda *a: None, progress=lambda *a: None) -> dict[str, list[tuple]]:
     """Three years of 4-hour candles per coin, cached (kv h4:SYM); later runs download only the new bars."""
     out = {}
     now = time.time() // BAR * BAR
     oldest = now - HISTORY_DAYS * 86400
-    for sym in coins:
+    for k, sym in enumerate(coins):
+        progress(k, len(coins), sym)
         have = [tuple(r) for r in (db.get(f"h4:{sym}") or []) if r[0] >= oldest and len(r) > 5]
         since = have[-1][0] + BAR if have else oldest
         new = []

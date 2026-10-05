@@ -789,12 +789,57 @@ class DailyBrain(Agent):
         return f"fails a check today ({b.get('weak_days', 0)} of 3 nights; after 3 it switches to the best robust one)"
 
 
+class FastTrader(Agent):
+    id = "fast"
+    name = "Fast Trader"
+    role = "Trades a small, separate pot of real money with one fast rule, every 4 hours, next to the Daily Brain"
+    inputs = ["researcher", "guardian"]
+    cadence = "every 4 hours, 2 minutes after each 4-hour candle closes (UTC)"
+    explain = ("Plain code, no AI. It has its own pot (an amount you set, which then grows or shrinks with its own "
+               "gains and losses, or a share of your account) and its own coins. It never sells your coins or the "
+               "Daily Brain's, never buys a coin the brain holds, and the brain leaves the pot's cash alone. After "
+               "each 4-hour candle it asks its rule from the Fast Trader Lab what to hold, with its real positions "
+               "(entry price, peak, entry time), exactly as in the test, and trades the difference through the Risk "
+               "Officer. Each coin gets at least 40 so it stays above Fusion's 25 minimum even after a drop.")
+    outputs = "fast buys and sells for the Risk Officer and the Live Desk"
+
+    async def run(self, bb: Blackboard) -> None:
+        e = self.ctx
+        st = e.fast.status()
+        self.next_run = st["next"]
+        cur = (e.wallet or {}).get("currency", "CHF")
+        if not st["on"]:
+            self.status = "off"
+            self.summary = "off: switch it on in Research › Fast Trader Lab"
+            self.detail = {"did": ["Not running: no fast trades"],
+                           "facts": [["Rule", st["strategy"]], ["Pot", f"{st['pot']:.2f} {cur}"]]}
+            return
+        if e.mode != "live":
+            self.summary = "standby: switch LIVE on to trade"
+        elif e.kill_switch:
+            self.status, self.summary = "warn", "kill switch on: no decisions"
+        else:
+            self.summary = f"pot {st['pot']:.2f} {cur}: {st['note'] or 'first decision at the next 4-hour candle'}"
+        coins = {c["symbol"]: c for c in (e.wallet or {}).get("fast_coins", [])}
+        self.detail = {
+            "did": st["steps"] or ["First decision after the next 4-hour candle"],
+            "facts": [["Rule", st["strategy"]], ["Passes every check", "yes" if st.get("robust") else "no: play money"],
+                      ["Pot", f"{st['pot']:.2f} {cur}" + (" (your amount + its gains and losses)" if st["mode"] == "chf" else f" ({st['pct']:g}% of your account)")],
+                      ["Coins at a time", st["slots"]], ["Gain or loss booked", f"{st['realized']:+.2f} {cur}"],
+                      ["Trades closed", f"{st['trades']} ({st['wins']} won)"],
+                      ["Next decision", f"after {_hm(st['next'])} (your time)"]],
+            "table": {"cols": ["coin", "in at", "since", cur, "now", "gain"],
+                      "rows": [[s, p["entry"], f"{_day(p['ts'])} {_hm(p['ts'])}", round(p["cost"], 2),
+                                coins.get(s, {}).get("value"), coins.get(s, {}).get("pnl")] for s, p in st["pos"].items()]},
+        }
+
+
 class RiskOfficer(Agent):
     """Plain code, not AI: it can't be talked into a bad trade."""
     id = "risk"
     name = "Risk Officer"
     role = "Hard limits in plain code on every real order: caps, Fusion minimums, spread, fees, kill switch"
-    inputs = ["brain"]
+    inputs = ["brain", "fast"]
     kind = "gate"
     cadence = "on every real order"
     explain = ("Plain code, no AI, so nothing can talk it into a bad trade. Every real buy passes its checks: the "

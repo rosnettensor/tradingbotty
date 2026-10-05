@@ -272,9 +272,9 @@ def test_every_agent_works_for_the_real_money_and_explains_itself(tmp_path, monk
     asyncio.run(e.tick())
     ids = [a.id for a in e.team]
     assert ids == ["radar", "trend", "collector", "news", "patterns", "researcher", "guardian", "professor", "brain",
-                   "risk", "livedesk"]
+                   "fast", "risk", "livedesk"]
     for a in e.team:
-        assert a.status in ("ok", "warn", "idle"), (a.name, a.summary)
+        assert a.status in ("ok", "warn", "idle") or (a.id == "fast" and a.status == "off"), (a.name, a.summary)
         assert a.explain and a.outputs and a.cadence
     for aid in ("radar", "trend", "patterns", "researcher", "guardian", "risk", "livedesk"):
         assert e.agent(aid).detail.get("did"), aid

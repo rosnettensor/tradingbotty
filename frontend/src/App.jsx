@@ -26,8 +26,10 @@ export default function App() {
       const i = Number(e.key) - 1;
       if (i >= 0 && i < TABS.length) setTab(TABS[i]);
     };
+    const onTab = (e) => TABS.includes(e.detail) && setTab(e.detail);  // links between tabs
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("tb-tab", onTab);
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("tb-tab", onTab); };
   }, []);
   const openAgent = (id) => { setAgent(id); setTab("agents"); };
 

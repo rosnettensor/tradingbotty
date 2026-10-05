@@ -41,6 +41,18 @@ class ToggleIn(BaseModel):
     on: bool
 
 
+class FlowIn(BaseModel):
+    amount: float
+
+
+class FastIn(BaseModel):
+    on: bool | None = None
+    strategy: str | None = None
+    mode: str | None = None
+    chf: float | None = None
+    pct: float | None = None
+
+
 class ControlsIn(BaseModel):
     changes: dict
 
@@ -162,6 +174,39 @@ async def fastlab_run():
 @app.get("/api/fastlab")
 async def fastlab_get():
     return engine.db.get("fastlab", {}) or {}
+
+
+@app.get("/api/fastlab/status")
+async def fastlab_status():
+    return engine.__dict__.get("fast_status") or {"running": False}
+
+
+@app.post("/api/account/flow")
+async def account_flow(body: FlowIn):
+    if not body.amount or abs(body.amount) > 1e7:
+        raise HTTPException(400, "enter the amount you paid in (+) or took out (-)")
+    return engine.book_flow(body.amount, "entered by you")
+
+
+@app.get("/api/fast")
+async def fast_get():
+    return engine.fast.status()
+
+
+@app.post("/api/fast")
+async def fast_set(body: FastIn):
+    try:
+        return await engine.fast.set(body.on, body.strategy, body.mode, body.chf, body.pct)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/fast/close")
+async def fast_close():
+    try:
+        return await engine.fast.close_all()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/api/patterns")

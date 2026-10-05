@@ -10,12 +10,12 @@ const COLUMNS = [
   ["radar", "trend", "collector", "news"],
   ["patterns", "researcher"],
   ["guardian", "professor"],
-  ["brain"],
+  ["brain", "fast"],
   ["risk"],
   ["livedesk"],
 ];
 const KIND_COLOR = { source: "var(--violet)", agent: "var(--cyan)", gate: "var(--amber)" };
-const POS_KEY = "tb-node-pos-v5";
+const POS_KEY = "tb-node-pos-v6";
 
 function defaultPosition(id) {
   for (let c = 0; c < COLUMNS.length; c++) {

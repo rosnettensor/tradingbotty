@@ -18,7 +18,7 @@ export default function Research({ state, openAgent }) {
   return (
     <div className="research-tab">
       <div className="lab-switch"><Tabs value={lab} options={LABS} onChange={pickLab} /></div>
-      {lab === "fast" ? <FastLab openAgent={openAgent} /> : (
+      {lab === "fast" ? <FastLab state={state} openAgent={openAgent} /> : (
         <>
           <HistoryTest state={state} res={res} setRes={(r) => { setRes(r); reloadPat(); }} openAgent={openAgent} />
           {res && <RealityChecks res={res} live={state.brain?.strategy} />}
@@ -275,16 +275,19 @@ function RealityChecks({ res, live, title = "REALITY CHECKS" }) {
 }
 
 
-function FastLab({ openAgent }) {
+function FastLab({ state, openAgent }) {
   const [res, reload] = usePoll("fastlab", 0);
+  const [stat] = usePoll("fastlab/status", 3000);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const running = !!stat?.running;
+  useEffect(() => { if (stat?.finished) reload(); }, [stat?.finished]);
   const [period, setPeriod] = useState("full");
   const [group, setGroup] = useState("all");
   const [pick, setPick] = useState([]);
   const run = async () => {
     setBusy(true); setMsg("");
-    try { const r = await api("fastlab/run", {}); if (r.busy) setMsg("already running…"); else reload(); }
+    try { const r = await api("fastlab/run", {}); if (!r.busy) reload(); }
     catch (e) { setMsg(e.message); } finally { setBusy(false); }
   };
   const has = res && res.rows;
@@ -303,18 +306,31 @@ function FastLab({ openAgent }) {
     points: r.curve.map((v, k) => [t0 + k * (res.curve_step_days ?? 1) * 86400, (v - 1) * 100]) }));
   const toggle = (name) => setPick((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]));
   const pc = (x) => (x == null ? "–" : `${x > 0 ? "+" : ""}${x}%`);
+  const pot = state.fast || {};
+  const usePot = async (r) => {
+    try { await api("fast", { strategy: r.name }); setMsg(`"${r.name}" now drives the fast pot.`); } catch (e) { setMsg(e.message); }
+  };
   return (
     <>
+      <FastPot state={state} lab={res} openAgent={openAgent} />
       <section className="panel lab research fastlab">
         <div className="row-head">
           <h3>FAST TRADER LAB <span className="dim">· a quick, speculative trader for its own pot, tested before it gets real money · by the <button className="mini linkish" onClick={() => openAgent("researcher")}>Researcher</button></span></h3>
           <div className="row-tools">
             {has && <Tabs value={period} options={PERIODS} onChange={setPeriod} />}
-            <button className="primary" onClick={run} disabled={busy}>{busy ? "loading 4-hour candles…" : has ? "run again" : "run the fast lab"}</button>
+            <button className="primary" onClick={run} disabled={busy || running}>{busy || running ? "running…" : has ? "run again" : "run the fast lab"}</button>
           </div>
         </div>
         <p className="dim small">4-hour candles of the {res?.coins?.length ?? 40} most traded coins that Fusion also lists, up to 3 years back. Every 4 hours each rule decides on the close and trades at the next open, paying {res?.cost_per_side_pct ?? 0.5}% per buy or sell (Fusion's fee plus a wider spread for smaller coins). Breakouts with profit-taking, pump riding, dip buying, with and without a volume check, against holding Bitcoin and against the daily brain's slow rules on the same coins. Same robustness bar as the daily lab. <b>Research only:</b> nothing here touches your money yet.</p>
-        {msg && <p className="err-msg">{msg}</p>}
+        {msg && <p className={/drives the fast pot/.test(msg) ? "ok-msg" : "err-msg"}>{msg}</p>}
+        {running && (
+          <div className="lab-progress">
+            <span className="pulse-dot" /> <b>Running:</b> {stat.step}{stat.total ? ` (${stat.done} of ${stat.total} coins)` : ""} · started {ago(stat.started)}
+            {stat.total > 0 && <div className="bar"><span style={{ width: `${Math.round((stat.done / stat.total) * 100)}%` }} /></div>}
+            <div className="dim small">The results appear here by themselves when it is done.</div>
+          </div>
+        )}
+        {!running && stat?.error && <p className="err-msg">The last run failed: {stat.error}</p>}
         {res?.simulated && <p className="err-msg">Simulated prices (simulate mode): these numbers are not real.</p>}
         {!has ? <div className="empty">Not run yet. It runs nightly after the history test, or press "run the fast lab" (the first run downloads about 40 coins × 3 years of 4-hour candles, a few minutes).</div> : (
           <>
@@ -333,11 +349,12 @@ function FastLab({ openAgent }) {
             </div>
             <div className="scroll">
               <table className="board">
-                <thead><tr><th>rule</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th>fees/yr</th><th>at 2x fees</th><th>in coins</th><th>years won</th><th>skill</th><th>robust</th></tr></thead>
+                <thead><tr><th>rule</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th>fees/yr</th><th>at 2x fees</th><th>in coins</th><th>years won</th><th>skill</th><th>robust</th><th /></tr></thead>
                 <tbody>
                   {rows.map((r) => {
                     const st = r[period] || {};
                     const fastRow = r.group.startsWith("Fast");
+                    const inPot = pot.strategy === r.name;
                     return (
                       <tr key={r.name} className={`${!fastRow ? "champ" : ""} ${pick.includes(r.name) ? "picked" : ""}`} onClick={() => fastRow && toggle(r.name)} title={r.explain}>
                         <td><b>{r.name}</b><div className="dim small">{r.group}</div></td>
@@ -352,6 +369,8 @@ function FastLab({ openAgent }) {
                         <td>{r.group === "Benchmark" ? "" : `${r.years_won ?? "–"}/${r.years_total ?? "–"}`}</td>
                         <td>{r.skill_prob == null ? "–" : `${Math.round(r.skill_prob * 100)}%`}</td>
                         <td>{r.group === "Benchmark" ? "" : r.robust ? <span className="up">✓</span> : <span className="dim">–</span>}</td>
+                        <td>{fastRow && (inPot ? <span className="live-badge">⚡ POT</span>
+                          : <button className="mini" onClick={(e) => { e.stopPropagation(); usePot(r); }}>use in fast pot</button>)}</td>
                       </tr>
                     );
                   })}
@@ -406,6 +425,81 @@ function BtcLinks({ c }) {
           </div>
         </div>
       </div>
+    </section>
+  );
+}
+
+function FastPot({ state, lab, openAgent }) {
+  const f = state.fast || {};
+  const w = state.wallet || {};
+  const cur = w.currency || "CHF";
+  const [mode, setMode] = useState(f.mode || "chf");
+  const [chf, setChf] = useState(f.chf ?? 40);
+  const [pct, setPct] = useState(f.pct ?? 13);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (f.mode) { setMode(f.mode); setChf(f.chf); setPct(f.pct); } }, [f.mode, f.chf, f.pct]);
+  const total = w.total || 0;
+  const pot = mode === "chf" ? Math.max(0, Number(chf) + (f.realized || 0)) : (total * pct) / 100;
+  const slots = Math.floor(pot / (f.min_slot || 40));
+  const row = (lab?.rows || []).find((r) => r.name === f.strategy);
+  const save = async (body) => {
+    setMsg("");
+    try { await api("fast", body); } catch (e) { setMsg(e.message); }
+  };
+  const toggle = async () => {
+    if (!f.on) {
+      const warn = row && !row.robust ? "\n\nThis rule does NOT pass every check: treat it as play money." : "";
+      if (!window.confirm(`Give the fast pot ${pot.toFixed(2)} ${cur} of REAL money?\n\nRule: ${f.strategy}\nIt decides every 4 hours and may buy wild coins. It never sells your coins or the Daily Brain's, and the brain leaves this money alone. Worst case: the pot goes to zero, never more.${warn}`)) return;
+    }
+    setBusy(true);
+    await save({ on: !f.on, mode, chf: Number(chf), pct: Number(pct) });
+    setBusy(false);
+  };
+  const close = async () => {
+    if (!window.confirm("Sell every coin of the fast pot now, at market price?")) return;
+    setBusy(true);
+    try { const r = await api("fast/close", {}); setMsg(r.done?.join("; ") || "nothing to sell"); } catch (e) { setMsg(e.message); }
+    setBusy(false);
+  };
+  const pos = Object.entries(f.pos || {});
+  const coins = Object.fromEntries((w.fast_coins || []).map((c) => [c.symbol, c]));
+  return (
+    <section className={`panel fastpot ${f.on ? "on" : ""}`}>
+      <div className="row-head">
+        <h3>⚡ FAST POT · REAL MONEY <span className="dim">· one fast rule, its own money and coins, next to the Daily Brain · <button className="mini linkish" onClick={() => openAgent("fast")}>Fast Trader</button></span></h3>
+        <div className="row-tools">
+          {pos.length > 0 && <button onClick={close} disabled={busy}>sell the pot's coins now</button>}
+          <button className={f.on ? "danger" : "primary"} onClick={toggle} disabled={busy || (!f.on && slots < 1)}>{f.on ? "switch off" : "switch on with real money"}</button>
+        </div>
+      </div>
+      <div className="fastpot-grid">
+        <div>
+          <div className="dim small">RULE</div>
+          <div><b>{f.strategy}</b> {row ? (row.robust ? <span className="up">✓ passes every check</span> : <span className="play">play money: fails a check</span>) : ""}</div>
+          {row && <div className="dim small">in the test: {row.full?.cagr_pct}%/yr, worst drop {row.full?.max_dd_pct}%, {row.trades} trades, fees {row.fees_pct}%/yr · pick another with "use in fast pot" below</div>}
+        </div>
+        <div>
+          <div className="dim small">POT SIZE</div>
+          <Tabs value={mode} options={[["chf", `fixed ${cur}`], ["pct", "% of account"]]} onChange={(m) => { setMode(m); save({ mode: m }); }} />
+          {mode === "chf" ? (
+            <div className="pot-input"><input type="range" min="0" max="500" step="5" value={chf} onChange={(e) => setChf(e.target.value)} onMouseUp={() => save({ chf: Number(chf) })} onTouchEnd={() => save({ chf: Number(chf) })} />
+              <input type="number" min="0" step="5" value={chf} onChange={(e) => setChf(e.target.value)} onBlur={() => save({ chf: Number(chf) })} /> {cur}</div>
+          ) : (
+            <div className="pot-input"><input type="range" min="0" max="100" step="1" value={pct} onChange={(e) => setPct(e.target.value)} onMouseUp={() => save({ pct: Number(pct) })} onTouchEnd={() => save({ pct: Number(pct) })} />
+              <input type="number" min="0" max="100" step="1" value={pct} onChange={(e) => setPct(e.target.value)} onBlur={() => save({ pct: Number(pct) })} /> %</div>
+          )}
+          <div className={slots < 1 ? "err-msg" : "dim small"}>= {pot.toFixed(2)} {cur}{mode === "chf" && f.realized ? ` (incl. ${f.realized >= 0 ? "+" : ""}${f.realized.toFixed(2)} won or lost so far)` : ""} · {slots < 1 ? `too small: each coin needs at least ${f.min_slot || 40} ${cur} (Fusion's 25 minimum plus room to sell after a drop)` : `${Math.min(slots, 2)} coin${Math.min(slots, 2) === 1 ? "" : "s"} at a time`}</div>
+        </div>
+        <div>
+          <div className="dim small">STATUS</div>
+          <div><b className={f.on ? "up" : "dim"}>{f.on ? (state.mode === "live" ? "ON · trading" : "ON · but LIVE is off") : "OFF"}</b> · booked <span className={f.realized >= 0 ? "up" : "down"}>{f.realized >= 0 ? "+" : ""}{(f.realized || 0).toFixed(2)} {cur}</span> · {f.trades || 0} trades{f.trades ? ` (${f.wins} won)` : ""}</div>
+          <div className="dim small">{f.on && f.next ? `next look ${new Date(f.next * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} (every 4 hours, after each candle)` : "decides 2 minutes after each 4-hour candle closes"}</div>
+          {pos.map(([s, p]) => <div key={s} className="small">⚡ <b>{s}</b> in at {p.entry} for {p.cost?.toFixed(2)} {cur}{coins[s] ? <> · now {coins[s].value?.toFixed(2)} (<span className={coins[s].pnl >= 0 ? "up" : "down"}>{coins[s].pnl >= 0 ? "+" : ""}{coins[s].pnl?.toFixed(2)}</span>)</> : ""}</div>)}
+        </div>
+      </div>
+      {msg && <p className="err-msg">{msg}</p>}
+      {f.steps?.length > 0 && <ol className="steps small">{f.steps.map((x, i) => <li key={i}>{x}</li>)}</ol>}
     </section>
   );
 }
