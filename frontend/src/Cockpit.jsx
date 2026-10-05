@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Sphere from "./Sphere.jsx";
 import { DailyChart, LineChart } from "./charts.jsx";
 import { Stat, Tabs } from "./components.jsx";
-import { ago, api, fmt, pctColor, usePoll } from "./useBot.js";
+import { ago, fmt, pctColor, usePoll } from "./useBot.js";
 
 const hm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const dayhm = (ts) => new Date(ts * 1000).toLocaleString([], { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -159,35 +159,6 @@ function BotEdge({ w, cur }) {
         vs doing nothing{w.bot_edge_since ? ` since ${new Date(w.bot_edge_since * 1000).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : ""}
       </div>
       {pts.length > 1 && <div className="edge-spark"><LineChart series={[{ id: "e", color: edge >= 0 ? "var(--green)" : "var(--red)", bold: true, points: pts }]} baseline={0} height={54} /></div>}
-      <Flows w={w} cur={cur} />
-    </div>
-  );
-}
-
-// Deposits and withdrawals are spotted automatically; this is for ones made before that, or to correct one.
-function Flows({ w, cur }) {
-  const [open, setOpen] = useState(false);
-  const [amt, setAmt] = useState("");
-  const [msg, setMsg] = useState("");
-  const last = (w.flows || []).slice(-1)[0];
-  const book = async (sign) => {
-    const a = Number(String(amt).replace(",", "."));
-    if (!a) return;
-    try { await api("account/flow", { amount: sign * Math.abs(a) }); setMsg(`${sign > 0 ? "paid in" : "taken out"} ${Math.abs(a).toFixed(2)} ${cur}: not counted as gain or loss`); setAmt(""); setOpen(false); }
-    catch (e) { setMsg(e.message); }
-  };
-  return (
-    <div className="flows small">
-      {last && <span className="dim">{last.amount > 0 ? "paid in" : "taken out"} {Math.abs(last.amount).toFixed(2)} {cur} {ago(last.ts)} ({last.how}) · </span>}
-      {!open ? <button className="mini linkish" onClick={() => setOpen(true)}>paid in or out?</button> : (
-        <span className="flow-form">
-          <input type="number" min="0" step="1" placeholder="amount" value={amt} onChange={(e) => setAmt(e.target.value)} />
-          <button className="mini primary" onClick={() => book(1)}>paid in</button>
-          <button className="mini" onClick={() => book(-1)}>took out</button>
-          <button className="mini linkish" onClick={() => setOpen(false)}>cancel</button>
-        </span>
-      )}
-      {msg && <div className="dim">{msg}</div>}
     </div>
   );
 }

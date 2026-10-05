@@ -118,6 +118,7 @@ class Engine:
         self.bb.news_events = [e for e in self.db.get("news_events", []) if time.time() - e["ts"] < 24 * 3600]
         self._tune_for_daily_brain()
         self._retire_paper()
+        self._fix_double_flows()
 
     def _tune_for_daily_brain(self) -> None:
         """One-time settings update for the live account (2026-10-05): the daily brain may use the whole account
@@ -150,6 +151,42 @@ class Engine:
         self.db.log("Engine", "info", "v0.5: the paper strategies, champion contest and Optimizer are switched off for "
                                       "good. Every agent now works for the real money or for the history test that "
                                       "picks its strategy.")
+
+    def _fix_double_flows(self) -> None:
+        """One-time repair (2026-10-05): a deposit entered twice by hand counted twice. Keep the first entry, undo the
+        repeats, and straighten the chart of the bot's own gain around the deposit."""
+        if self.db.get("flows_fixed"):
+            return
+        self.db.set("flows_fixed", time.time())
+        flows = self.db.get("flows") or []
+        keep, undo = [], []
+        for f in flows:
+            twin = next((k for k in keep if k["how"] == f["how"] == "entered by you" and k["amount"] == f["amount"]
+                         and abs(f["ts"] - k["ts"]) < 1800), None)
+            (undo if twin else keep).append(f)
+        hist = self.db.get("wallet_hist", [])
+        for f in undo:
+            for key, field in (("hold_start", "fiat"), ("account_start", "total")):
+                st = self.db.get(key)
+                if st:
+                    st[field] -= f["amount"]
+                    self.db.set(key, st)
+            for h in hist:
+                if h[0] >= f["ts"] and h[2] is not None:
+                    h[2] = round(h[2] + f["amount"], 2)
+        for f in keep:  # before it was entered, the deposit showed up as the bot's gain: take it out of the chart
+            if f["how"] != "entered by you":
+                continue
+            start = next((hist[k][0] for k in range(len(hist) - 1, 0, -1)
+                          if hist[k][0] < f["ts"] and f["ts"] - hist[k][0] < 6 * 3600
+                          and abs(hist[k][1] - hist[k - 1][1] - f["amount"]) < abs(f["amount"]) * 0.2), None)
+            for h in hist:
+                if start and start <= h[0] < f["ts"] and h[2] is not None:
+                    h[2] = round(h[2] - f["amount"], 2)
+        if undo:
+            self.db.set("flows", keep)
+            self.db.set("wallet_hist", hist)
+            self.db.log("Live Desk", "info", f"Fixed a deposit that was entered {len(undo) + 1} times: counted once now.")
 
     # ------------------------------------------------------------------ state
     @property

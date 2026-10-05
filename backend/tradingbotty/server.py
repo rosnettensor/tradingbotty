@@ -41,10 +41,6 @@ class ToggleIn(BaseModel):
     on: bool
 
 
-class FlowIn(BaseModel):
-    amount: float
-
-
 class FastIn(BaseModel):
     on: bool | None = None
     strategy: str | None = None
@@ -179,13 +175,6 @@ async def fastlab_get():
 @app.get("/api/fastlab/status")
 async def fastlab_status():
     return engine.__dict__.get("fast_status") or {"running": False}
-
-
-@app.post("/api/account/flow")
-async def account_flow(body: FlowIn):
-    if not body.amount or abs(body.amount) > 1e7:
-        raise HTTPException(400, "enter the amount you paid in (+) or took out (-)")
-    return engine.book_flow(body.amount, "entered by you")
 
 
 @app.get("/api/fast")

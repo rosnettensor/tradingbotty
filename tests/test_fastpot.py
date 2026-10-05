@@ -183,6 +183,21 @@ def test_deposits_and_withdrawals_are_not_the_bots_gain(tmp_path, monkeypatch):
     m.bal["XRP"] = 3.0
     asyncio.run(e._poll_wallet())
     assert len(e.db.get("flows")) == 1 and e.wallet["bot_edge"] == pytest.approx(10.0)
-    e.book_flow(-5.0, "entered by you")                              # a correction you enter yourself
+    e.book_flow(-5.0, "test")                                         # booked directly
     asyncio.run(e._poll_wallet())
     assert e.wallet["bot_edge"] == pytest.approx(15.0)
+
+
+def test_a_deposit_entered_twice_counts_once(tmp_path, monkeypatch):
+    from tradingbotty.db import DB
+    db = DB(tmp_path / "l.db")
+    t = time.time()
+    db.set("hold_start", {"ts": t - 9e4, "fiat": 130.0, "coins": {}, "values": {}})   # 30 + 50 + 50
+    db.set("account_start", {"ts": t - 9e4, "total": 408.0})
+    db.set("flows", [{"ts": t - 60, "amount": 50.0, "how": "entered by you"},
+                     {"ts": t - 50, "amount": 50.0, "how": "entered by you"}])
+    db.set("wallet_hist", [[t - 900, 308.0, 2.0], [t - 600, 358.0, 52.0], [t - 30, 358.0, -48.0]])
+    e = _engine(tmp_path, monkeypatch, Market())
+    assert e.db.get("hold_start")["fiat"] == 80.0 and e.db.get("account_start")["total"] == 358.0
+    assert len(e.db.get("flows")) == 1
+    assert [h[2] for h in e.db.get("wallet_hist")] == [2.0, 2.0, 2.0]
