@@ -41,7 +41,7 @@ def test_whatsapp_message_and_morning_briefing_once_a_day(tmp_path, monkeypatch)
     asyncio.run(e.morning_tick())
     asyncio.run(e.morning_tick())
     briefings = [c for c in http.calls[1:] if "TradingBotty" in c[2]["text"]]
-    assert len(briefings) == 1 and "Account" in briefings[0][2]["text"]
+    assert len(briefings) == 1 and "💰 Account" in briefings[0][2]["text"] and "🧠 Daily Brain" in briefings[0][2]["text"]
 
 
 def test_trade_alert_for_both_traders(tmp_path, monkeypatch):
@@ -52,7 +52,7 @@ def test_trade_alert_for_both_traders(tmp_path, monkeypatch):
         e._record("SOL", "BUY", {"quantity": 1, "price": 30}, 30.0, "breakout", book="fast")
         await asyncio.sleep(0)
     asyncio.run(go())
-    assert any("Fast pot" in c[2]["text"] and "BUY SOL 30.00" in c[2]["text"] for c in http.calls)
+    assert any("Fast pot" in c[2]["text"] and "🟢 BUY SOL · 30.00" in c[2]["text"] for c in http.calls)
     e.settings.raw["phone"]["trades"] = False
     n = len(http.calls)
     asyncio.run(go())
@@ -105,4 +105,5 @@ def test_ntfy_message(tmp_path, monkeypatch):
     e.settings.ntfy_topic = "tradingbotty-secret123"
     assert e.phone_channels() == ["ntfy"]
     assert asyncio.run(e.notify("hallo"))
-    assert http.calls == [("POST", "https://ntfy.sh/tradingbotty-secret123", {"text": "hallo"})]
+    method, url, body = http.calls[0]
+    assert url == "https://ntfy.sh/" and body["topic"] == "tradingbotty-secret123" and body["message"] == "hallo"

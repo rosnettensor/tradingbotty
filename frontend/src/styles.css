@@ -783,3 +783,27 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 :root[data-skin="bridge"] input, :root[data-skin="bridge"] select { border-radius: 999px; }
 :root[data-skin="bridge"] .cockpit3 .core { background: radial-gradient(ellipse at 50% 45%, rgba(255, 156, 58, 0.10), transparent 65%), #000; }
 :root[data-skin="bridge"] td, :root[data-skin="bridge"] th { border-bottom-color: var(--track); }
+
+/* ================================================================== PHONE
+   Tabs move to a bar at the bottom (thumb reach), the top bar scrolls away, wide tables scroll inside their panel. */
+@media (max-width: 640px) {
+  body { font-size: 12.5px; }
+  .topbar { position: static; padding: 10px 12px; gap: 8px; -webkit-backdrop-filter: none; backdrop-filter: none; }  /* a filter would trap the fixed tab bar */
+  .topbar .budget { display: none; }
+  .logo { font-size: 15px; }
+  nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; gap: 0; display: grid; grid-template-columns: repeat(4, 1fr);
+    background: var(--overlay); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-top: 1px solid var(--line); padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)); }
+  nav button { border: 0; border-radius: 6px; padding: 10px 2px; font-size: 11px; margin: 0 2px; }
+  main { padding: 10px 10px calc(78px + env(safe-area-inset-bottom, 0px)); }
+  .panel { overflow-x: auto; padding: 10px 11px; }
+  .panel h3 { white-space: normal; }
+  .mode, .kill { padding: 7px 10px; }
+  .skin-pick { padding: 6px; }
+  .cockpit3 .core { min-height: 460px; }
+  .sphere { min-height: 380px; }
+  .core-legend { left: 6px; right: 6px; bottom: 44px; }
+  .ticker { height: 30px; }
+  .chart-tip { width: 150px; }
+  input, select, textarea { font-size: 16px; }  /* stops iPhones from zooming into a field */
+}

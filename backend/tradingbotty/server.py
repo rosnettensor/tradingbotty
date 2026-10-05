@@ -290,7 +290,8 @@ def report():
 async def phone_test():
     if not engine.phone_channels():
         raise HTTPException(400, "Add WHATSAPP_PHONE and WHATSAPP_APIKEY (or the Telegram pair) to .env and restart first.")
-    ok = await engine.notify("TradingBotty test message: your phone briefing works.\n\n" + engine.daily_report())
+    ok = await engine.notify("✅ Test: your phone messages work. This is what the morning briefing looks like:\n\n"
+                             + engine.daily_report(), title=engine.report_title(), tags=["white_check_mark"])
     if not ok:
         raise HTTPException(400, "The message was refused: check the keys in .env (details in the agent feed).")
     return {"ok": True, "channels": engine.phone_channels()}

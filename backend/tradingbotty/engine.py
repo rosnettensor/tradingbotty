@@ -394,7 +394,7 @@ class Engine:
             msg = (f"The daily brain switched from {old} to {best['name']}: the old one failed the robustness checks "
                    f"three days in a row, the new one passes them ({best['full'].get('cagr_pct')}%/yr in the test).")
             self._log("Daily Brain", "live", msg)
-            self._notify_later("Strategy switched. " + msg)
+            self._notify_later(msg, title="🧠 Strategy switched", tags=["arrows_counterclockwise"], priority=4)
             return
         self.db.set("brain", b)
         self._log("Researcher", "warn", f"The daily brain's strategy {mine['name']} fails a robustness check on the "
@@ -466,13 +466,13 @@ class Engine:
                         msg = (f"Sold {s} right away: {', '.join(news)} report {entry['reason']} "
                                f"(\"{entry['titles'][0][:80]}\"). No buys of {s} for 3 days.")
                         self._log("Guardian", "live", msg)
-                        self._notify_later("Guardian. " + msg)
+                        self._notify_later(msg, title=f"🛡 Guardian sold {s}", tags=["rotating_light"], priority=5)
         self.db.set("guard", g)
 
     # ------------------------------------------------------------------ phone report
-    def _notify_later(self, text: str) -> None:
+    def _notify_later(self, text: str, **kw) -> None:
         try:
-            asyncio.get_running_loop().create_task(self.notify(text))
+            asyncio.get_running_loop().create_task(self.notify(text, **kw))
         except RuntimeError:
             pass  # no event loop (tests)
 
@@ -480,7 +480,7 @@ class Engine:
         st = self.settings
         return (["ntfy"] if st.ntfy_topic else []) + (["WhatsApp"] if st.whatsapp_phone and st.whatsapp_key else []) + (["Telegram"] if st.telegram_token and st.telegram_chat else [])
 
-    async def notify(self, text: str) -> bool:
+    async def notify(self, text: str, title: str = "TradingBotty", tags: list[str] | None = None, priority: int = 3) -> bool:
         """A message to your phone: WhatsApp through CallMeBot (WHATSAPP_PHONE and WHATSAPP_APIKEY in .env)
         and/or your own Telegram bot (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID). True if at least one arrived."""
         st = self.settings
@@ -489,13 +489,15 @@ class Engine:
         ok = False
         if st.ntfy_topic:
             try:
-                r = await self.prices.client.post(f"https://ntfy.sh/{st.ntfy_topic.strip()}", content=text[:3900].encode(),
-                                                  headers={"Title": "TradingBotty"})
+                r = await self.prices.client.post("https://ntfy.sh/", json={
+                    "topic": st.ntfy_topic.strip(), "title": title, "message": text[:3900], "tags": tags or [],
+                    "priority": priority})
                 if r.status_code != 200:
                     self._log("Engine", "warn", f"ntfy refused the message ({r.status_code}): check NTFY_TOPIC in .env")
                 ok = ok or r.status_code == 200
             except Exception as ex:
                 self._log("Engine", "warn", f"ntfy message failed: {str(ex)[:80]}")
+        text = f"{title}\n\n{text}" if title else text  # the other apps have no title line
         if st.whatsapp_phone and st.whatsapp_key:
             try:
                 phone = st.whatsapp_phone.replace(" ", "")
@@ -538,46 +540,61 @@ class Engine:
         if now.tm_hour < int(self.settings["phone"]["morning_hour"]) or self.db.get("briefing_day") == day:
             return
         self.db.set("briefing_day", day)
-        if await self.notify(self.daily_report()):
+        if await self.notify(self.daily_report(), title=self.report_title(), tags=["sunny"]):
             self._log("Engine", "info", f"Morning briefing sent by {' and '.join(self.phone_channels())}.")
 
+    def report_title(self) -> str:
+        w = self.wallet or {}
+        cur = w.get("currency", "")
+        if w.get("total") is None:
+            return "☀️ TradingBotty"
+        edge = f" ({w['bot_edge']:+.2f})" if w.get("bot_edge") is not None else ""
+        return f"☀️ {w['total']:.2f} {cur}{edge} · TradingBotty"
+
     def daily_report(self) -> str:
+        """The morning briefing: short blocks with one emoji each, easy to read on a phone."""
         b, w = self.brain(), self.wallet or {}
         cur = w.get("currency", "")
-        lines = [f"TradingBotty, {time.strftime('%d.%m.%Y')}",
-                 (f"Account: {w['total']:.2f} {cur} (cash {w['fiat']:.2f})" if w.get("total") is not None else "Account: ?")]
+        out = []
+        if w.get("total") is not None:
+            out.append(f"💰 Account {w['total']:.2f} {cur}\n    cash {w['fiat']:.2f} · coins {w['total'] - w['fiat']:.2f}")
+        else:
+            out.append("💰 Account: not read yet")
         if w.get("bot_edge") is not None:
-            lines.append(f"Bot's own gain/loss: {w['bot_edge']:+.2f} {cur} (coin price swings excluded)")
-        lines.append(f"Daily Brain: {b.get('strategy')}")
-        lines.append(f"Last decision: {b.get('note', 'none yet')}")
+            out.append(f"{'📈' if w['bot_edge'] >= 0 else '📉'} Bot's own result {w['bot_edge']:+.2f} {cur}\n    without your own coins' price swings")
+        held = sorted((self.db.get("live_qty") or {}).keys())
+        brain = [f"🧠 Daily Brain · {b.get('strategy') or 'no strategy'}",
+                 f"    holds {', '.join(held) if held else 'nothing (cash)'}"]
+        if b.get("btc_ok") is not None:
+            brain.append("    Bitcoin filter: " + ("✅ buys allowed" if b["btc_ok"] else "⛔ waiting in cash on purpose"))
+        if b.get("note"):
+            brain.append(f"    {b['note'][:220]}")
+        out.append("\n".join(brain))
         f = self.fast.status()
         if f.get("on"):
-            lines.append(f"Fast pot: {f.get('pot', 0):.2f} {cur}, {f.get('trades', 0)} trades, "
-                         f"{f.get('realized', 0):+.2f} {cur} so far" + (f" (holds {', '.join(f['pos'])})" if f.get("pos") else ""))
+            out.append(f"⚡ Fast pot {f.get('pot', 0):.2f} {cur}\n    {f.get('trades', 0)} trades · {f.get('realized', 0):+.2f} {cur} so far · "
+                       + (f"holds {', '.join(f['pos'])}" if f.get("pos") else "waiting for a pump"))
         day = self.db.query("SELECT symbol,side,notional,variant_id FROM trades WHERE mode='live' AND ts>? ORDER BY ts",
                             (time.time() - 86400,))
         if day:
-            lines.append("Real trades in 24h: " + ", ".join(
-                f"{'⚡' if t['variant_id'] == 'fast' else ''}{t['side'].lower()} {t['symbol']} {t['notional']:.0f}" for t in day))
-        if b.get("btc_ok") is False:
-            lines.append("Bitcoin is below its average: the bot waits in cash on purpose.")
-        last = self.db.query("SELECT MAX(ts) t FROM trades WHERE mode='live'")[0]["t"]
-        if last:
-            lines.append(f"Last real trade: {round((time.time() - last) / 3600)} hours ago")
-        t = (self.trend or {}).get("rows", [])
-        near = [r["symbol"] for r in t if r["state"] == "near breakout"]
+            out.append("🔁 Real trades, last 24h\n" + "\n".join(
+                f"    {'🟢' if t['side'] == 'BUY' else '🔴'} {t['side'].lower()} {t['symbol']} {t['notional']:.2f}"
+                f"{' ⚡' if t['variant_id'] == 'fast' else ''}" for t in day))
+        else:
+            last = self.db.query("SELECT MAX(ts) t FROM trades WHERE mode='live'")[0]["t"]
+            out.append("🔁 No real trade in 24h" + (f" (last {round((time.time() - last) / 3600)} h ago)" if last else ""))
+        near = [r["symbol"] for r in (self.trend or {}).get("rows", []) if r["state"] == "near breakout"]
         if near:
-            lines.append("Close to a breakout: " + ", ".join(near))
+            out.append("👀 Close to a breakout: " + ", ".join(near))
         guard = self.guard()
-        if guard:
-            lines.append("Guardian blocks: " + ", ".join(f"{s} ({g['reason']})" for s, g in guard.items()))
+        out.append("🛡 Guardian: " + (", ".join(f"{s} blocked ({g['reason']})" for s, g in guard.items()) if guard else "all clear"))
         prof = self.db.get("professor_last") or {}
         if prof.get("assessment") and time.time() - (prof.get("ts") or 0) < 36 * 3600:
-            lines.append("Professor: " + prof["assessment"][:400])
+            out.append("🎓 Professor\n    " + prof["assessment"][:400])
         found = [r["name"] for r in (self.db.get("patterns") or {}).get("rows", []) if r.get("verdict") == "pattern"]
         if found:
-            lines.append("Patterns found: " + "; ".join(found[:3]))
-        return "\n".join(lines)
+            out.append("🔬 Patterns: " + "; ".join(found[:3]))
+        return "\n\n".join(out)
 
     # ------------------------------------------------------------------ live trading
     async def set_mode(self, mode: str) -> dict:
@@ -620,8 +637,11 @@ class Engine:
         self.bus.publish("trade", {"mode": "live", "symbol": sym, "side": side, "notional": round(notional, 2),
                                    "reason": reason, "ts": time.time(), "book": book})
         if self.settings["phone"].get("trades"):
-            who = "Fast pot ⚡" if book == "fast" else "Daily Brain"
-            self._notify_later(f"TradingBotty {who}: {side} {sym} {notional:.2f} {self.live.currency if self.live else ''}. {reason}")
+            who = "⚡ Fast pot" if book == "fast" else "🧠 Daily Brain"
+            cur = self.live.currency if self.live else ""
+            self._notify_later(f"{who}\n{reason}\n\nprice {float(ex.get('price', 0) or 0):g} · fee {float(ex.get('fee', 0) or 0):.2f} {cur}",
+                               title=f"{'🟢 BUY' if side == 'BUY' else '🔴 SELL'} {sym} · {notional:.2f} {cur}",
+                               tags=["chart_with_upwards_trend" if side == "BUY" else "chart_with_downwards_trend"])
 
     @staticmethod
     def _book_keys(book: str) -> tuple[str, str]:
