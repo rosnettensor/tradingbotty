@@ -88,7 +88,7 @@ function TopBar({ state, connected, tab, setTab, logo }) {
   const [skin, setSkin] = useState(currentSkin);
   return (
     <header className="topbar">
-      {logo ? <img className="logo-img" src={logo} alt="TradingBotty" /> : <div className="logo">TRADING<span>BOTTY</span></div>}
+      {logo ? <img className="logo-img" src={logo} alt="TradingBotty" /> : <div className="logo"><small>RALPH'S</small> TRADING<span>BOTTY</span></div>}
       <nav>
         {TABS.map((t, i) => (
           <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)} title={`key ${i + 1}`}>{t}</button>

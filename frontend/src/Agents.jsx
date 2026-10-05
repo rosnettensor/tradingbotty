@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Background, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges } from "@xyflow/react";
+import { useSkin } from "./skins.js";
 import "@xyflow/react/dist/style.css";
 import { Toggle } from "./components.jsx";
 import { ago, api, fmt, usePoll } from "./useBot.js";
@@ -61,6 +62,7 @@ function AgentNode({ data }) {
 const nodeTypes = { agent: AgentNode };
 
 export default function Agents({ state, avatars = {}, want }) {
+  const light = useSkin(useState, useEffect) === "minimal";
   const agentNodes = state.nodes || [];
   const [positions, setPositions] = useState(loadPositions);
   const [selected, setSelected] = useState(() => {
@@ -108,9 +110,10 @@ export default function Agents({ state, avatars = {}, want }) {
     <div className="nodes-view">
       <div className="flow">
         <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange}
-          onNodeClick={(_, n) => setSelected(n.id)} fitView colorMode="dark" proOptions={{ hideAttribution: true }}>
-          <Background color="#1b2440" gap={24} />
-          <MiniMap pannable zoomable nodeColor={(n) => (n.data.node.kind === "source" ? "#8a5cff" : n.data.node.kind === "gate" ? "#ffb020" : "#00f0ff")} maskColor="rgba(5,6,10,0.7)" />
+          onNodeClick={(_, n) => setSelected(n.id)} fitView colorMode={light ? "light" : "dark"} proOptions={{ hideAttribution: true }}>
+          <Background color="var(--line)" gap={24} />
+          <MiniMap pannable zoomable nodeColor={(n) => (n.data.node.kind === "source" ? "var(--violet)" : n.data.node.kind === "gate" ? "var(--amber)" : "var(--cyan)")}
+            maskColor={light ? "rgba(0,0,0,0.08)" : "rgba(5,6,10,0.7)"} bgColor="var(--bg)" />
           <Controls />
         </ReactFlow>
         <button className="reset-layout" onClick={() => { try { localStorage.removeItem(POS_KEY); } catch { /* ignore */ } setPositions({}); setRfNodes((r) => r.map((n) => ({ ...n, position: defaultPosition(n.id) }))); }}>reset layout</button>
