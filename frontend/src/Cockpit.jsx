@@ -168,10 +168,56 @@ function LiveWallet({ state, setFocus }) {
               </button>
             ))}
           </div>
+          {live && <BuyNow state={state} cur={cur} />}
           <div className="stat-sub">Limits: max {caps.max_invest} {cur} in bot trades · {caps.max_order}/order · spread ≤ {caps.max_spread_pct}% · {caps.use_my_coins ? "may use all coins" : "only uses cash"}</div>
         </div>
       </div>
+      <Blockers state={state} />
     </section>
+  );
+}
+
+/** Your button: a real buy of the amount you choose, in the best coin right now. */
+function BuyNow({ state, cur }) {
+  const [amount, setAmount] = useState(10);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const pending = state.force_buy;
+  const go = async () => {
+    if (!window.confirm(`Real money: buy ${amount} ${cur} of the best coin right now?\n\nThe champion then manages it with its own stop loss and sell rules.`)) return;
+    setBusy(true); setMsg("");
+    try {
+      const r = await api("buy_now", { amount: Number(amount) });
+      setMsg(r.ok ? `✓ Bought ${r.amount} ${r.currency} of ${r.symbol}` : r.waiting ? `Waiting: ${r.why}` : `Not bought: ${r.why}`);
+    } catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="buynow">
+      <span className="buynow-label">BUY NOW</span>
+      <input type="number" min={1} step={1} value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <span className="dim">{cur}</span>
+      <button className="primary" disabled={busy || !!pending} onClick={go}>{busy ? "buying…" : "buy the best coin"}</button>
+      {pending && <span className="warn-msg">searching until {new Date(pending.until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}{pending.why ? `: ${pending.why}` : "…"}
+        <button className="mini" onClick={() => api("buy_now/cancel", {})}>cancel</button></span>}
+      {msg && !pending && <span className="small">{msg}</span>}
+    </div>
+  );
+}
+
+/** Why the champion isn't buying right now, grouped by reason, so you can see if rules block each other. */
+function Blockers({ state }) {
+  const b = Object.entries(state.blockers || {});
+  if (!b.length) return null;
+  const total = b.reduce((n, [, s]) => n + s.length, 0);
+  return (
+    <div className="blockers">
+      <span className="dim">WHY {state.champion?.name?.toUpperCase()} ISN'T BUYING:</span>
+      {b.map(([why, syms]) => (
+        <span key={why} className="blocker" title={syms.join(", ")}>
+          <i style={{ width: `${(syms.length / total) * 100}%` }} />{why} <b>{syms.length}</b>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -190,13 +236,13 @@ function StatStrip({ state, ret }) {
       <Stat label="Trades 24h" value={s.trades_24h ?? 0} sub={`${s.buys_1h ?? 0}/${cfg.max_buys_per_hour ?? "–"} buys this hour`} />
       <Stat label="Win rate" value={s.win_rate == null ? "–" : `${s.win_rate}%`} sub="of closed trades" />
       <Stat label="Market mood" value={r.mood || "…"} tone={r.mood === "risk-on" ? "up" : r.mood === "risk-off" ? "down" : ""}
-        sub={`crypto ${r.crypto ?? "–"} · stocks ${r.stocks ?? "–"}`} />
+        sub={state.stocks_enabled ? `crypto ${r.crypto ?? "–"} · stocks ${r.stocks ?? "–"}` : `crypto ${r.crypto ?? "–"}`} />
       <Stat label="Fear & Greed" value={r.fear_greed ?? "…"} sub={r.fear_greed_label} />
       <Stat label="Risk appetite" value={state.risk_appetite?.toFixed(2)} sub={nextProf == null ? "" : `Professor in ${nextProf}m`}
         title="Set by the Professor: scales every position size (0.5 defensive to 1.5 aggressive)" />
-      <Stat label="Stock markets" value={Object.entries(state.markets_open || {}).filter(([k, v]) => v && k !== "Crypto").map(([k]) => k).join(", ") || "all closed"}
-        tone={Object.entries(state.markets_open || {}).some(([k, v]) => v && k !== "Crypto") ? "up" : "dim"}
-        sub="crypto trades 24/7" title={Object.entries(state.markets_open || {}).map(([k, v]) => `${k}: ${v ? "open" : "closed"}`).join("\n")} />
+      <Stat label="Real trades" value={state.live_trades?.n ?? 0} tone={state.live_trades?.n ? "up" : "dim"}
+        sub={state.live_trades?.last ? `last ${ago(state.live_trades.last)}` : "none yet"}
+        title="Orders placed on your real Bitpanda account (buys and sells, including the buy-now button)" />
     </section>
   );
 }

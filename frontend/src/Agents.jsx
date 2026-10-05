@@ -66,7 +66,7 @@ export default function Agents({ nodes: agentNodes, avatars = {} }) {
     }));
   }, [agentNodes, selected, avatars]);
 
-  const edges = useMemo(() => agentNodes.flatMap((n) => n.inputs.map((src) => {
+  const edges = useMemo(() => agentNodes.flatMap((n) => n.inputs.filter((src) => agentNodes.some((x) => x.id === src)).map((src) => {
     const from = agentNodes.find((x) => x.id === src);
     const active = from && from.status !== "off" && Date.now() / 1000 - from.last_run < 60;
     return {

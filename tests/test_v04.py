@@ -310,7 +310,8 @@ def test_bot_edge_ignores_coin_price_swings(tmp_path, monkeypatch):
 def test_stock_only_champion_hands_over_in_live_mode(tmp_path, monkeypatch):
     f = FakeFusion()
     e = _engine(tmp_path, monkeypatch, f)
-    stock = next(v for v in e.variants.values() if not v.config.trade_crypto)
+    from tradingbotty.strategy import StrategyConfig
+    stock = e.add_variant(StrategyConfig(trade_stocks=True, trade_crypto=False), name="Stocks only")
     try:
         e.promote(stock.id)
         raise AssertionError("a stock-only strategy must not lead real money")
@@ -338,3 +339,69 @@ def test_wallet_hiccup_keeps_last_numbers(tmp_path, monkeypatch):
     e.wallet["ts"] -= 3600
     asyncio.run(e._poll_wallet())
     assert e.wallet["error"] == "OSError"                                  # never an empty error any more
+
+
+
+def test_crypto_only_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("TB_SIMULATE", "1")
+    monkeypatch.setenv("TB_DB", str(tmp_path / "s.db"))
+    from tradingbotty.engine import Engine
+    from tradingbotty.strategy import StrategyConfig
+    e = Engine(load_settings())
+    assert not e.stocks_enabled and not list(e.prices.stocks())
+    assert "src_yahoo" not in [x.id for x in e.sources] and "Rocket" in [v.name for v in e.variants.values()]
+    v = e.add_variant(StrategyConfig(trade_stocks=True, trade_crypto=False), name="Old stock picker")
+    e.promote(v.id)
+    e2 = Engine(load_settings())                      # restart: stock-only strategies retire, a crypto one leads
+    assert v.id not in e2.variants and e2.champion().config.trade_crypto
+
+
+def _scored(e, scores):
+    e.bb.scores = {e.champion().id: scores}
+
+
+def test_buy_now_buys_the_best_coin_and_the_champion_manages_it(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    asyncio.run(e.prices.backfill())
+    e.wallet = {"total": 300.0, "currency": "CHF", "ts": 0}
+    _scored(e, {"BTC": 0.2, "SOL": 0.6, "ETH": 0.9})   # ETH isn't on this Fusion: skipped
+    r = asyncio.run(e.force_buy(12))
+    assert r["ok"] and r["symbol"] == "SOL" and f.buys == [("SOL", 12)]
+    assert e.db.get("live_qty")["SOL"] > 0 and e.db.get("force_buy") is None
+    assert "SOL" in e.champion().broker.positions        # its own stops and sell rules take it from here
+    assert e.blockers() == {} or isinstance(e.blockers(), dict)
+
+
+def test_buy_now_waits_then_explains_when_buying_is_unwise(tmp_path, monkeypatch):
+    import time as _t
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    asyncio.run(e.prices.backfill())
+    _scored(e, {"BTC": -0.3, "SOL": -0.5})
+    r = asyncio.run(e.force_buy(10))
+    assert r["waiting"] and "below zero" in r["why"] and not f.buys
+    req = e.db.get("force_buy"); req["until"] = _t.time() - 1; e.db.set("force_buy", req)
+    r = asyncio.run(e._try_force_buy())
+    assert r["gave_up"] and e.db.get("force_buy") is None and not f.buys
+    f.spread = 3.0                                       # wide spreads are a reason too
+    _scored(e, {"SOL": 0.5})
+    r = asyncio.run(e.force_buy(10))
+    assert r["waiting"] and "spread" in r["why"]
+    e.cancel_force_buy()
+    assert e.db.get("force_buy") is None
+
+
+def test_champion_positions_missing_live_are_copied_once(tmp_path, monkeypatch):
+    f = FakeFusion()
+    e = _engine(tmp_path, monkeypatch, f)
+    asyncio.run(e.prices.backfill())
+    champ = e.champion()
+    e.db.set("mode", "paper")                                       # bought while paper: nothing live
+    asyncio.run(e.execute(champ, "SOL", "BUY", 0.2 * champ.broker.cash, e.prices.price("SOL"), "t", 0.2))
+    e.db.set("mode", "live")
+    assert not f.buys
+    asyncio.run(e._reconcile_live())
+    assert len(f.buys) == 1 and f.buys[0][0] == "SOL" and "SOL" in e.db.get("live_qty")
+    asyncio.run(e._reconcile_live())                                # already copied: no second buy
+    assert len(f.buys) == 1

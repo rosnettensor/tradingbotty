@@ -28,7 +28,7 @@ export default function Markets({ state, focus, setFocus }) {
         <div className="row-head">
           <h3>MARKETS <span className="dim">· {tiles.length} symbols · scores from the champion ({state.champion?.name})</span></h3>
           <div className="row-tools">
-            <Tabs value={kind} options={KINDS} onChange={setKind} />
+            {state.stocks_enabled && <Tabs value={kind} options={KINDS} onChange={setKind} />}
             <Tabs value={sort} options={SORTS} onChange={setSort} />
           </div>
         </div>

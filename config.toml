@@ -40,6 +40,8 @@ fee_pct = 0.25                 # assumed cost per side on the live venue; check 
 
 [markets]
 crypto = ["BTC", "ETH", "SOL", "XRP", "DOGE", "ADA", "AVAX", "LINK", "DOT", "PEPE"]
+# Bitpanda has no stock API, so stocks could only ever be paper. Off = the bot is crypto-only (recommended).
+stocks_enabled = false
 # US tickers as on Yahoo; Swiss end in .SW (SIX), German in .DE (Xetra). Prices are converted to USD.
 stocks = ["SPY", "QQQ", "NVDA", "TSLA", "AAPL", "MSFT", "AMD", "COIN", "NESN.SW", "NOVN.SW", "UBSG.SW", "SAP.DE", "RHM.DE"]
 

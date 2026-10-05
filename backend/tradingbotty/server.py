@@ -43,6 +43,10 @@ class ToggleIn(BaseModel):
     on: bool
 
 
+class BuyNowIn(BaseModel):
+    amount: float
+
+
 class ControlsIn(BaseModel):
     changes: dict
 
@@ -106,6 +110,21 @@ async def set_mode(body: ModeIn):
 def kill(body: ToggleIn):
     engine.set_kill_switch(body.on)
     return {"ok": True, "kill_switch": body.on}
+
+
+@app.post("/api/buy_now")
+async def buy_now(body: BuyNowIn):
+    """Your button: a real buy of `amount` in the best coin right now (or within an hour, or a clear reason why not)."""
+    try:
+        return await engine.force_buy(body.amount)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/buy_now/cancel")
+def buy_now_cancel():
+    engine.cancel_force_buy()
+    return {"ok": True}
 
 
 @app.post("/api/auto_promote")

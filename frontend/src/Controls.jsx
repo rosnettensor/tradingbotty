@@ -10,7 +10,7 @@ export default function Controls({ state }) {
       <StrategyEditor state={state} />
       <div className="col">
         <Explainer state={state} />
-        <Sources />
+        <Sources stocks={state.stocks_enabled} />
       </div>
     </div>
   );
@@ -70,7 +70,8 @@ function StrategyEditor({ state }) {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   useEffect(() => { setDraft({}); setResult(null); setMsg(""); }, [v?.id]);
-  const fields = meta?.strategy_fields || {};
+  const fields = useMemo(() => Object.fromEntries(Object.entries(meta?.strategy_fields || {})
+    .filter(([k]) => state.stocks_enabled || !["trade_stocks", "trade_crypto"].includes(k))), [meta, state.stocks_enabled]);
   const groups = useMemo(() => groupBy(Object.entries(fields).map(([k, f]) => ({ k, ...f })), "group"), [fields]);
   if (!v) return <section className="panel"><div className="empty">loading strategies…</div></section>;
   const cfg = { ...v.config, ...draft };
@@ -148,7 +149,7 @@ function Explainer({ state }) {
   );
 }
 
-function Sources() {
+function Sources({ stocks }) {
   const [s, reload] = usePoll("sources", 60000);
   if (!s) return <section className="panel"><div className="empty">loading…</div></section>;
   const add = (kind) => async (value, name) => { const r = await api("sources/add", { kind, value, name }); if (r.ok) reload(); return r; };
@@ -158,8 +159,10 @@ function Sources() {
       <h3>SOURCES <span className="dim">· every addition is tested before it's used</span></h3>
       <h4>COINS (KRAKEN)</h4>
       <ChipList items={s.crypto} locked={s.held} onAdd={add("crypto")} onRemove={remove("crypto")} placeholder="ticker, e.g. ARB" />
-      <h4>STOCKS & ETFS (YAHOO · SWISS .SW · GERMAN .DE)</h4>
-      <ChipList items={s.stocks} locked={s.held} onAdd={add("stocks")} onRemove={remove("stocks")} placeholder="e.g. PLTR, ROG.SW, SIE.DE" />
+      {stocks && <>
+        <h4>STOCKS & ETFS (YAHOO · SWISS .SW · GERMAN .DE)</h4>
+        <ChipList items={s.stocks} locked={s.held} onAdd={add("stocks")} onRemove={remove("stocks")} placeholder="e.g. PLTR, ROG.SW, SIE.DE" />
+      </>}
       <h4>SUBREDDITS</h4>
       <ChipList items={s.subreddits} status={s.status} statusKey={(x) => `r/${x}`} onAdd={add("subreddits")} onRemove={remove("subreddits")} placeholder="e.g. Bitcoin" />
       <h4>NEWS FEEDS (RSS)</h4>

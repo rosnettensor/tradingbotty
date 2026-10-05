@@ -486,3 +486,13 @@ textarea { width: 100%; resize: vertical; font-size: 12px; line-height: 1.5; }
 .mix tr.sel td:first-child { color: var(--cyan); }
 .mix tr.click:hover td { outline: 1px solid rgba(0,240,255,0.25); }
 @media (prefers-reduced-motion: reduce) { .corr-cell, .sdot, .cd-spark path { animation: none; stroke-dashoffset: 0; } }
+
+/* ---- buy now + blockers ---- */
+.buynow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; padding: 8px 10px;
+  border: 1px dashed rgba(255,43,214,0.45); border-radius: 8px; background: rgba(255,43,214,0.05); }
+.buynow-label { font-size: 11px; letter-spacing: 0.18em; color: var(--magenta); }
+.buynow input { width: 70px; }
+.blockers { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 10px; font-size: 11px; }
+.blocker { position: relative; overflow: hidden; padding: 2px 8px; border: 1px solid var(--line); border-radius: 10px; }
+.blocker i { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(255,176,32,0.18); }
+.blocker b { color: var(--amber); margin-left: 4px; }

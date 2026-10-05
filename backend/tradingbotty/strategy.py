@@ -7,7 +7,7 @@ import math
 import random
 from dataclasses import asdict, dataclass, fields
 
-SIGNALS = ["momentum", "trend", "reversion", "breakout", "swing", "hype", "news", "market", "radar"]
+SIGNALS = ["momentum", "trend", "reversion", "breakout", "swing", "hype", "news", "market", "radar", "relstr"]
 
 
 @dataclass
@@ -22,6 +22,7 @@ class StrategyConfig:
     w_market: float = 0.5
     w_swing: float = 0.0            # multi-day trend (hourly candles over 1-3 weeks)
     w_radar: float = 0.0            # Market Radar heat: 24h momentum, position in the 24h range, volume, buzz
+    w_relstr: float = 0.0           # relative strength: beating Bitcoin over 24h
     entry_score: float = 0.35       # buy when score is above this
     exit_score: float = -0.15       # sell when score falls below this
     take_profit_pct: float = 6.0
@@ -120,6 +121,9 @@ STRATEGY_FIELDS = {
     "w_radar": {"label": "Radar heat (24h)", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
                 "help": "The Market Radar's 24h heat: momentum, closeness to the 24h high, trading volume and buzz. "
                         "Starts at 0; the Optimizer can try it."},
+    "w_relstr": {"label": "Beats Bitcoin (24h)", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
+                 "help": "Relative strength: how much a coin beat Bitcoin over 24 hours. Money rotating into a coin "
+                         "often keeps going for a while."},
     "w_hype": {"label": "Social hype", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
                "help": "Reddit buzz and CoinGecko trending, corrected by the Hype vs Price Detective."},
     "w_news": {"label": "News", "min": -2, "max": 2, "step": 0.05, "group": "Signal weights",
@@ -143,9 +147,11 @@ SEED_VARIANTS = {
     "Fee Guard": StrategyConfig(min_edge_pct=6.0, entry_score=0.35, take_profit_pct=8, stop_loss_pct=5,
                                 min_hold_minutes=45),
     # Stocks cost a minimum fee per order (about 1 USD), so it trades rarely, in bigger slices, leaning on the slow trend
-    "Stock Picker": StrategyConfig(trade_stocks=True, trade_crypto=False, w_hype=0.3, w_news=1.0, w_swing=1.0,
-                                   entry_score=0.45, take_profit_pct=6, stop_loss_pct=4, trailing_stop_pct=3,
-                                   min_hold_minutes=180, cooldown_minutes=1440, max_buys_per_hour=1, position_pct=25),
+    # Aggressive crypto trader: rides fast moves on hot Radar coins, small stops, trades often
+    "Rocket": StrategyConfig(w_momentum=1.5, w_trend=0.8, w_reversion=-0.2, w_breakout=1.2, w_hype=0.4, w_news=0.4,
+                             w_market=0.3, w_radar=0.8, w_relstr=0.8, entry_score=0.3, exit_score=-0.1,
+                             take_profit_pct=5, stop_loss_pct=3, trailing_stop_pct=2, position_pct=25, max_positions=4,
+                             min_hold_minutes=15, cooldown_minutes=30, max_buys_per_hour=6),
     # Trades the slow multi-day trend: few trades, wide stops. Research on crypto trend-following favors days over minutes.
     "Swing Trader": StrategyConfig(w_momentum=0.1, w_trend=0.3, w_reversion=0.0, w_breakout=0.2, w_swing=2.0, w_hype=0.1,
                                    w_news=0.3, w_market=0.6, entry_score=0.35, exit_score=-0.1, take_profit_pct=20,

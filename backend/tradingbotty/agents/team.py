@@ -25,15 +25,20 @@ class CryptoAnalyst(Agent):
     explain = ("Pure math, no AI, free. Every tick it takes the last few hours of 1-minute prices for each coin and "
                "computes four signals between -1 and +1: momentum (last 15 minutes vs normal volatility), trend "
                "(20- vs 60-minute average), dip (RSI: oversold is positive) and breakout (above the last-hour high). "
-               "From hourly candles it adds the multi-day trend (1 to 3 weeks), the slow signal swing traders use.")
+               "From hourly candles it adds the multi-day trend (1 to 3 weeks), the slow signal swing traders use, and "
+               "relative strength: how much a coin beat or lagged Bitcoin over 24 hours.")
     outputs = "momentum, trend, dip, breakout and volatility per coin"
 
     async def run(self, bb: Blackboard) -> None:
         strongest = []
+        btc = self.ctx.prices.quotes.get("BTC")
+        btc_24h = btc.change_24h_pct if btc and btc.price else 0.0
         for q in self.ctx.prices.crypto():
             closes = q.closes()
             sig = technical_signals(closes)
             sig["swing"] = swing_signal(q.hourly_closes())
+            # relative strength: beating Bitcoin over 24h means money is rotating into this coin
+            sig["relstr"] = 0.0 if q.symbol == "BTC" else squash((q.change_24h_pct - btc_24h) / 6)
             bb.tech[q.symbol] = sig
             strongest.append((sig["momentum"] + sig["trend"], q.symbol, q.change_24h_pct))
         strongest.sort(reverse=True)
@@ -385,7 +390,7 @@ class Predictor(Agent):
                 "momentum": t.get("momentum", 0.0), "trend": t.get("trend", 0.0),
                 "reversion": t.get("reversion", 0.0), "breakout": t.get("breakout", 0.0), "swing": t.get("swing", 0.0),
                 "hype": bb.hype.get(sym, 0.0), "news": bb.news.get(sym, 0.0), "market": bb.market.get(sym, 0.0),
-                "radar": heat.get(sym, 0.0),
+                "radar": heat.get(sym, 0.0), "relstr": t.get("relstr", 0.0),
             }
         for v in self.ctx.variants.values():
             w = v.config.weights()
