@@ -238,7 +238,7 @@ def test_phone_report_needs_your_telegram_keys(tmp_path, monkeypatch):
         lambda r: sent.append(json.loads(r.content)) or httpx.Response(200, json={"ok": True})))
     e.wallet = {"total": 305.0, "fiat": 100.0, "currency": "CHF", "bot_edge": -3.5}
     assert asyncio.run(e.notify(e.daily_report())) is True
-    assert sent[0]["chat_id"] == "42" and "Bot's own gain/loss: -3.50 CHF" in sent[0]["text"]
+    assert sent[0]["chat_id"] == "42" and "Bot's own result -3.50 CHF" in sent[0]["text"]
 
 
 def test_trend_watch_previews_tonights_decision():
