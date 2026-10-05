@@ -18,7 +18,9 @@ TMP="$(mktemp -d)/tradingbotty.db"
 echo "1/2 This Mac goes to STANDBY and hands over its database..."
 curl -fsS "$LOCAL/api/move/export?to=$URL" -o "$TMP"
 echo "2/2 Sending it to the server ($(du -h "$TMP" | cut -f1))..."
-curl -fsS -u "bot:$PW" -H "Content-Type: application/octet-stream" --data-binary "@$TMP" "$URL/api/move/import"
+CODE=$(curl -s -o /dev/stderr -w "%{http_code}" -u "bot:$PW" -H "Content-Type: application/octet-stream" --data-binary "@$TMP" "$URL/api/move/import")
+if [ "$CODE" = "409" ]; then echo; echo "The server is LIVE. Switch it to STANDBY on its page, then run this again (the Mac stays on STANDBY)."; exit 1; fi
+[ "$CODE" = "200" ] || { echo; echo "The server refused the data ($CODE). The Mac stays on STANDBY; send Claude this output."; exit 1; }
 echo
 echo "Done. The server restarts with your data in about a minute."
 echo "Open $URL, check the Cockpit, then switch it LIVE (type REAL MONEY). Stop the Mac bot with Ctrl+C."
