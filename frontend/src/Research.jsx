@@ -86,7 +86,7 @@ function HistoryTest({ state, res, setRes, openAgent }) {
           </div>
           <div className="scroll">
             <table className="board">
-              <thead><tr><th>strategy</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th title="fees and spread paid per year, as a share of the account">fees/yr</th><th title="per year if every trade cost twice as much: wider spreads, worse fills">at 2x fees</th><th>in coins</th><th title="calendar years in which it beat holding Bitcoin, risk-adjusted">years won</th><th title="deflated Sharpe: chance the result is skill, not luck">skill</th><th>robust</th><th /></tr></thead>
+              <thead><tr><th>strategy</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th title="closed positions per week">per week</th><th title="share of closed positions that made money after fees">won</th><th title="average result per closed position, after fees">avg trade</th><th title="fees and spread paid per year, as a share of the account">fees/yr</th><th title="per year if every trade cost twice as much: wider spreads, worse fills">at 2x fees</th><th>in coins</th><th title="calendar years in which it beat holding Bitcoin, risk-adjusted">years won</th><th title="deflated Sharpe: chance the result is skill, not luck">skill</th><th>robust</th><th /></tr></thead>
               <tbody>
                 {rows.map((r) => {
                   const st = r[period] || {};
@@ -98,7 +98,7 @@ function HistoryTest({ state, res, setRes, openAgent }) {
                       <td>{st.cagr_pct == null ? "–" : `${st.cagr_pct}%`}</td>
                       <td className="down">{st.max_dd_pct}%</td>
                       <td>{st.sharpe}</td>
-                      <td>{r.trades}</td>
+                      <td>{r.trades}</td><td>{r.per_week ?? "–"}</td><td>{r.win_pct == null ? "–" : `${r.win_pct}%`}</td><td className={pctColor(r.avg_pct)}>{r.avg_pct == null ? "–" : `${r.avg_pct > 0 ? "+" : ""}${r.avg_pct}%`}</td>
                       <td>{r.fees_pct}%</td>
                       <td className={pctColor(r.fees2x?.cagr_pct)}>{r.fees2x?.cagr_pct == null ? "–" : `${r.fees2x.cagr_pct}%`}</td>
                       <td>{r.invested_pct}%</td>
@@ -349,7 +349,7 @@ function FastLab({ state, openAgent }) {
             </div>
             <div className="scroll">
               <table className="board">
-                <thead><tr><th>rule</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th>fees/yr</th><th>at 2x fees</th><th>in coins</th><th>years won</th><th>skill</th><th>robust</th><th /></tr></thead>
+                <thead><tr><th>rule</th><th>return</th><th>per year</th><th>worst drop</th><th>sharpe</th><th>trades</th><th title="closed positions per week">per week</th><th title="share of closed positions that made money after fees">won</th><th title="average result per closed position, after fees">avg trade</th><th>fees/yr</th><th>at 2x fees</th><th>in coins</th><th>years won</th><th>skill</th><th>robust</th><th /></tr></thead>
                 <tbody>
                   {rows.map((r) => {
                     const st = r[period] || {};
@@ -362,7 +362,7 @@ function FastLab({ state, openAgent }) {
                         <td>{st.cagr_pct == null ? "–" : `${st.cagr_pct}%`}</td>
                         <td className="down">{st.max_dd_pct}%</td>
                         <td>{st.sharpe}</td>
-                        <td>{r.trades}</td>
+                        <td>{r.trades}</td><td>{r.per_week ?? "–"}</td><td>{r.win_pct == null ? "–" : `${r.win_pct}%`}</td><td className={pctColor(r.avg_pct)}>{r.avg_pct == null ? "–" : `${r.avg_pct > 0 ? "+" : ""}${r.avg_pct}%`}</td>
                         <td>{r.fees_pct}%</td>
                         <td className={pctColor(r.fees2x?.cagr_pct)}>{r.fees2x?.cagr_pct == null ? "–" : `${r.fees2x.cagr_pct}%`}</td>
                         <td>{r.invested_pct}%</td>

@@ -39,6 +39,12 @@ class Agent:
         self.detail: dict = {}
 
     def say(self, message: str, level: str = "info") -> None:
+        if level in ("warn", "error"):  # a repeating problem is said once per half hour, not every tick
+            said = self.__dict__.setdefault("_said", {})
+            key = message[:50]
+            if time.time() - said.get(key, 0) < 1800:
+                return
+            said[key] = time.time()
         entry = self.ctx.db.log(self.name, level, message)
         self.ctx.bus.publish("log", entry)
 

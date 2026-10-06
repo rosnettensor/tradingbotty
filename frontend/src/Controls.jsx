@@ -123,7 +123,7 @@ function Sources() {
     <section className="panel sources">
       <h3>NEWS FEEDS <span className="dim">· the News Hunter reads them · every new feed is tested first</span></h3>
       <ChipList items={Object.keys(s.feeds)} status={s.status} onAdd={add} onRemove={remove} placeholder="https://…/rss" nameField />
-      <p className="dim small">A dot shows each feed's last read: green worked, red failed (hover for the reason).</p>
+      <p className="dim small">A dot shows each feed's last read: green worked, red failed (the reason is listed below the feeds). A feed that fails three times rests for 6 hours.</p>
       <h4>COINS THE BRAIN MAY TRADE</h4>
       <div className="chip-row">{(s.coins || []).map((c) => <span key={c} className="chip">{c}</span>)}</div>
       <p className="dim small">The {s.coins?.length} big coins with daily history since 2017 that the history test covers. A strategy only trades what it was tested on; the Fusion Scout checks each is really tradable on Fusion and what its minimum order is.</p>

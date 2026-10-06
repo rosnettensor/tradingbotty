@@ -67,13 +67,34 @@ class Budget:
         }
 
 
+def _no_credit(e: Exception) -> bool:
+    return "credit balance" in str(getattr(e, "message", e)).lower()
+
+
+def explain(e: Exception) -> str:
+    """A plain reason instead of the bare class name."""
+    if _no_credit(e):
+        return "the Anthropic account has no credit left (top up at console.anthropic.com); agents use plain math meanwhile"
+    if isinstance(e, anthropic.AuthenticationError):
+        return "the ANTHROPIC_API_KEY was refused (check it in the server settings)"
+    if isinstance(e, anthropic.RateLimitError):
+        return "too many calls right now, tried again later"
+    if isinstance(e, anthropic.NotFoundError):
+        return "unknown model name"
+    if isinstance(e, anthropic.APIConnectionError):
+        return "no connection to Anthropic"
+    msg = str(getattr(e, "message", "") or e)
+    return f"{e.__class__.__name__}: {msg[:160]}"
+
+
 class LLM:
     def __init__(self, api_key: str | None, budget: Budget, db, fast_model: str, deep_model: str):
-        self.client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=2) if api_key else None
+        self.client = anthropic.AsyncAnthropic(api_key=api_key, max_retries=2, timeout=90) if api_key else None
         self.budget = budget
         self.db = db
         self.fast_model = fast_model
         self.deep_model = deep_model
+        self.last_error: dict | None = None
 
     @property
     def available(self) -> bool:
@@ -101,26 +122,34 @@ class LLM:
             messages=[{"role": "user", "content": prompt}],
             output_config={"format": {"type": "json_schema", "schema": schema}},
         )
-        if deep:
+        if deep and "haiku" not in model:  # Haiku has no effort setting: sending it is refused
             kwargs["output_config"]["effort"] = "low"
         try:
             try:
                 resp = await self.client.messages.create(**kwargs)
-            except anthropic.BadRequestError:
+            except anthropic.BadRequestError as e:
+                if _no_credit(e):
+                    raise
+                self.db.log(agent, "info", f"Claude refused the structured request ({explain(e)}); asking for plain JSON.")
                 # model without structured outputs: ask for plain JSON instead
                 kwargs.pop("output_config")
                 kwargs["system"] = system + "\nReply with only a JSON object matching this schema:\n" + json.dumps(schema)
                 resp = await self.client.messages.create(**kwargs)
         except anthropic.APIError as e:
-            self.db.log(agent, "warn", f"Claude call failed: {e.__class__.__name__}")
+            self.db.log(agent, "warn", "Claude call failed: " + explain(e))
+            self.last_error = {"ts": time.time(), "why": explain(e)}
             return None
+        self.last_error = None
         cost = self._price(model, resp.usage.input_tokens, resp.usage.output_tokens)
         self.db.execute(
             "INSERT INTO llm_calls(ts,agent,model,input_tokens,output_tokens,cost_usd) VALUES(?,?,?,?,?,?)",
             (time.time(), agent, model, resp.usage.input_tokens, resp.usage.output_tokens, cost),
         )
         if resp.stop_reason == "refusal":
+            self.last_error = {"ts": time.time(), "why": "Claude declined to answer"}
             return None
+        if resp.stop_reason == "max_tokens":
+            self.last_error = {"ts": time.time(), "why": "the answer was cut off (too long)"}
         text = "".join(b.text for b in resp.content if b.type == "text")
         try:
             data = json.loads(text)

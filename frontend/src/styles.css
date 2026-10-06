@@ -863,3 +863,6 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 :root[data-skin="minimal"] .logo { letter-spacing: 0.18em; }
 :root[data-skin="bridge"] .mtabs button.active { background: var(--amber); color: #000; }
 :root[data-skin="terminal"] .mtabs button.active { background: var(--cyan); color: #000; }
+
+.chip-why { font-size: 11px; color: var(--red); opacity: .85; margin: 2px 0; overflow-wrap: anywhere; }
+.chip-why b { color: inherit; }

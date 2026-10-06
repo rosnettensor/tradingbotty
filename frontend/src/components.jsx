@@ -77,6 +77,11 @@ export function ChipList({ items, onRemove, onAdd, placeholder, status = {}, sta
           );
         })}
       </div>
+      {items.filter((it) => status[statusKey(it)] && !status[statusKey(it)].ok).map((it) => {
+        const st = status[statusKey(it)];
+        const paused = st.pause_until && st.pause_until * 1000 > Date.now();
+        return <div key={it} className="chip-why"><b>{it}</b>: {st.error || "failed"}{paused ? " · resting, next try " + new Date(st.pause_until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</div>;
+      })}
       <div className="chip-add">
         {nameField && <input value={name} onChange={(e) => setName(e.target.value)} placeholder="name" style={{ width: 110 }} />}
         <input value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder}

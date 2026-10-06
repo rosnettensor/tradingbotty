@@ -146,7 +146,10 @@ class FastTrader:
         try:
             await self._decide(c, bar)
         except Exception as ex:
-            e._log("Fast Trader", "error", f"Fast decision failed: {str(ex)[:160] or type(ex).__name__}. Retrying next minute.")
+            msg = f"Fast decision failed: {str(ex)[:160] or type(ex).__name__}. Retrying every minute."
+            if e.__dict__.get("_fast_err") != (bar, msg[:60]):  # say it once per 4-hour candle, not every minute
+                e._fast_err = (bar, msg[:60])
+                e._log("Fast Trader", "error", msg)
         finally:
             e._fast_trading = False
 

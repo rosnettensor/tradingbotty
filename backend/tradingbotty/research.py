@@ -128,7 +128,7 @@ def synthetic_rows(symbols: list[str], days: int = 720, seed: int = 7) -> dict[s
     return out
 
 
-BINANCE = "https://api.binance.com/api/v3/klines"
+BINANCE = "https://data-api.binance.vision/api/v3/klines"  # Binance's public market-data mirror: same data, open to servers
 COINBASE = "https://api.exchange.coinbase.com/products"
 HISTORY_START = 1483228800  # 2017-01-01: about as far back as exchange APIs give daily candles for free
 
@@ -326,9 +326,9 @@ class Donchian(Strategy):
     }
 
     def __init__(self, entry: int, exit_: int, slots: int = 3, regime: int | None = 50, atr_mult: float = 3.0,
-                 filt: str | None = None):
+                 filt: str | None = None, tp: float | None = None, lock: tuple[float, float] | None = None):
         self.entry, self.exit, self.slots, self.regime, self.atr_mult = entry, exit_, slots, regime, atr_mult
-        self.filt = filt
+        self.filt, self.tp, self.lock = filt, tp, lock
         f = f", BTC filter {regime}d" if regime else ", no filter"
         rule = self.FILTERS.get(filt) or self.CALM.get(filt) or ("", "")
         self.name = f"Breakout {entry}/{exit_} days, {slots} slots{f}" + rule[0]
@@ -338,7 +338,20 @@ class Donchian(Strategy):
             self.group = "Trend + alternative data"
         elif filt in self.CALM:
             self.group = "Trend + calm coins"
+        if tp:
+            self.name += f", take +{round(tp * 100)}%"
+            self.explain += (f" Takes the whole gain at +{round(tp * 100)}% and leaves that coin alone for {exit_} "
+                             "days, so it doesn't buy straight back in.")
+            self.group = "Trend + profit taking"
+        if lock:
+            self.name += f", lock +{round(lock[1] * 100)}% after +{round(lock[0] * 100)}%"
+            self.explain += (f" Once a coin is up {round(lock[0] * 100)}%, it is sold if it falls back to "
+                             f"+{round(lock[1] * 100)}%: a won trade can't turn into a loss.")
+            self.group = "Trend + profit taking"
         self.peak: dict[str, float] = {}
+        self.entry_px: dict[str, float] = {}
+        self.locked: set[str] = set()
+        self.rest: dict[str, int] = {}   # coin -> first day it may be bought again after a take-profit
         self._vols: tuple[int, dict[str, float]] | None = None
 
     def _vol(self, cd, i) -> dict[str, float]:
@@ -371,17 +384,31 @@ class Donchian(Strategy):
             a = atr(cd, s, i)
             self.peak[s] = max(self.peak.get(s, c), c)
             out = (lows and c < min(lows)) or (a and c < self.peak[s] - self.atr_mult * a)
+            ep = self.entry_px.get(s)
+            if ep and c:
+                if self.tp and c >= ep * (1 + self.tp):
+                    out = True
+                    self.rest[s] = i + self.exit
+                if self.lock:
+                    if c >= ep * (1 + self.lock[0]):
+                        self.locked.add(s)
+                    if s in self.locked and c <= ep * (1 + self.lock[1]):
+                        out = True
             if not out:
                 keep[s] = 1 / self.slots
             else:
                 self.peak.pop(s, None)
+                self.entry_px.pop(s, None)
+                self.locked.discard(s)
         if self.regime and not btc_uptrend(cd, i, self.regime):
             keep = {}
             self.peak.clear()
+            self.entry_px.clear()
+            self.locked.clear()
         else:
             cands = []
             for s in cd.coins:
-                if s in keep or cd.c[s][i] is None:
+                if s in keep or cd.c[s][i] is None or self.rest.get(s, 0) > i:
                     continue
                 highs = [x for x in cd.h[s][i - self.entry:i] if x is not None]
                 xs = cd.closes(s, i, 31)
@@ -389,7 +416,7 @@ class Donchian(Strategy):
                     cands.append((-daily_vol(xs) if self.filt == "calmfirst" else xs[-1] / xs[0], s))
             for _, s in sorted(cands, reverse=True)[:self.slots - len(keep)]:
                 keep[s] = 1 / self.slots
-                self.peak[s] = cd.c[s][i]
+                self.peak[s] = self.entry_px[s] = cd.c[s][i]
         return keep if set(keep) != set(held) else None
 
 
@@ -446,6 +473,9 @@ def all_strategies() -> list[Strategy]:
             Donchian(15, 7), Donchian(25, 12), Donchian(20, 10, regime=100)]
     out += [Donchian(20, 10, filt=f) for f in Donchian.FILTERS]  # the Pattern Hunter's data, tested as trading rules
     out += [Donchian(20, 10, filt=f) for f in Donchian.CALM]
+    # take the gain early instead of letting it run: does locking in profits beat riding the trend?
+    out += [Donchian(20, 10, tp=0.25), Donchian(20, 10, tp=0.5), Donchian(20, 10, lock=(0.1, 0.02)),
+            Donchian(20, 10, lock=(0.2, 0.08))]
     out += [Mix(Donchian(20, 10), Rotation(30, 3), "Breakout 20/10, half Top 3 by 30-day strength"),
             Mix(Donchian(20, 10), BtcRegime(50), "Breakout 20/10, half Bitcoin above its 50-day average")]
     return out
@@ -477,6 +507,18 @@ class Result:
     fees: float = 0.0            # fee drag: fees paid as a share of the account at the time, per year
     invested: float = 0.0        # share of days with money in coins
     ppy: float = 365.0           # bars per year
+    rounds: list[float] = field(default_factory=list)  # result of every closed position, after fees
+
+    def round_stats(self) -> dict:
+        """How lively and how often right: closed positions per week, share that won after fees, average result."""
+        r, weeks = self.rounds, max(1e-9, (len(self.equity) - 1) / self.ppy * 52)
+        if not r:
+            return {"rounds": 0, "per_week": 0.0, "win_pct": None, "avg_pct": None, "avg_win_pct": None, "avg_loss_pct": None}
+        wins, losses = [x for x in r if x > 0], [x for x in r if x <= 0]
+        return {"rounds": len(r), "per_week": round(len(r) / weeks, 2), "win_pct": round(len(wins) / len(r) * 100),
+                "avg_pct": round(sum(r) / len(r) * 100, 2),
+                "avg_win_pct": round(sum(wins) / len(wins) * 100, 1) if wins else None,
+                "avg_loss_pct": round(sum(losses) / len(losses) * 100, 1) if losses else None}
 
     def stats(self, a: int = 0, b: int | None = None) -> dict:
         eq = self.equity[a:b]
@@ -500,6 +542,7 @@ class Result:
 def simulate(cd: Candles, strat: Strategy, start: int, cost: float = FEE + SPREAD) -> Result:
     """Run one strategy from day `start`. Decisions on day i's close, fills at day i+1's open."""
     cash, qty = 1.0, {}
+    paid, got = {}, {}  # per open position: cash spent on it, cash back from it (for the win rate)
     res = Result(strat.name, strat.group, strat.explain, [1.0], ppy=cd.ppy)
     days_in = 0
     for i in range(start, len(cd.days) - 1):
@@ -517,11 +560,14 @@ def simulate(cd: Candles, strat: Strategy, start: int, cost: float = FEE + SPREA
                 if s in nxt and tgt < cur * 0.75:  # trade only real changes, not tiny drift
                     sell = cur - tgt
                     cash += sell * (1 - cost)
+                    got[s] = got.get(s, 0.0) + sell * (1 - cost)
                     res.fees += sell * cost / value
                     qty[s] -= sell / nxt[s]
                     res.trades += 1
                     if qty[s] * nxt[s] < 1e-9:
                         del qty[s]
+                        if paid.get(s):
+                            res.rounds.append(got.pop(s, 0.0) / paid.pop(s) - 1)
             for s, w in want.items():
                 if s not in nxt:
                     continue
@@ -529,6 +575,7 @@ def simulate(cd: Candles, strat: Strategy, start: int, cost: float = FEE + SPREA
                 buy = min(w * value - cur, cash)
                 if buy > max(0.25 * w * value, 1e-9) or (cur == 0 and buy > 1e-9):
                     cash -= buy
+                    paid[s] = paid.get(s, 0.0) + buy
                     res.fees += buy * cost / value
                     qty[s] = qty.get(s, 0.0) + buy * (1 - cost) / nxt[s]
                     res.trades += 1
@@ -669,7 +716,7 @@ def run_all(cd: Candles, strategies: list[Strategy] | None = None, focus: str | 
     rows = []
     for r in sims:
         rows.append({"name": r.name, "fees2x": stress.get(r.name), "group": r.group, "explain": r.explain, "trades": r.trades,
-                     "fees_pct": r.fees, "invested_pct": r.invested, "full": r.stats(),
+                     "fees_pct": r.fees, "invested_pct": r.invested, "full": r.stats(), **r.round_stats(),
                      "first_half": r.stats(0, half + 1), "second_half": r.stats(half),
                      "last_2y": r.stats(max(0, n - int(730 * k))), "last_1y": r.stats(max(0, n - int(365 * k))),
                      "last_6m": r.stats(max(0, n - int(182 * k))),

@@ -22,7 +22,7 @@ COST = 0.0025 + 0.0025          # Fusion fee + a wider spread on smaller coins, 
 MAX_COINS = 40
 STABLES = {"USDT", "USDC", "FDUSD", "TUSD", "DAI", "USDP", "EUR", "EURI", "BUSD", "USDE", "PYUSD", "AEUR", "XUSD",
            "PAXG", "WBTC", "WBETH", "BFUSD"}
-TICKER = "https://api.binance.com/api/v3/ticker/24hr"
+TICKER = "https://data-api.binance.vision/api/v3/ticker/24hr"
 
 
 # ------------------------------------------------------------------ strategies (bars are 4 hours)
@@ -218,6 +218,11 @@ class DipBuyer(Strategy):
         return keep if set(keep) != set(held) else None
 
 
+def _action(st: Strategy) -> Strategy:
+    st.group = "Fast: action"
+    return st
+
+
 def fast_strategies() -> list[Strategy]:
     out: list[Strategy] = [research.HoldBTC()]
     for entry, exit_ in ((12, 6), (18, 9), (30, 12)):          # 2/1, 3/1.5 and 5/2 days
@@ -233,6 +238,12 @@ def fast_strategies() -> list[Strategy]:
     out += [FastBreakout(18, 9, 2, vol_x=2.0), FastBreakout(12, 6, 1, vol_x=2.0), PumpRider(vol_x=2.0),
             PumpRider(min_move=0.15, tp=0.2, stop=0.08, vol_x=3.0)]
     out += [DipBuyer(), DipBuyer(drop=0.15, tp=0.1, stop=0.1), DipBuyer(slots=1)]
+    # action: many quick trades with small targets, several a week. Does anything survive the fees?
+    out += [_action(FastBreakout(6, 3, 2, tp=0.06, max_hold=12)),
+            _action(FastBreakout(6, 3, 2, tp=0.1, max_hold=18, vol_x=2.0)),
+            _action(PumpRider(look=6, min_move=0.08, tp=0.1, stop=0.05, max_hold=6, vol_x=2.0)),
+            _action(PumpRider(look=2, min_move=0.05, tp=0.06, stop=0.04, max_hold=6)),
+            _action(DipBuyer(drop=0.07, tp=0.05, stop=0.06, max_hold=12))]
     # the daily brain's rules on the same coins and bars, as the slow yardstick
     out.append(FastBreakout(120, 60, 3, tp=None, max_hold=None, label="Slow yardstick: the daily brain's 20/10-day rules",
                             group="Slow (for comparison)"))

@@ -26,7 +26,12 @@ def _day(ts: float) -> str:
 
 
 def _hm(ts: float) -> str:
-    return time.strftime("%H:%M", time.localtime(ts))
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        return datetime.fromtimestamp(ts, ZoneInfo("Europe/Zurich")).strftime("%H:%M")
+    except Exception:
+        return time.strftime("%H:%M", time.localtime(ts))
 
 
 def next_utc_midnight(now: float | None = None) -> float:
@@ -283,9 +288,16 @@ class DataCollector(Agent):
                                            else f"Wikipedia views: {key[5:]}" if key.startswith("wiki:") else key)
             rows.append([label, n, _day(series[0][0]) if series else None, _day(last[0]) if last else None,
                          None if not last else (round(last[1] * 100, 4) if key.startswith("funding:") else round(last[1], 2))])
-        if errors:
+        stale = []  # a source that missed one day still has yesterday's value; only old data is a real problem
+        for x in errors:
+            series = e.db.get(f"alt:{x.split(' (')[0]}") or []
+            if not series or time.time() - series[-1][0] > 3 * 86400:
+                stale.append(x)
+        if stale:
             self.status = "warn"
-        self.summary = f"{len(days)} series, {sum(days.values())} days stored" + (f"; {len(errors)} failed today" if errors else "")
+        self.summary = (f"{len(days)} series, {sum(days.values())} days stored"
+                        + (f"; {len(errors)} missed today" if errors else "")
+                        + (f", {len(stale)} out of date" if stale else ""))
         self.detail = {
             "did": [f"Refreshed on {_day(st.get('ts', time.time()))} at {_hm(st.get('ts', time.time()))}",
                     f"{len(days) - len(errors)} series updated, {len(errors)} failed (their history stays)"]
@@ -661,6 +673,10 @@ class Professor(Agent):
         b = e.brain()
         due = self.queued or (b.get("ts") and b["ts"] > last.get("ts", 0) and time.time() - b["ts"] < 6 * 3600)
         self.next_run = 0 if due else next_utc_midnight() + 600
+        retry = self.__dict__.get("_retry_at", 0)
+        if due and time.time() < retry:
+            self.next_run = retry  # the last call failed: wait an hour before the next try
+            return
         if last:
             self._show(last)
         else:
@@ -671,13 +687,23 @@ class Professor(Agent):
             self.summary = "reviews paused in Controls"
             self.queued = False
             return
-        self.queued = False
+        asked, self.queued = self.queued, False
         brief = self.brief()
-        res = await e.llm.json_call(self.name, self.prompt, str(brief), PROF_SCHEMA, deep=True, max_tokens=2500,
+        res = await e.llm.json_call(self.name, self.prompt, str(brief), PROF_SCHEMA, deep=True, max_tokens=8000,
                                     model=self.model)
         if not res or res.get("_over_budget"):
-            e.db.set("professor_last", {**last, "ts": time.time(), "skipped": "no AI key or budget"})
-            self.summary = "resting (no AI key or budget)"
+            if not e.llm.available:
+                why = "no AI key"
+            elif res and res.get("_over_budget"):
+                why = "today's AI budget is used up"
+            else:
+                why = "the AI call failed: " + ((e.llm.last_error or {}).get("why") or "no usable answer")
+                self.queued = asked  # a review you asked for is tried again too
+                self._retry_at = self.next_run = time.time() + 3600
+                self.summary = f"resting ({why[:100]}), next try in an hour"
+                return
+            e.db.set("professor_last", {**last, "ts": time.time(), "skipped": why})
+            self.summary = f"resting ({why})"
             return
         self.cost += res.get("_cost", 0)
         blocks = [x for x in res.get("block", []) if x.get("symbol") in research.UNIVERSE]

@@ -879,12 +879,19 @@ class Engine:
     async def research_tick(self) -> None:
         """The Researcher: once a day, after the daily candle closes, re-runs every strategy on all history, then
         the fast lab."""
+        now = time.time()
+        tried = self.__dict__.setdefault("_lab_tried", {})
         last = (self.db.get("research") or {}).get("ts", 0)
-        if time.time() // 86400 > last // 86400 and time.time() % 86400 > 900:
+        if now // 86400 > last // 86400 and now % 86400 > 900 and now - tried.get("research", 0) > 3600:
+            tried["research"] = now  # a failed run (no data reachable) is tried again in an hour, not every tick
             await self.run_research()
         last = (self.db.get("fastlab") or {}).get("ts", 0)
-        if time.time() // 86400 > last // 86400 and time.time() % 86400 > 1800:
-            await self.run_fastlab()
+        if now // 86400 > last // 86400 and now % 86400 > 1800 and now - tried.get("fast", 0) > 3600:
+            tried["fast"] = now
+            try:
+                await self.run_fastlab()
+            except Exception:
+                pass  # already in the feed as "Fast lab failed"
 
     # ------------------------------------------------------------------ fast lab: 4-hour candles, speculative rules
     async def run_fastlab(self) -> dict:
