@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChipList, Slider, Toggle } from "./components.jsx";
 import { api, usePoll } from "./useBot.js";
 import { SoundToggle, previewTrade } from "./TradeCinema.jsx";
+import widgetSource from "./widget/scriptable-widget.js?raw";
 
 export default function Controls({ state }) {
   return (
@@ -11,6 +12,7 @@ export default function Controls({ state }) {
         <Moved state={state} />
         <HowItTrades state={state} />
         <Phone state={state} />
+        <Widget />
         <TradeShow state={state} />
       </div>
       <Sources />
@@ -155,6 +157,44 @@ function Sources() {
       <p className="dim small">The {s.coins?.length} big coins with daily history since 2017 that the history test covers. A strategy only trades what it was tested on; the Fusion Scout checks each is really tradable on Fusion and what its minimum order is.</p>
       <h4>FREE DATA (NO KEYS)</h4>
       <p className="small">Kraken live prices · Binance, Coinbase and Kraken daily history · alternative.me Fear & Greed · Binance futures funding · Wikipedia page views · DefiLlama stablecoins · blockchain.com hash rate. See Research for what they're worth.</p>
+    </section>
+  );
+}
+
+// The iPhone home-screen widget: a Scriptable script with this server's address and a read-only key filled in.
+function Widget() {
+  const [script, setScript] = useState(null);
+  const [msg, setMsg] = useState("");
+  const make = async () => {
+    const { key } = await api("widget/key");
+    return widgetSource.replaceAll("__URL__", window.location.origin).replaceAll("__KEY__", key || "");
+  };
+  const copy = async () => {
+    try {
+      const text = script || await make();
+      setScript(text);
+      await navigator.clipboard.writeText(text);
+      setMsg("Kopiert. Jetzt in Scriptable einfügen (Schritt 2).");
+    } catch (e) {
+      setMsg(e?.message?.includes("widget") ? e.message : "Kopieren ging nicht: halte den Text unten gedrückt und kopiere ihn von Hand.");
+      if (!script) { try { setScript(await make()); } catch { /* shown above */ } }
+    }
+  };
+  return (
+    <section className="panel widget-setup">
+      <h3>IPHONE WIDGET <span className="dim">· your numbers on the home screen, read-only</span></h3>
+      <ol className="steps">
+        <li>Lade die Gratis-App <b>Scriptable</b> aus dem App Store.</li>
+        <li>Tippe hier auf <b>Script kopieren</b>. In Scriptable: <b>+</b> oben rechts, einfügen, oben den Namen auf <b>TradingBotty</b> setzen, <b>Fertig</b>.</li>
+        <li>Homescreen lange drücken, <b>+</b> oben links, <b>Scriptable</b> wählen, Grösse wählen (klein, mittel oder gross), <b>Widget hinzufügen</b>.</li>
+        <li>Das neue Widget lange drücken, <b>Widget bearbeiten</b>, bei Script <b>TradingBotty</b> wählen.</li>
+      </ol>
+      <p className="dim small">Das Script enthält einen eigenen Schlüssel, der nur diese Zahlen öffnet, nicht dein Passwort und nie Orders. iOS aktualisiert Widgets etwa alle 15 Minuten; ein Tipp aufs Widget öffnet das Dashboard. Ein neues Passwort macht den alten Schlüssel ungültig: dann das Script neu kopieren.</p>
+      <div className="row-tools">
+        <button className="primary" onClick={copy}>Script kopieren</button>
+        {msg && <span className="dim small">{msg}</span>}
+      </div>
+      {script && <textarea className="widget-script" readOnly value={script} rows={6} onFocus={(e) => e.target.select()} />}
     </section>
   );
 }

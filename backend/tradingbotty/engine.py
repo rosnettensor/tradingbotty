@@ -1643,6 +1643,27 @@ class Engine:
             s["report"] = self.daily_report()
         return s
 
+    def widget(self) -> dict:
+        """The few numbers the iPhone home-screen widget shows (read-only, nothing secret)."""
+        w = self.wallet or {}
+        hist = self.db.get("wallet_hist", [])
+        now = time.time()
+        spark = [h[1] for h in hist if h[0] >= now - 7 * 86400][::6][-60:]  # the last week, ~every 30 min
+        f = self.fast.status() if self.fast.on() else None
+        reg = self.db.get("regime") or {}
+        course = self.stance.get()
+        last = (self.recent_trades(1) or [None])[0]
+        return {
+            "ts": now, "mode": "LIVE" if self.mode == "live" else "STANDBY", "kill": self.kill_switch,
+            "currency": w.get("currency", "CHF"), "total": w.get("total"), "change_24h": w.get("change_24h"),
+            "bot_edge": w.get("bot_edge"), "cash": w.get("fiat"), "spark": spark,
+            "brain": sorted(self.db.get("live_qty", {})),
+            "fast": {"value": round(f["value"], 2), "coins": sorted((f.get("pos") or {}).keys())} if f else None,
+            "mood": reg.get("name"), "course": course["name"] if course["key"] != "normal" else None,
+            "last": {"ts": last["ts"], "side": last["side"], "symbol": last["symbol"],
+                     "amount": round(last["notional"] or 0, 2), "pnl": last.get("pnl")} if last else None,
+        }
+
     def recent_trades(self, limit: int = 50) -> list[dict]:
         return self.db.query("SELECT ts,mode,symbol,side,notional,price,fee,pnl,reason FROM trades WHERE mode='live' "
                              "ORDER BY id DESC LIMIT ?", (limit,))

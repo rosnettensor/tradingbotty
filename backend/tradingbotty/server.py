@@ -55,7 +55,8 @@ app = FastAPI(title="TradingBotty", lifespan=lifespan)
 class PasswordGate:
     """With TB_PASSWORD set (always on a server), every page, API call and live feed needs the password.
     The browser asks once (any user name), then a cookie keeps you signed in for 30 days."""
-    OPEN = {"/api/health", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/manifest.webmanifest"}  # the phone fetches the icon without the password
+    OPEN = {"/api/health", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/manifest.webmanifest",  # the phone fetches the icon without the password
+            "/api/widget"}  # checks its own read-only key (see widget_key)
 
     def __init__(self, app, password: str | None):
         self.app, self.password = app, password
@@ -102,6 +103,26 @@ class PasswordGate:
 
 
 app.add_middleware(PasswordGate, password=settings.password)
+
+
+def widget_key() -> str:
+    """A read-only key for the iPhone widget, made from the dashboard password: it opens /api/widget and nothing
+    else, so the password itself never sits in the widget's script. A new password makes a new key."""
+    return hmac.new((settings.password or "").encode(), b"tradingbotty-widget", hashlib.sha256).hexdigest()[:32]
+
+
+@app.get("/api/widget")
+async def widget(key: str = ""):
+    if settings.password and not hmac.compare_digest(key.encode(), widget_key().encode()):
+        await asyncio.sleep(1)  # slows down guessing
+        raise HTTPException(401, "wrong widget key: copy the script again in Controls")
+    return engine.widget()
+
+
+@app.get("/api/widget/key")
+def get_widget_key():
+    """Behind the password: the key the Controls tab puts into the widget script."""
+    return {"key": widget_key() if settings.password else ""}
 
 
 @app.get("/api/health")
