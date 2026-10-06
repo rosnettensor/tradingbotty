@@ -163,3 +163,35 @@ class LLM:
                 return None
         data["_cost"] = cost
         return data
+
+    async def text_call(self, agent: str, system: str, messages: list[dict], max_tokens: int = 900,
+                        model: str | None = None) -> dict | None:
+        """A plain text answer to a conversation. Returns {"text", "_cost"}, {"_over_budget": True}, or None if
+        unavailable or failed (the reason is in last_error)."""
+        if not self.client:
+            return None
+        model = model or self.fast_model
+        chars = len(system) + sum(len(str(m.get("content", ""))) for m in messages)
+        estimate = self._price(model, chars // 3, max_tokens)
+        if not self.budget.can_spend(estimate):
+            return {"_over_budget": True}
+        try:
+            resp = await self.client.messages.create(model=model, max_tokens=max_tokens, system=system,
+                                                     messages=messages)
+        except anthropic.APIError as e:
+            self.db.log(agent, "warn", "Claude call failed: " + explain(e))
+            self.last_error = {"ts": time.time(), "why": explain(e)}
+            return None
+        self.last_error = None
+        cost = self._price(model, resp.usage.input_tokens, resp.usage.output_tokens)
+        self.db.execute(
+            "INSERT INTO llm_calls(ts,agent,model,input_tokens,output_tokens,cost_usd) VALUES(?,?,?,?,?,?)",
+            (time.time(), agent, model, resp.usage.input_tokens, resp.usage.output_tokens, cost),
+        )
+        if resp.stop_reason == "refusal":
+            self.last_error = {"ts": time.time(), "why": "Claude declined to answer"}
+            return None
+        if resp.stop_reason == "max_tokens":
+            self.last_error = {"ts": time.time(), "why": "the answer was cut off (too long)"}
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        return {"text": text, "_cost": cost}

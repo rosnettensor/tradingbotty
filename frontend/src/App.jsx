@@ -4,6 +4,7 @@ import Cockpit from "./Cockpit.jsx";
 import Agents from "./Agents.jsx";
 import Research from "./Research.jsx";
 import Controls from "./Controls.jsx";
+import ChatBar from "./ChatBar.jsx";
 import { Sparkline } from "./charts.jsx";
 import { SKINS, applySkin, currentSkin } from "./skins.js";
 
@@ -48,6 +49,7 @@ export default function App() {
         {tab === "research" && <Research state={state} openAgent={openAgent} />}
         {tab === "controls" && <Controls state={state} />}
       </main>
+      <ChatBar />
     </div>
   );
 }

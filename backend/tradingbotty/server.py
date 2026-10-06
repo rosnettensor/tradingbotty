@@ -210,6 +210,20 @@ def set_agent(aid: str, body: AgentIn):
         raise HTTPException(400, str(e))
 
 
+class ChatIn(BaseModel):
+    message: str
+    history: list = []
+
+
+@app.post("/api/chat")
+async def chat(body: ChatIn):
+    msg = body.message.strip()
+    if not msg or len(msg) > 2000:
+        raise HTTPException(400, "Ask a question of 1 to 2000 characters.")
+    history = [h for h in body.history if isinstance(h, dict)]
+    return await engine.chat(msg, history)
+
+
 class BrainIn(BaseModel):
     on: bool
     strategy: str | None = None

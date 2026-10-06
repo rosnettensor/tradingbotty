@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import math
 import re
 import time
@@ -1334,3 +1335,118 @@ class Engine:
     def recent_trades(self, limit: int = 50) -> list[dict]:
         return self.db.query("SELECT ts,mode,symbol,side,notional,price,fee,reason FROM trades WHERE mode='live' "
                              "ORDER BY id DESC LIMIT ?", (limit,))
+
+    # ------------------------------------------------------------------ "ask the bot"
+    CHAT_SYSTEM = (
+        "You are TradingBotty speaking in your own voice: a crypto trading bot that trades the owner's REAL money "
+        "on Bitpanda Fusion. The owner asks about your status, trades, agents and decisions. Answer only from the "
+        "JSON context below (a fresh snapshot of your state; times are local, amounts in the account currency). "
+        "If something is not in the context, say so plainly instead of guessing. Never invent numbers. "
+        "Reply in the language of the question (the owner writes German or English). Keep it short and friendly: "
+        "a few sentences or a tiny list, no tables. Never tell the owner to change API keys or move money outside "
+        "this app; for changes point to the right dashboard tab. This is real money: be honest about losses and risks."
+    )
+
+    def _chat_context(self) -> str:
+        """A compact snapshot of what the bot knows, for the chat (kept under ~6000 characters)."""
+        def when(ts):
+            return time.strftime("%d.%m. %H:%M", time.localtime(ts)) if ts else None
+
+        def cut(v, n=200):
+            return v[:n] if isinstance(v, str) else v
+
+        s = self.state(light=True)
+        w = s.get("wallet") or {}
+        b = s.get("brain") or {}
+        f = s.get("fast") or {}
+        lt = s.get("live_trades") or {}
+        ctx = {
+            "now": when(time.time()),
+            "mode": s.get("mode"), "kill_switch": s.get("kill_switch"), "simulated_data": s.get("simulate"),
+            "ai_budget_usd": s.get("budget"),
+            "account": {k: w.get(k) for k in ("venue", "currency", "total", "fiat", "bot_value", "fast_value",
+                                               "yours_value", "bot_edge", "bot_edge_pct", "change_24h", "change",
+                                               "start_total", "error") if w.get(k) is not None},
+            "coins": [{"symbol": c.get("symbol"), "value": c.get("value"),
+                       "owner": "bot" if c.get("bot") else "fast pot" if c.get("fast") else "yours"}
+                      for c in (w.get("all_coins") or [])[:10]],
+            "daily_brain": {"on": b.get("on"), "strategy": b.get("strategy"), "decided": when(b.get("ts")),
+                            "target": b.get("target"), "bitcoin_filter_ok": b.get("btc_ok"),
+                            "note": cut(b.get("note"), 300), "steps": [cut(x, 160) for x in (b.get("steps") or [])[:10]],
+                            "holds": sorted((self.db.get("live_qty") or {}).keys())},
+            "fast_pot": {"on": f.get("on"), "strategy": f.get("strategy"), "pot": f.get("pot"),
+                         "realized": f.get("realized"), "trades": f.get("trades"), "wins": f.get("wins"),
+                         "holds": sorted((f.get("pos") or {}).keys()) if isinstance(f.get("pos"), dict) else f.get("pos"),
+                         "note": cut(f.get("note"), 200), "decided": when(f.get("decided")), "next": when(f.get("next"))},
+            "guardian_blocks": {sym: {"reason": cut(g.get("reason"), 80), "until": when(g.get("until"))}
+                                for sym, g in (s.get("guard") or {}).items()},
+            "live_trades": {"count": lt.get("n"), "last": when(lt.get("last")),
+                            "recent": [{"t": when(t["ts"]), "side": t["side"], "sym": t["symbol"],
+                                        "amount": round(t["notional"] or 0, 2), "why": cut(t.get("reason"), 70)}
+                                       for t in self.recent_trades(8)]},
+            "agents": [{"name": a.name, "status": a.status, "summary": cut(a.summary, 120)}
+                       for a in self._by_id.values()],
+        }
+        logs = self.db.query("SELECT ts,agent,level,message FROM agent_log ORDER BY id DESC LIMIT 25")[::-1]
+        out = ""
+        for size in (160, 100, 60, 0):  # shorten the log until the whole context fits
+            ctx["log"] = [f"{when(r['ts'])} {r['agent']} [{r['level']}] {r['message'][:size]}" for r in logs] if size else []
+            out = json.dumps(ctx, ensure_ascii=False, default=str, separators=(",", ":"))
+            if len(out) <= 6000:
+                break
+        return out[:6000]
+
+    @staticmethod
+    def _german(message: str) -> bool:
+        return bool(re.search(r"[äöüß]|\b(wie|was|wer|wo|der|die|das|ist|geht|läuft|heute|und|ich|hat)\b",
+                              message.lower()))
+
+    def _chat_offline(self, message: str, why: str) -> dict:
+        """No AI: a plain explanation plus a few raw facts."""
+        de = self._german(message)
+        w = self.wallet or {}
+        cur = w.get("currency", "")
+        holds = ", ".join(sorted((self.db.get("live_qty") or {}).keys()))
+        total = f"{w['total']:.2f} {cur}" if w.get("total") is not None else None
+        edge = f"{w['bot_edge']:+.2f} {cur}" if w.get("bot_edge") is not None else None
+        if de:
+            facts = [f"Modus: {self.mode}", f"Konto: {total or 'noch nicht gelesen'}",
+                     f"Eigenes Ergebnis des Bots: {edge or 'noch unbekannt'}",
+                     f"Daily Brain hält: {holds or 'nichts (Cash)'}"]
+        else:
+            facts = [f"Mode: {self.mode}", f"Account: {total or 'not read yet'}",
+                     f"Bot's own result: {edge or 'not known yet'}", f"Daily Brain holds: {holds or 'nothing (cash)'}"]
+        return {"ok": False, "answer": why + "\n\n" + "\n".join(facts)}
+
+    async def chat(self, message: str, history: list[dict]) -> dict:
+        """Answer the owner's question about the bot, in the bot's own voice, from a snapshot of its state."""
+        de = self._german(message)
+        if not self.llm.available:
+            return self._chat_offline(message, "Ich kann gerade nicht frei antworten: es ist kein ANTHROPIC_API_KEY "
+                                               "eingerichtet. Hier die nackten Zahlen:" if de else
+                                      "I can't answer freely right now: no ANTHROPIC_API_KEY is set up. "
+                                      "Here are the raw facts:")
+        turns: list[dict] = []
+        for h in (history or [])[-8:]:
+            role, content = (h or {}).get("role"), (h or {}).get("content")
+            if role not in ("user", "assistant") or not isinstance(content, str) or not content.strip():
+                continue
+            if turns and turns[-1]["role"] == role:
+                turns[-1]["content"] += "\n\n" + content[:2000]
+            else:
+                turns.append({"role": role, "content": content[:2000]})
+        while turns and turns[0]["role"] != "user":
+            turns.pop(0)
+        if turns and turns[-1]["role"] == "user":
+            turns.pop()  # an unanswered question: the new one replaces it
+        turns.append({"role": "user", "content": message})
+        system = self.CHAT_SYSTEM + "\n\nContext (JSON):\n" + self._chat_context()
+        res = await self.llm.text_call("Chat", system, turns)
+        if res and res.get("_over_budget"):
+            return self._chat_offline(message, "Das KI-Budget ist für heute aufgebraucht. Hier die nackten Zahlen:" if de
+                                      else "The AI budget is used up for today. Here are the raw facts:")
+        if not res or not res.get("text"):
+            why = (self.llm.last_error or {}).get("why") or "no answer"
+            return self._chat_offline(message, (f"Claude hat nicht geantwortet ({why}). Hier die nackten Zahlen:" if de
+                                                else f"Claude didn't answer ({why}). Here are the raw facts:"))
+        return {"ok": True, "answer": res["text"], "cost": round(res.get("_cost", 0.0), 5)}

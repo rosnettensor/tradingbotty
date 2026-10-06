@@ -866,3 +866,49 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 
 .chip-why { font-size: 11px; color: var(--red); opacity: .85; margin: 2px 0; overflow-wrap: anywhere; }
 .chip-why b { color: inherit; }
+
+/* ================================================================== ASK THE BOT
+   Space opens a command-palette bar over everything; on phones a round button above the tab bar does the same. */
+.chat-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: center; align-items: flex-start;
+  padding: max(12vh, calc(env(safe-area-inset-top, 0px) + 12px)) 12px 12px;
+  background: rgba(0, 0, 0, 0.35); background: color-mix(in srgb, var(--bg) 55%, transparent);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); animation: chat-in 0.14s ease-out; }
+.chat-box { width: min(680px, 100%); max-height: calc(100svh - 24vh); display: flex; flex-direction: column; overflow: hidden;
+  background: var(--overlay); border: 1px solid var(--line); border-radius: 12px;
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--faint) inset; }
+@keyframes chat-in { from { opacity: 0; } }
+.chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 14px 6px; display: grid; gap: 10px; align-content: start;
+  overscroll-behavior: contain; }
+.chat-msg { display: grid; gap: 2px; max-width: 86%; }
+.chat-msg.me { justify-self: end; justify-items: end; }
+.chat-msg.bot { justify-self: start; }
+.chat-bubble { padding: 7px 11px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.chat-msg.me .chat-bubble { background: var(--faint); border: 1px solid var(--line); color: var(--hi); border-bottom-right-radius: 3px; }
+.chat-msg.bot .chat-bubble { background: var(--sunk); color: var(--text); border-left: 2px solid var(--cyan); border-bottom-left-radius: 3px; }
+.chat-msg.bot.warn .chat-bubble { border-left-color: var(--amber); }
+.chat-bubble b { color: var(--hi); }
+.chat-thinking { color: var(--dim); animation: blink 1.2s infinite; }
+.chat-cost { font-size: 10px; color: var(--dim); opacity: 0.7; padding: 0 4px; }
+.chat-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 14px 14px 4px; }
+.chat-chips button { text-transform: none; letter-spacing: 0; font-size: 12px; border-radius: 999px; padding: 5px 12px;
+  background: var(--faint); color: var(--text); }
+.chat-input { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--track); }
+.chat-chips + .chat-input { border-top: 0; }
+.chat-prompt { color: var(--cyan); font-size: 18px; line-height: 1; }
+.chat-input input { flex: 1; min-width: 0; font: inherit; font-size: 15px; color: var(--hi); background: transparent; border: 0;
+  outline: none; padding: 6px 0; }
+.chat-input input::placeholder { color: var(--dim); }
+.chat-clear { font-size: 10px; padding: 3px 8px; color: var(--dim); }
+.chat-fab { display: none; }
+@media (max-width: 640px) {
+  .chat-fab { display: grid; place-items: center; position: fixed; z-index: 45; right: 14px;
+    bottom: calc(70px + env(safe-area-inset-bottom, 0px)); width: 48px; height: 48px; padding: 0; border-radius: 50%;
+    font-size: 20px; text-transform: none; background: var(--overlay); border-color: var(--line);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); }
+  .chat-backdrop { padding: calc(env(safe-area-inset-top, 0px) + 10px) 8px 8px; }
+  .chat-box { max-height: calc(100svh - 20px - env(safe-area-inset-top, 0px)); }
+  .chat-input input { font-size: 16px; }
+}
+:root[data-skin="terminal"] .chat-box, :root[data-skin="terminal"] .chat-bubble { border-radius: 0; }
+:root[data-skin="terminal"] .chat-fab { border-radius: 50% !important; }
