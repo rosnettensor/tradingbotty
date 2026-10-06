@@ -1,6 +1,6 @@
 // The Regime Radar's verdict as a small chip: today's market mood, how long it has lasted, and the last 90 days
 // as a strip of colored ticks. Tap to open the agent.
-const TONE = { bull: "var(--green)", bear: "var(--red)", sideways: "var(--faint)", wild: "var(--amber)" };
+const TONE = { bull: "var(--green)", bear: "var(--red)", sideways: "var(--dim)", wild: "var(--amber)" };
 
 export default function MoodChip({ regime, onOpen, compact = false }) {
   if (!regime?.label) return null;

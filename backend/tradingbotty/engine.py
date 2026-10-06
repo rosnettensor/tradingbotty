@@ -830,9 +830,10 @@ class Engine:
         self.db.execute(
             "INSERT INTO trades(ts,variant_id,mode,symbol,side,qty,price,notional,fee,pnl,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (time.time(), BRAIN_ID if book == "brain" else "fast", "live", sym, side, float(ex.get("quantity", 0) or 0), float(ex.get("price", 0) or 0),
-             notional, float(ex.get("fee", 0) or 0), None, reason))
+             notional, float(ex.get("fee", 0) or 0), entry.get("pnl") if entry.get("closed") else None, reason))
         self.bus.publish("trade", {"mode": "live", "symbol": sym, "side": side, "notional": round(notional, 2),
-                                   "reason": reason, "ts": time.time(), "book": book})
+                                   "reason": reason, "ts": time.time(), "book": book,
+                                   "pnl": entry.get("pnl") if entry.get("closed") else None})
         self._diary_add(entry)
         if self.settings["phone"].get("trades"):
             who = "⚡ Fast pot" if book == "fast" else "🧠 Daily Brain"
@@ -1624,7 +1625,7 @@ class Engine:
         return s
 
     def recent_trades(self, limit: int = 50) -> list[dict]:
-        return self.db.query("SELECT ts,mode,symbol,side,notional,price,fee,reason FROM trades WHERE mode='live' "
+        return self.db.query("SELECT ts,mode,symbol,side,notional,price,fee,pnl,reason FROM trades WHERE mode='live' "
                              "ORDER BY id DESC LIMIT ?", (limit,))
 
     # ------------------------------------------------------------------ "ask the bot"

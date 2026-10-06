@@ -1073,3 +1073,23 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 @media (prefers-reduced-motion: reduce) { :root[data-skin="aurora"] body::before { animation: none; transition: none; } }
 :root[data-skin="aurora"] .react-flow { --xy-background-color: transparent; }
 :root[data-skin="aurora"] .logo small { opacity: 1; }   /* opacity would drop it out of the gradient text */
+
+/* Regime Radar mood chip: today's market mood, its age in days, and the last 90 days as ticks */
+.mood-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; padding: 6px 10px;
+  border: 1px solid var(--line); border-left: 3px solid var(--mood, var(--dim)); border-radius: 6px; background: transparent;
+  color: var(--hi); text-align: left; cursor: pointer; }
+.mood-chip.mood-bull { --mood: var(--green); }
+.mood-chip.mood-bear { --mood: var(--red); }
+.mood-chip.mood-sideways { --mood: var(--dim); }
+.mood-chip.mood-wild { --mood: var(--amber); }
+.mood-chip .mood-name { font-weight: 700; font-size: 13px; white-space: nowrap; }
+.mood-chip .mood-days { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.mood-chip .mood-strip { display: flex; height: 8px; width: 100%; overflow: hidden; }
+.mood-chip .mood-strip i { flex: 1 1 0; min-width: 0; opacity: 0.85; }
+.mood-chip.compact { flex-direction: row; align-items: baseline; gap: 8px; margin: 0 12px 6px; align-self: flex-start; }
+.mood-chip.compact::before { content: "Market mood"; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+
+/* Aurora on phones: keep the colors, drop the moving background to save battery */
+@media (max-width: 640px) {
+  :root[data-skin="aurora"] body::before { animation: none; }
+}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
 import { DailyChart, LineChart } from "./charts.jsx";
 import { Stat, Tabs } from "./components.jsx";
@@ -192,6 +193,7 @@ function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
             {edge != null && <div className={pctColor(edge)}>bot {edge >= 0 ? "+" : ""}{edge.toFixed(2)} {cur} · {fmt.pct(w.change_pct)} since start</div>}
           </div>} />
       </section>
+      <MoodChip regime={state.regime} onOpen={() => openAgent("regime")} compact />
       <div className="mhud">
         {[...data.hud.left, ...data.hud.right].map(([k, v, tone]) => (
           <div key={k}><span>{k}</span><b className={tone}>{v}</b></div>
@@ -350,6 +352,7 @@ function StatStrip({ state, openAgent }) {
   const near = rows.filter((x) => ["would buy", "breakout, no slot", "near breakout"].includes(x.state));
   return (
     <section className="panel stats">
+      <MoodChip regime={state.regime} onOpen={() => openAgent("regime")} />
       <Stat label="Real trades" value={lt.n ?? 0} tone={lt.n ? "up" : "dim"} sub={lt.last ? `last ${ago(lt.last)}` : "none yet"}
         title="Orders placed on your real Bitpanda account" />
       <Stat label="Near a breakout" value={near.length} tone={near.length ? "up" : "dim"} sub={near.slice(0, 4).map((x) => x.symbol).join(" ") || "none"}
