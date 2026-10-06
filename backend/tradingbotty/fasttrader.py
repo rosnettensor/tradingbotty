@@ -16,7 +16,7 @@ import time
 
 from . import fastlab, research
 
-DEFAULT = "Pump rider: up 15%+ in 1d, 2 slots, take +20% / stop -8%, max 2d, volume 3x"
+DEFAULT = "Dip buyer: down 15%+ in 1d inside an uptrend, 2 slots, take +10% / stop -10%"  # the one robust fast rule
 MIN_SLOT = 32.0      # per position: Fusion's 25 (some coins 30) minimum, with room for a 20% drop before it can't be sold
 SETTLE = 120         # seconds after a candle closes before the exchange is sure to have it
 

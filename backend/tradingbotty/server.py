@@ -237,6 +237,24 @@ async def brain_set(body: BrainIn):
         raise HTTPException(400, str(e))
 
 
+class ThinkTankIn(BaseModel):
+    action: str
+    name: str | None = None
+
+
+@app.get("/api/thinktank")
+def thinktank_get():
+    return engine.thinktank_info()
+
+
+@app.post("/api/thinktank")
+def thinktank_post(body: ThinkTankIn):
+    try:
+        return engine.thinktank_action(body.action, body.name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/research/run")
 async def research_run():
     try:

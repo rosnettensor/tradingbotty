@@ -912,3 +912,21 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 }
 :root[data-skin="terminal"] .chat-box, :root[data-skin="terminal"] .chat-bubble { border-radius: 0; }
 :root[data-skin="terminal"] .chat-fab { border-radius: 50% !important; }
+
+/* think tank */
+.tt-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 10px 0 6px; }
+.tt-stats > div { background: var(--sunk); border-radius: var(--radius, 8px); padding: 8px 10px; display: flex; flex-direction: column; min-width: 0; }
+.tt-stats b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.tt-stats span { font-size: 11px; opacity: .7; }
+.tt-stats .up b { color: var(--green); } .tt-stats .amber b { color: var(--amber); }
+.tt-badge { font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+.tt-badge.up { color: var(--green); } .tt-badge.amber { color: var(--amber); } .tt-badge.down { color: var(--red); } .tt-badge.dim { opacity: .6; }
+.tt-echo { margin: 12px 0; padding: 10px 12px; border: 1px dashed var(--magenta); border-radius: var(--radius, 8px); }
+.tt-echo h4 { margin: 0 0 6px; }
+.tt-echo-row { margin: 4px 0; overflow-wrap: anywhere; }
+.tt-detail td { background: var(--sunk); white-space: normal; }
+.tt-formula { display: block; margin: 6px 0; padding: 6px 8px; background: var(--overlay); border-radius: 6px; overflow-x: auto; white-space: pre; }
+.tt-recent { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
+.tt-recent code { overflow-wrap: anywhere; }
+.tt-grammar { white-space: pre-wrap; font-size: 11px; }
+.amber { color: var(--amber); }

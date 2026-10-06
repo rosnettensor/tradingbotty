@@ -17,9 +17,9 @@ def test_chat_without_ai_key_gives_raw_facts(tmp_path, monkeypatch):
     e.llm.client = None                       # no ANTHROPIC_API_KEY, whatever the local .env says
     r = asyncio.run(e.chat("Wie geht's dem Konto?", []))
     assert r["ok"] is False
-    assert "ANTHROPIC_API_KEY" in r["answer"] and "Modus: live" in r["answer"]
+    assert "ANTHROPIC_API_KEY" in r["answer"] and "Modus: LIVE (real money)" in r["answer"]
     r = asyncio.run(e.chat("How is the account?", []))
-    assert not r["ok"] and "Mode: live" in r["answer"]
+    assert not r["ok"] and "Mode: LIVE (real money)" in r["answer"]
 
 
 def test_chat_with_ai_sends_context_and_trimmed_history(tmp_path, monkeypatch):
@@ -45,7 +45,7 @@ def test_chat_with_ai_sends_context_and_trimmed_history(tmp_path, monkeypatch):
     ctx = seen["system"].split("Context (JSON):\n", 1)[1]
     assert len(ctx) <= 6000
     data = json.loads(ctx)
-    assert data["mode"] == "live" and data["agents"] and "fast_pot" in data and data["log"]
+    assert data["mode"].startswith("LIVE") and data["agents"] and "fast_pot" in data and data["log"]
     assert e.db.query("SELECT COUNT(*) n FROM llm_calls WHERE agent='Chat'")[0]["n"] == 1
 
 

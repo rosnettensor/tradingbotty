@@ -14,11 +14,11 @@ import re
 import time
 from collections import deque
 
-from . import altdata, controls, fastlab, patterns, research
+from . import altdata, controls, fastlab, patterns, research, thinktank
 from .fasttrader import FastTrader as FastPot
 from .agents.base import Blackboard, Source
 from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Guardian, LiveDesk, NewsHunter,
-                          PatternHunter, Professor, Researcher, RiskOfficer, TrendWatch)
+                          PatternHunter, Professor, Researcher, RiskOfficer, ThinkTank, TrendWatch)
 from .brokers.bitpanda import BitpandaBroker
 from .brokers.fusion import FusionBroker
 from .bus import Bus
@@ -111,7 +111,7 @@ class Engine:
                    "The RSS feeds in Controls: CoinDesk, Cointelegraph, Decrypt, The Block, Bitcoin Magazine and more."),
         ]
         self.team = [FusionScout(self), TrendWatch(self), DataCollector(self), NewsHunter(self), PatternHunter(self),
-                     Researcher(self), Guardian(self), Professor(self), DailyBrain(self), FastTrader(self),
+                     Researcher(self), ThinkTank(self), Guardian(self), Professor(self), DailyBrain(self), FastTrader(self),
                      RiskOfficer(self), LiveDesk(self)]
         self._by_id = {a.id: a for a in self.sources + self.team}
         # remember news across restarts so headlines aren't re-read (and re-paid for) after every restart
@@ -120,6 +120,13 @@ class Engine:
         self._tune_for_daily_brain()
         self._retire_paper()
         self._fix_double_flows()
+        self._fast_to_dip()
+        # the Think Tank: its state, its queue of ideas to test, and the ideas promoted to the history lab
+        self.tt = {k: v for k, v in (self.db.get("thinktank") or {}).items()}
+        if not self.db.get("tt_seeded"):
+            self.db.set("tt_queue", (self.db.get("tt_queue") or []) + [dict(s) for s in thinktank.SEEDS])
+            self.db.set("tt_seeded", time.time())
+        self._load_promoted()
 
     def _tune_for_daily_brain(self) -> None:
         """One-time settings update for the live account (2026-10-05): the daily brain may use the whole account
@@ -152,6 +159,89 @@ class Engine:
         self.db.log("Engine", "info", "v0.5: the paper strategies, champion contest and Optimizer are switched off for "
                                       "good. Every agent now works for the real money or for the history test that "
                                       "picks its strategy.")
+
+    # ------------------------------------------------------------------ think tank: original ideas, endless search
+    def _load_promoted(self) -> None:
+        research.EXTRA[:] = [(lambda i=i: thinktank.FormulaStrategy(i)) for i in self.db.get("tt_promoted", [])]
+
+    async def thinktank_tick(self) -> None:
+        """A batch of about 30 seconds of testing every few minutes, in a worker thread. Pauses while the history
+        test, the fast lab or the daily brain are working, so nothing that matters for the real money waits."""
+        if self.db.get("tt_paused") or any(self.__dict__.get(k) for k in ("_research_busy", "_fast_busy",
+                                                                          "_brain_busy", "_tt_busy")):
+            return
+        self._tt_busy = True
+        try:
+            cd = await self._daily_candles()
+            queue = list(self.db.get("tt_queue") or [])
+            before = len(queue)
+            n0 = self.tt.get("counts", {}).get("candidate", 0)
+            state = await asyncio.to_thread(thinktank.run_batch, cd, self.tt, queue, self.brain().get("strategy"), 30)
+            state["simulated"] = bool(self.settings.simulate)
+            self.tt = state
+            # new ideas may have been appended meanwhile: drop only what this batch took from the front
+            self.db.set("tt_queue", (self.db.get("tt_queue") or [])[before - len(queue):])
+            self.db.set("thinktank", {k: v for k, v in state.items() if not k.startswith("_")})
+            new = state["counts"].get("candidate", 0) - n0
+            if new > 0:
+                best = next((x for x in state["board"] if x["res"]["verdict"] == "candidate"), None)
+                msg = (f"Think Tank: {new} new candidate(s) passed every check, e.g. \"{best['name']}\" "
+                       f"({best['res']['hold'].get('cagr_pct')}%/yr on the unseen years)." if best else "")
+                if msg:
+                    self._log("Think Tank", "info", msg)
+                    self._notify_later(msg, title="💡 Think Tank found something", tags=["bulb"], priority=3)
+        except Exception as ex:
+            self._log("Think Tank", "warn", f"Search batch failed: {str(ex)[:120] or type(ex).__name__}")
+        finally:
+            self._tt_busy = False
+
+    def thinktank_info(self) -> dict:
+        agent = self._by_id.get("thinktank")
+        return {**thinktank.public(self.tt), "queue": len(self.db.get("tt_queue") or []),
+                "paused": bool(self.db.get("tt_paused")), "promoted": [i["name"] for i in self.db.get("tt_promoted", [])],
+                "ai": {**(self.db.get("tt_ai") or {}), "available": self.llm.available,
+                       "busy": bool(agent and agent.__dict__.get("_inventing"))},
+                "grammar": thinktank.grammar_text()}
+
+    def thinktank_action(self, action: str, name: str | None = None) -> dict:
+        if action in ("pause", "resume"):
+            self.db.set("tt_paused", action == "pause")
+            self._log("Think Tank", "info", "Search paused." if action == "pause" else "Search running again.")
+        elif action == "ai_now":
+            agent = self._by_id.get("thinktank")
+            if not self.llm.available:
+                raise ValueError("no Anthropic key: the search goes on with evolution and random ideas only")
+            if agent:
+                agent.queued = True
+        elif action in ("promote", "unpromote"):
+            promoted = [i for i in self.db.get("tt_promoted", []) if i["name"] != name]
+            if action == "promote":
+                item = next((x for x in self.tt.get("board", []) if x["name"] == name), None)
+                if not item or item["res"]["verdict"] != "candidate":
+                    raise ValueError("only a candidate that passed every Think Tank check can join the history lab")
+                promoted.append({k: item[k] for k in ("name", "score", "gate", "top", "hold", "btc_filter",
+                                                      "min_score", "theory") if k in item})
+                self._log("Think Tank", "info", f"\"{name}\" joins the history lab: from the next run it faces the "
+                                                "full robustness bar like every other strategy.")
+            self.db.set("tt_promoted", promoted)
+            self._load_promoted()
+        else:
+            raise ValueError("unknown action")
+        return self.thinktank_info()
+
+    def _fast_to_dip(self) -> None:
+        """One-time switch (2026-10-06, the owner's go-ahead): the fast pot trades the Dip buyer, the only fast rule
+        that passed every robustness and reality check on the server (pump rider: -77% drops, not robust). A coin
+        the pot still holds stays in the pot and is sold by the new rule's take-profit, stop or time limit."""
+        if self.db.get("fast_dip_2026_10_06"):
+            return
+        self.db.set("fast_dip_2026_10_06", time.time())
+        from .fasttrader import DEFAULT
+        c = self.fast.cfg()
+        if c.get("strategy") != DEFAULT:
+            self.fast.save({**c, "strategy": DEFAULT, "bar": None})
+            self.db.log("Fast Trader", "info", f"Fast pot rule switched to {DEFAULT}: the only fast rule that passes "
+                                               "every check (+59%/yr in the test, worst drop -11%).")
 
     def _fix_double_flows(self) -> None:
         """One-time repair (2026-10-05): a deposit entered twice by hand counted twice. Keep the first entry, undo the
@@ -1259,6 +1349,7 @@ class Engine:
             self._every(lambda: 60, self.guard_tick),
             self._every(lambda: 60, self.morning_tick),
             self._every(lambda: 1800, self.research_tick),
+            self._every(lambda: 240, self.thinktank_tick),
         )
 
     async def _every(self, seconds, fn) -> None:
@@ -1362,7 +1453,7 @@ class Engine:
         lt = s.get("live_trades") or {}
         ctx = {
             "now": when(time.time()),
-            "mode": s.get("mode"), "kill_switch": s.get("kill_switch"), "simulated_data": s.get("simulate"),
+            "mode": self._mode_word(s.get("mode")), "kill_switch": s.get("kill_switch"), "simulated_data": s.get("simulate"),
             "ai_budget_usd": s.get("budget"),
             "account": {k: w.get(k) for k in ("venue", "currency", "total", "fiat", "bot_value", "fast_value",
                                                "yours_value", "bot_edge", "bot_edge_pct", "change_24h", "change",
@@ -1410,13 +1501,17 @@ class Engine:
         total = f"{w['total']:.2f} {cur}" if w.get("total") is not None else None
         edge = f"{w['bot_edge']:+.2f} {cur}" if w.get("bot_edge") is not None else None
         if de:
-            facts = [f"Modus: {self.mode}", f"Konto: {total or 'noch nicht gelesen'}",
+            facts = [f"Modus: {self._mode_word()}", f"Konto: {total or 'noch nicht gelesen'}",
                      f"Eigenes Ergebnis des Bots: {edge or 'noch unbekannt'}",
                      f"Daily Brain hält: {holds or 'nichts (Cash)'}"]
         else:
-            facts = [f"Mode: {self.mode}", f"Account: {total or 'not read yet'}",
+            facts = [f"Mode: {self._mode_word()}", f"Account: {total or 'not read yet'}",
                      f"Bot's own result: {edge or 'not known yet'}", f"Daily Brain holds: {holds or 'nothing (cash)'}"]
         return {"ok": False, "answer": why + "\n\n" + "\n".join(facts)}
+
+    def _mode_word(self, mode: str | None = None) -> str:
+        # internally the standby mode is still called "paper"; there is no pretend money any more
+        return "LIVE (real money)" if (mode or self.mode) == "live" else "STANDBY (nothing trades)"
 
     async def chat(self, message: str, history: list[dict]) -> dict:
         """Answer the owner's question about the bot, in the bot's own voice, from a snapshot of its state."""

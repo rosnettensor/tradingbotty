@@ -58,3 +58,27 @@ def test_feeds_tolerate_wordpress_quirks_atom_and_explain_refusals():
         asyncio.run(feed.poll_news())
     st = feed.source_status["Broken"]
     assert not st["ok"] and "HTTP 400" in st["error"] and st["pause_until"] > 0
+
+
+def test_think_tank_parses_safely_judges_honestly_and_finds_nothing_in_noise():
+    from tradingbotty import thinktank as tt
+    import pytest
+    for bad in ("__import__('os')", "ret(20) ; x", "open(1)", "ret(20) +"):
+        with pytest.raises(tt.FormulaError):
+            tt.parse(bad)
+    assert tt.show(tt.parse("rank(ret(18)) - 0.5 * vol(10)")) == "(rank(ret(20)) - (0.5 * vol(10)))"
+    cd = research.Candles.from_rows(research.synthetic_rows(research.UNIVERSE[:10], days=1500))
+    # the echo only uses visits whose next n days were over before today
+    e = tt.feature(cd, "echo", 10)["BTC"]
+    assert all(x is None for x in e[:25]) and any(x is not None for x in e)
+    queue = [dict(s) for s in tt.SEEDS]
+    st = tt.run_batch(cd, {}, queue, "Breakout 20/10 days, 3 slots, BTC filter 50d", seconds=6, seed=3)
+    assert not queue and st["counts"]["tested"] >= len(tt.SEEDS)
+    assert st["counts"].get("candidate", 0) == 0          # random-walk prices: nothing may pass every check
+    assert {x["origin"] for x in st["board"]} >= {"Ralph", "control"}
+    # a promoted idea becomes a normal strategy in the history lab
+    research.EXTRA[:] = [lambda: tt.FormulaStrategy(tt.clean(dict(tt.SEEDS[0])))]
+    try:
+        assert research.by_name("Think tank: Ralph's echo, 10 days")
+    finally:
+        research.EXTRA[:] = []

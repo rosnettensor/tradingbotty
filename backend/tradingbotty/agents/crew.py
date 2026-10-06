@@ -502,6 +502,100 @@ class PatternHunter(Agent):
         }
 
 
+class ThinkTank(Agent):
+    id = "thinktank"
+    name = "Think Tank"
+    role = "Invents original strategies with Claude and evolution, and tests them endlessly against the market"
+    inputs = ["src_binance"]
+    uses_ai = True
+    can_disable = True
+    default_model = "claude-sonnet-5-5"
+    cadence = "tests ideas every few minutes; asks Claude for new ones every 6 hours"
+    explain = ("A think tank with no standard indicators. Every 6 hours it asks Claude for 6 original ideas borrowed "
+               "from physics, biology, information theory, game theory or anything else, written in a small, safe "
+               "formula language (nothing is executed). In between, evolution mutates and crosses the best ideas and "
+               "tries random ones, endlessly. Every idea is judged on daily history since 2017 with real fees: the "
+               "first 60% of the days to discover, the last 40% kept secret to judge. A candidate must beat Bitcoin "
+               "on both, survive twice the fees, pass the correction for the thousands of ideas tried and keep working "
+               "without a third of the coins. Ralph's price echo and a moon-phase control are in the race too. "
+               "Nothing here trades: a candidate can be added to the history lab, where it faces the full bar.")
+    outputs = "candidates for the history lab; ideas Claude builds on next time"
+    default_prompt = ("You are a bold, rigorous quant inventor. Original concepts only, each with a mechanism you can "
+                      "explain in plain words. Prefer simple formulas that capture one idea well.")
+
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        self.queued = False
+        self._inventing = False
+
+    def on_disable(self, bb: Blackboard) -> None:
+        pass
+
+    async def run(self, bb: Blackboard) -> None:
+        e = self.ctx
+        st = e.tt or {}
+        ai = e.db.get("tt_ai") or {}
+        every = 6 * 3600
+        due = self.queued or time.time() - ai.get("last", 0) > every
+        self.next_run = ai.get("last", time.time()) + every
+        if due and e.llm.available and not self._inventing and st.get("board") is not None:
+            self.queued = False
+            self._inventing = True
+            asyncio.create_task(self._invent())
+        c = st.get("counts", {})
+        paused = e.db.get("tt_paused")
+        self.summary = ("paused · " if paused else "") + (
+            f"{c.get('tested', 0)} ideas tested · {c.get('candidate', 0)} candidates · "
+            f"{c.get('promising', 0)} promising" if c else "first ideas are tested a few minutes after the start")
+        board = st.get("board", [])
+        echo = [x for x in board if x.get("origin") == "Ralph"]
+        self.detail = {
+            "did": [f"Last batch {_hm(st['ts'])}" if st.get("ts") else "no batch yet",
+                    f"Claude's last ideas: {', '.join(ai.get('names', [])[:6]) or 'none yet'}"
+                    + (f" ({_hm(ai['last'])})" if ai.get("last") else ""),
+                    f"Ideas waiting: {len(e.db.get('tt_queue') or [])}"]
+                   + [f"Ralph's echo: {x['name']} -> {x['res']['verdict']}" for x in echo],
+            "facts": [["Discovery", f"{(st.get('periods') or {}).get('from', '?')} to {(st.get('periods') or {}).get('cut', '?')}"],
+                      ["Holdout (secret)", f"{(st.get('periods') or {}).get('cut', '?')} to {(st.get('periods') or {}).get('to', '?')}"],
+                      ["Claude ideas so far", ai.get("total", 0)], ["Claude cost", f"${ai.get('cost', 0):.2f}"]],
+            "table": {"cols": ["idea", "from", "verdict", "discovery %/yr", "holdout %/yr", "signal"],
+                      "rows": [[x["name"], x.get("origin"), x["res"]["verdict"], x["res"]["disc"].get("cagr_pct"),
+                                x["res"]["hold"].get("cagr_pct"), x["res"].get("ic_hold")] for x in board[:15]]},
+        }
+        if c.get("candidate"):
+            self.status = "ok"
+
+    async def _invent(self) -> None:
+        from .. import thinktank
+        e = self.ctx
+        try:
+            st = e.tt or {}
+            board = sorted(st.get("board", []), key=lambda x: -x["res"]["fitness"])
+            dead = [x["name"] for x in st.get("recent", []) if x["verdict"] == "dead" and x["origin"] == "Claude"]
+            res = await e.llm.json_call(self.name, self.prompt, thinktank.ai_prompt(board, dead, st.get("counts", {}).get("tested", 0)),
+                                        thinktank.AI_SCHEMA, max_tokens=6000, model=self.model)
+            ai = e.db.get("tt_ai") or {}
+            ai["last"] = time.time()
+            if not res or res.get("_over_budget"):
+                ai["note"] = "no ideas this time: " + ("AI budget used up" if res else
+                                                       ((e.llm.last_error or {}).get("why") or "no answer"))
+                e.db.set("tt_ai", ai)
+                return
+            ideas = []
+            for raw in res.get("ideas", [])[:8]:
+                idea = thinktank.clean({**raw, "origin": "Claude"})
+                if idea:
+                    ideas.append(idea)
+            self.cost += res.get("_cost", 0)
+            e.db.set("tt_queue", (e.db.get("tt_queue") or []) + ideas)  # appended: the search takes from the front
+            ai.update(total=ai.get("total", 0) + len(ideas), names=[i["name"] for i in ideas],
+                      cost=ai.get("cost", 0) + res.get("_cost", 0), note=f"{len(ideas)} ideas queued")
+            e.db.set("tt_ai", ai)
+            self.say(f"New ideas from Claude: " + "; ".join(f"{i['name']} ({i['inspiration']})" for i in ideas))
+        finally:
+            self._inventing = False
+
+
 class Researcher(Agent):
     id = "researcher"
     name = "Researcher"

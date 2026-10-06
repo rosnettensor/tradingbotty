@@ -458,6 +458,9 @@ def _growth(cd: Candles, key: str, i: int, n: int) -> float | None:
     return b / a - 1 if a and b else None
 
 
+EXTRA: list = []  # factories for strategies added from the Think Tank (set by the engine from the database)
+
+
 def all_strategies() -> list[Strategy]:
     out: list[Strategy] = [HoldBTC(), HoldBasket(), BtcRegime(50), BtcRegime(100)]
     for lb in (14, 30, 60):
@@ -478,6 +481,11 @@ def all_strategies() -> list[Strategy]:
             Donchian(20, 10, lock=(0.2, 0.08))]
     out += [Mix(Donchian(20, 10), Rotation(30, 3), "Breakout 20/10, half Top 3 by 30-day strength"),
             Mix(Donchian(20, 10), BtcRegime(50), "Breakout 20/10, half Bitcoin above its 50-day average")]
+    for make in EXTRA:
+        try:
+            out.append(make())
+        except Exception:  # a broken idea must never break the history test
+            pass
     return out
 
 

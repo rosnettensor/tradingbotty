@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { LineChart } from "./charts.jsx";
 import { Tabs } from "./components.jsx";
 import { ago, api, pctColor, usePoll } from "./useBot.js";
@@ -7,7 +7,7 @@ const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)",
 const PERIODS = [["full", "all history"], ["last_2y", "2 years"], ["last_1y", "1 year"], ["last_6m", "6 months"], ["first_half", "1st half"], ["second_half", "2nd half"]];
 const dayFmt = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", year: "2-digit" });
 
-const LABS = [["daily", "DAILY BRAIN LAB · the real money"], ["fast", "FAST TRADER LAB · speculative, 4-hour"]];
+const LABS = [["daily", "DAILY BRAIN LAB · the real money"], ["fast", "FAST TRADER LAB · speculative, 4-hour"], ["think", "💡 THINK TANK · original ideas"]];
 
 export default function Research({ state, openAgent }) {
   const [res, setRes] = useState(null);
@@ -18,7 +18,7 @@ export default function Research({ state, openAgent }) {
   return (
     <div className="research-tab">
       <div className="lab-switch"><Tabs value={lab} options={LABS} onChange={pickLab} /></div>
-      {lab === "fast" ? <FastLab state={state} openAgent={openAgent} /> : (
+      {lab === "think" ? <ThinkTank openAgent={openAgent} /> : lab === "fast" ? <FastLab state={state} openAgent={openAgent} /> : (
         <>
           <HistoryTest state={state} res={res} setRes={(r) => { setRes(r); reloadPat(); }} openAgent={openAgent} />
           {res && <RealityChecks res={res} live={state.brain?.strategy} />}
@@ -500,6 +500,117 @@ function FastPot({ state, lab, openAgent }) {
       </div>
       {msg && <p className="err-msg">{msg}</p>}
       {f.steps?.length > 0 && <ol className="steps small">{f.steps.map((x, i) => <li key={i}>{x}</li>)}</ol>}
+    </section>
+  );
+}
+
+const VERDICTS = {
+  candidate: ["up", "★ candidate", "passes every check here"],
+  promising: ["amber", "promising", "survives the unseen years, fails a stricter check"],
+  "holdout fail": ["dim", "holdout fail", "good on the discovery years only"],
+  dead: ["down", "dead", "fails on the discovery years"],
+};
+const ORIGIN = { Claude: "🤖 Claude", evolution: "🧬 evolution", random: "🎲 random", Ralph: "🧑 Ralph", control: "🌕 control", starter: "🌱 starter" };
+
+function ThinkTank({ openAgent }) {
+  const [t, reload] = usePoll("thinktank", 20000);
+  const [msg, setMsg] = useState("");
+  const [open, setOpen] = useState(null);
+  const [filter, setFilter] = useState("all");
+  if (!t) return <section className="panel"><div className="empty">loading…</div></section>;
+  const act = async (action, name) => {
+    setMsg("");
+    try { await api("thinktank", { action, name }); reload(); if (action === "ai_now") setMsg("Claude is thinking up new ideas; they join the queue in a minute or two."); }
+    catch (e) { setMsg(e.message); }
+  };
+  const c = t.counts || {};
+  const board = t.board || [];
+  const rows = board.filter((x) => filter === "all" || (filter === "named" ? ["Ralph", "control", "Claude", "starter"].includes(x.origin) : x.res.verdict === filter));
+  const echo = board.filter((x) => x.origin === "Ralph" || x.origin === "control");
+  const pc = (x) => (x == null ? "–" : `${x > 0 ? "+" : ""}${x}%`);
+  const btc = t.btc || {};
+  return (
+    <section className="panel lab research thinktank">
+      <div className="row-head">
+        <h3>💡 THINK TANK <span className="dim">· original ideas from Claude and evolution, tested endlessly · <button className="mini linkish" onClick={() => openAgent("thinktank")}>the agent</button></span></h3>
+        <div className="row-tools">
+          <button onClick={() => act("ai_now")} disabled={!t.ai?.available || t.ai?.busy}>{t.ai?.busy ? "Claude is thinking…" : "🤖 new ideas from Claude now"}</button>
+          <button onClick={() => act(t.paused ? "resume" : "pause")}>{t.paused ? "▶ resume search" : "⏸ pause search"}</button>
+        </div>
+      </div>
+      <p className="dim small">No standard indicators. Claude invents ideas from physics, biology, information theory and more; evolution mutates and crosses the best ones; random formulas try what nobody would think of. Every idea is a score per coin and day, the top coins are held, with Fusion's fees. <b>Discovery</b> {t.periods?.from} to {t.periods?.cut}: the only years evolution and Claude ever see. <b>Holdout</b> {t.periods?.cut} to {t.periods?.to}: kept secret, it decides. A <b>candidate</b> also needs a real signal (t ≥ 2), twice the fees, the correction for every idea ever tried, and no lucky coins. <b>Nothing here trades.</b></p>
+      {msg && <p className={/thinking/.test(msg) ? "ok-msg" : "err-msg"}>{msg}</p>}
+      {t.simulated && <p className="err-msg">Offline mode: synthetic prices, results mean nothing.</p>}
+      <div className="tt-stats">
+        <div><b>{c.tested ?? 0}</b><span>ideas tested</span></div>
+        <div className="up"><b>{c.candidate ?? 0}</b><span>candidates</span></div>
+        <div className="amber"><b>{c.promising ?? 0}</b><span>promising</span></div>
+        <div className="dim"><b>{(c["holdout fail"] ?? 0) + (c.dead ?? 0)}</b><span>died</span></div>
+        <div><b>{t.queue ?? 0}</b><span>waiting</span></div>
+        <div><b>{t.ai?.total ?? 0}</b><span>from Claude{t.ai?.last ? ` · ${ago(t.ai.last)}` : ""}</span></div>
+        <div className="dim"><b>{t.ts ? ago(t.ts) : "–"}</b><span>{t.paused ? "paused" : "last batch"}</span></div>
+      </div>
+      <div className="dim small">Yardstick: holding Bitcoin made {pc(btc.disc?.cagr_pct)}/yr in discovery and {pc(btc.hold?.cagr_pct)}/yr in the holdout{t.brain ? `; the daily brain ${pc(t.brain.disc?.cagr_pct)} and ${pc(t.brain.hold?.cagr_pct)}` : ""}.{t.ai?.note ? ` Claude: ${t.ai.note}.` : ""}</div>
+
+      {echo.length > 0 && (
+        <div className="tt-echo">
+          <h4>🧑 RALPH'S PRICE ECHO <span className="dim">· your idea: find every past visit to today's price, average what came next</span></h4>
+          {echo.map((x) => {
+            const v = VERDICTS[x.res.verdict] || ["dim", x.res.verdict];
+            return <div key={x.name} className="tt-echo-row"><b>{x.name}</b> <span className={`tt-badge ${v[0]}`}>{v[1]}</span> <span className="dim small">discovery {pc(x.res.disc?.cagr_pct)}/yr · holdout {pc(x.res.hold?.cagr_pct)}/yr · signal {x.res.ic_hold ?? "–"} (t {x.res.t_hold ?? "–"}) · {x.res.why}</span></div>;
+          })}
+        </div>
+      )}
+
+      <div className="row-head" style={{ marginTop: 10 }}>
+        <span className="dim small">{rows.length} shown · best by discovery score · tap a row for its theory and formula</span>
+        <Tabs value={filter} options={[["all", "all"], ["candidate", "candidates"], ["promising", "promising"], ["named", "named ideas"]]} onChange={setFilter} />
+      </div>
+      <div className="scroll">
+        <table className="board">
+          <thead><tr><th>idea</th><th>from</th><th>verdict</th><th title="per year on the discovery years">discovery</th><th title="per year on the secret recent years">holdout</th><th title="worst drop in the holdout">drop</th><th title="does a higher score mean a better next week? rank correlation in the holdout (t-value)">signal</th><th>per week</th><th>won</th><th>fees/yr</th><th /></tr></thead>
+          <tbody>
+            {rows.map((x) => {
+              const v = VERDICTS[x.res.verdict] || ["dim", x.res.verdict];
+              const promoted = (t.promoted || []).includes(x.name);
+              return (
+                <Fragment key={x.name}>
+                  <tr onClick={() => setOpen(open === x.name ? null : x.name)} className={open === x.name ? "picked" : ""}>
+                    <td><b>{x.name}</b>{x.inspiration && <div className="dim small">{x.inspiration}</div>}</td>
+                    <td className="small">{ORIGIN[x.origin] || x.origin}</td>
+                    <td><span className={`tt-badge ${v[0]}`}>{v[1]}</span></td>
+                    <td className={pctColor(x.res.disc?.cagr_pct)}>{pc(x.res.disc?.cagr_pct)}</td>
+                    <td className={pctColor(x.res.hold?.cagr_pct)}>{pc(x.res.hold?.cagr_pct)}</td>
+                    <td className="down">{x.res.hold?.max_dd_pct ?? "–"}%</td>
+                    <td>{x.res.ic_hold ?? "–"} <span className="dim small">t {x.res.t_hold ?? "–"}</span></td>
+                    <td>{x.res.per_week ?? "–"}</td>
+                    <td>{x.res.win_pct == null ? "–" : `${x.res.win_pct}%`}</td>
+                    <td>{x.res.fees_pct}%</td>
+                    <td>{x.res.verdict === "candidate" && (promoted
+                      ? <button className="mini" onClick={(e) => { e.stopPropagation(); act("unpromote", x.name); }}>✓ in history lab</button>
+                      : <button className="mini" onClick={(e) => { e.stopPropagation(); act("promote", x.name); }}>add to history lab</button>)}</td>
+                  </tr>
+                  {open === x.name && (
+                    <tr className="tt-detail"><td colSpan={11}>
+                      <div>{x.theory}</div>
+                      <code className="tt-formula">score = {x.score}{x.gate ? `   ·   only where ${x.gate} > 0` : ""}</code>
+                      <div className="dim small">holds the top {x.top}, checked every {x.hold} day{x.hold > 1 ? "s" : ""}{x.btc_filter ? ", only while Bitcoin is above its 50-day average" : ""} · {x.res.why || ""}{x.res.skill_prob != null ? ` · skill ${Math.round(x.res.skill_prob * 100)}%` : ""}{x.res.luck_worst != null ? ` · without a third of the coins: worst ${pc(x.res.luck_worst)}/yr` : ""}</div>
+                    </td></tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <h4>LATEST TESTS</h4>
+      <div className="tt-recent">
+        {(t.recent || []).slice(0, 12).map((r) => {
+          const v = VERDICTS[r.verdict] || ["dim", r.verdict];
+          return <div key={r.no} className="small"><span className="dim">#{r.no}</span> <span className={`tt-badge ${v[0]}`}>{v[1]}</span> {ORIGIN[r.origin] || r.origin} <b>{r.name}</b> <code className="dim">{r.score}</code></div>;
+        })}
+      </div>
+      <details className="small dim"><summary>the formula language Claude and evolution write in</summary><pre className="tt-grammar">{t.grammar}</pre></details>
     </section>
   );
 }

@@ -13,6 +13,8 @@ from tradingbotty import fastlab, research  # noqa: E402
 
 from fakes import FakeFusion, _engine  # noqa: E402
 
+PUMP = "Pump rider: up 15%+ in 1d, 2 slots, take +20% / stop -8%, max 2d, volume 3x"  # the tests drive a pump
+
 BAR = fastlab.BAR
 
 
@@ -89,7 +91,7 @@ def test_fast_pot_buys_a_pump_and_takes_profit_without_touching_brain_or_your_co
     e.db.set("live_cost", {"ETH": 30.0})
     m.bal["ETH"] = 3.0
     c = e.fast.cfg()
-    c.update(on=True, chf=40.0)
+    c.update(on=True, chf=40.0, strategy=PUMP)
     e.fast.save(c)
     bar = cd.days[-1]
     asyncio.run(e.fast._decide(e.fast.cfg(), bar))
@@ -123,7 +125,7 @@ def test_daily_brain_leaves_the_pots_cash_and_coins_alone(tmp_path, monkeypatch)
     e, m = _setup(tmp_path, monkeypatch, _pump_candles())
     e.set_controls({"live.max_invest": 2000, "live.max_order": 300, "live.use_my_coins": False})
     c = e.fast.cfg()
-    c.update(on=True, chf=60.0)
+    c.update(on=True, chf=60.0, strategy=PUMP)
     e.fast.save(c)
     e.db.set("fast_qty", {"XRP": 2.0})
     e.db.set("fast_cost", {"XRP": 20.0})
@@ -142,7 +144,7 @@ def test_fast_buys_never_sell_your_coins_for_cash(tmp_path, monkeypatch):
     e.set_controls({"live.use_my_coins": True})
     m.bal["FIAT"] = 10.0
     c = e.fast.cfg()
-    c.update(on=True, chf=40.0)
+    c.update(on=True, chf=40.0, strategy=PUMP)
     e.fast.save(c)
     asyncio.run(e.fast._decide(e.fast.cfg(), cd.days[-1]))
     assert not m.buys and not m.sells and m.bal["BTC"] == 5.0
