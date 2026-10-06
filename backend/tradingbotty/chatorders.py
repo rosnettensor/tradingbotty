@@ -16,7 +16,7 @@ import re
 import secrets
 import time
 
-from . import fastlab
+from . import fastlab, stance
 
 TTL = 120  # seconds a proposal stays valid
 PRICE = "https://data-api.binance.vision/api/v3/ticker/price"
@@ -78,10 +78,13 @@ class ChatOrders:
 
     async def understand(self, message: str) -> dict | None:
         """A proposal (with a token when it can go out) or an explanation why not; None if it isn't an order."""
+        e = self.e
+        st = stance.parse(message)
+        if st and not parse(message, self.symbols()):
+            return self._course(st)
         p = parse(message, self.symbols())
         if not p:
             return None
-        e = self.e
         cur = e.live.currency if e.live else (e.wallet or {}).get("currency", "CHF")
         fast_qty, brain_qty = e.db.get("fast_qty", {}), e.db.get("live_qty", {})
 
@@ -172,6 +175,28 @@ class ChatOrders:
                 f"Fusion-Gebühr etwa 0.25%. {rule}")
         return self._propose({"side": "BUY", "book": "fast", "symbol": sym, "amount": amount, "all": False}, text, notes)
 
+    def _course(self, p: dict) -> dict:
+        """A course to confirm: what changes, until when. Allowed on standby too (it only changes settings)."""
+        e = self.e
+        info = stance.STANCES[p["stance"]]
+        cur = e.stance.get()
+        if p["stance"] == cur["key"] == "normal":
+            return {"ok": False, "answer": "Der Bot läuft schon auf Normal."}
+        until = stance.until_for(p)
+        when = f"bis {stance.swiss(until)}, dann wieder Normal" if until else "ab sofort"
+        text = f"**Kurs {info['name']}** ({when}). {info['what']}"
+        notes = ["Die Signale bleiben gleich: welche Coins gekauft und verkauft werden, entscheiden weiter die "
+                 "getesteten Regeln."] if p["stance"] != "normal" else []
+        if cur["key"] != "normal":
+            notes.append(f"Ersetzt den aktuellen Kurs {cur['name']}.")
+        now = time.time()
+        self.pending = {k: v for k, v in self.pending.items() if v["until"] > now}
+        token = secrets.token_urlsafe(12)
+        order = {"kind": "stance", "side": "STANCE", "stance": p["stance"], "ends": until}
+        self.pending[token] = {"order": order, "until": now + TTL}
+        answer = "\n\n".join([text, *notes, "Tippe auf **Kurs setzen**, um ihn zu übernehmen (gilt 2 Minuten)."])
+        return {"ok": True, "answer": answer, "order": {**order, "token": token, "until": now + TTL}}
+
     def _propose(self, order: dict, text: str, notes: list[str]) -> dict:
         e = self.e
         blocker = None
@@ -196,11 +221,15 @@ class ChatOrders:
         if not p or p["until"] < time.time():
             return {"ok": False, "answer": "Dieser Vorschlag ist abgelaufen oder schon benutzt. Schreib die Order "
                                            "nochmal, dann rechne ich neu."}
+        o = p["order"]
+        if o.get("kind") == "stance":
+            c = e.stance.set(o["stance"], o.get("ends"), by="you (chat)")
+            return {"ok": True, "answer": (f"✅ Kurs {c['name']} gilt bis {stance.swiss(c['until'])}."
+                                           if c.get("until") else "✅ Zurück auf Normal.")}
         if e.mode != "live" or not e.live or e.kill_switch:
             return {"ok": False, "answer": "Nicht gesendet: der Bot ist nicht LIVE oder der Kill-Switch ist an."}
         if e.__dict__.get("_fast_trading"):
             return {"ok": False, "answer": "Der Fast Pot entscheidet gerade selbst. Versuch es in einer Minute nochmal."}
-        o = p["order"]
         cur = e.live.currency
         e._fast_trading = True  # the 4-hour decision waits while your order runs
         try:

@@ -16,6 +16,7 @@ from collections import deque
 
 from . import altdata, controls, fastlab, patterns, research, thinktank
 from .chatorders import ChatOrders
+from .stance import Stance, swiss
 from .fasttrader import FastTrader as FastPot
 from .agents.base import Blackboard, Source
 from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Guardian, LiveDesk, NewsHunter,
@@ -91,6 +92,7 @@ class Engine:
         self.started = time.time()
         self.fast = FastPot(self)                  # the fast pot: small, separate real money, every 4 hours
         self.orders = ChatOrders(self)             # orders typed in the chat bar, sent only after you confirm
+        self.stance = Stance(self)                 # your course for a while: Mutig, Bunkern, Pause or Normal
 
         h = lambda key, feed: (lambda: feed.healthy.get(key, False))  # noqa: E731
         self.sources = [
@@ -668,6 +670,9 @@ class Engine:
         reg = self.db.get("regime") or {}
         if reg.get("name"):
             out.append(f"🧭 Market mood: {reg['name']} for {reg['days']} day{'s' if reg['days'] != 1 else ''}")
+        course = self.stance.get()
+        if course["key"] != "normal":
+            out.append(f"🧭 Your course: {course['name']} until {swiss(course['until'])}")
         f = self.fast.status()
         if f.get("on"):
             out.append(f"⚡ Fast pot {f.get('pot', 0):.2f} {cur}\n    {f.get('trades', 0)} trades · {f.get('realized', 0):+.2f} {cur} so far · "
@@ -1294,16 +1299,27 @@ class Engine:
             else:
                 done.append(f"sold {sym}")
         owned = self.db.get("live_qty", {})
+        course = self.stance.get()
+        if course["key"] != "normal":
+            steps.append(f"Your course: {course['name']}: {course['what']}")
         for sym, w in sorted(target.items(), key=lambda kv: -kv[1]):
             if pairs and sym not in pairs:
                 done.append(f"{sym} isn't on Fusion")
+                continue
+            if sym not in owned and not course["buys"]:
+                done.append(f"{sym} not bought: your course is {course['name']}")
+                continue
+            if sym not in owned and sym in self.stance.locked():
+                done.append(f"{sym} not bought again: Bunkern locked its gain")
                 continue
             blocked = self.guard().get(sym)
             if blocked:
                 done.append(f"{sym} not bought: the Guardian blocks it ({blocked['reason']})")
                 continue
             want = w * budget - owned.get(sym, 0.0) * prices.get(sym, 0.0)
-            if want < 0.25 * w * budget:
+            if sym not in owned:
+                want *= course["size"]  # Mutig or Bunkern size new coins; held ones are never topped up or cut for it
+            if want < 0.25 * w * budget * (min(1.0, course["size"]) if sym not in owned else 1.0):
                 if sym in owned:
                     done.append(f"kept {sym}")
                 continue  # already about right: no trades for small drift
@@ -1547,6 +1563,7 @@ class Engine:
             self._every(lambda: 30, self._poll_wallet),
             self._every(lambda: 300, self.brain_tick),
             self._every(lambda: 60, self.fast.tick),
+            self._every(lambda: 60, self.stance.tick),
             self._every(lambda: 60, self.guard_tick),
             self._every(lambda: 60, self.morning_tick),
             self._every(lambda: 60, self.weekly_tick),
@@ -1597,7 +1614,7 @@ class Engine:
     def state(self, light: bool = False) -> dict:
         res = self.db.get("research") or {}
         s = {
-            "mode": self.mode, "regime": self.db.get("regime"), "kill_switch": self.kill_switch, "simulate": self.settings.simulate,
+            "mode": self.mode, "regime": self.db.get("regime"), "stance": self.stance.get(), "kill_switch": self.kill_switch, "simulate": self.settings.simulate,
             "ai": self.llm.available, "budget": self.budget.snapshot(), "uptime": time.time() - self.started,
             "wallet": self.wallet,
             "brain": self.brain(),
@@ -1638,7 +1655,10 @@ class Engine:
         "If something is not in the context, say so plainly instead of guessing. Never invent numbers. "
         "Reply in the language of the question (the owner writes German or English). Keep it short and friendly: "
         "a few sentences or a tiny list, no tables. Never tell the owner to change API keys or move money outside "
-        "this app; for changes point to the right dashboard tab. This is real money: be honest about losses and risks."
+        "this app; for changes point to the right dashboard tab. This is real money: be honest about losses and risks. "
+        "The owner can type orders (\"kaufe ADA für 30 CHF im Fast Pot\", \"verkaufe RLC\") or a course "
+        "(\"heute mehr Risiko\", \"Gewinne bunkern\", \"Pause\", \"normal\") right here; those are read by "
+        "fixed rules and shown with a confirm button. You never place orders yourself."
     )
 
     def _chat_context(self) -> str:
@@ -1657,6 +1677,8 @@ class Engine:
         ctx = {
             "now": when(time.time()),
             "mode": self._mode_word(s.get("mode")), "kill_switch": s.get("kill_switch"), "simulated_data": s.get("simulate"),
+            "course": {k: (s.get("stance") or {}).get(k) for k in ("name", "what")}
+                      | {"until": when((s.get("stance") or {}).get("until"))},
             "ai_budget_usd": s.get("budget"),
             "account": {k: w.get(k) for k in ("venue", "currency", "total", "fiat", "bot_value", "fast_value",
                                                "yours_value", "bot_edge", "bot_edge_pct", "change_24h", "change",

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
+import StanceChip from "./StanceChip.jsx";
 import { DailyChart, LineChart } from "./charts.jsx";
 import { Stat, Tabs } from "./components.jsx";
 import { ago, fmt, pctColor, usePoll } from "./useBot.js";
@@ -194,6 +195,7 @@ function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
           </div>} />
       </section>
       <MoodChip regime={state.regime} onOpen={() => openAgent("regime")} compact />
+      <StanceChip stance={state.stance} compact />
       <div className="mhud">
         {[...data.hud.left, ...data.hud.right].map(([k, v, tone]) => (
           <div key={k}><span>{k}</span><b className={tone}>{v}</b></div>
@@ -353,6 +355,7 @@ function StatStrip({ state, openAgent }) {
   return (
     <section className="panel stats">
       <MoodChip regime={state.regime} onOpen={() => openAgent("regime")} />
+      <StanceChip stance={state.stance} />
       <Stat label="Real trades" value={lt.n ?? 0} tone={lt.n ? "up" : "dim"} sub={lt.last ? `last ${ago(lt.last)}` : "none yet"}
         title="Orders placed on your real Bitpanda account" />
       <Stat label="Near a breakout" value={near.length} tone={near.length ? "up" : "dim"} sub={near.slice(0, 4).map((x) => x.symbol).join(" ") || "none"}

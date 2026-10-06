@@ -298,9 +298,16 @@ class FastTrader:
         # then buys, best signal first, each a slot of the pot
         brain_coins = e.db.get("live_qty", {})
         pairs = getattr(e.live, "pairs", None) or {}
+        course = e.stance.get()
         for s in [s for s in want if s not in held]:
             if slots < 1:
                 break
+            if not course["buys"]:
+                done.append(f"{s}: signal, but your course is {course['name']}")
+                continue
+            if s in e.stance.locked():
+                done.append(f"{s}: signal, but Bunkern locked its gain earlier")
+                continue
             if pairs and s not in pairs:
                 done.append(f"{s}: signal, but not on Fusion")
                 continue
@@ -313,9 +320,9 @@ class FastTrader:
             in_pot = len([x for x in c["pos"] if x in e.db.get("fast_qty", {})])
             if in_pot >= slots:
                 break
-            size = round(self.pot_size(c) / slots, 2)
+            size = round(self.pot_size(c) / slots * course["size"], 2)  # Mutig / Bunkern
             invested = sum(e.db.get("fast_cost", {}).values())
-            size = min(size, self.pot_size(c) - invested)
+            size = min(size, self.pot_size(c) - invested)  # never more than the pot
             try:
                 amount, got = await e._live_buy(s, size, f"fast pot: {name}", book="fast")
             except Exception as ex:

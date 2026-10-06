@@ -1103,3 +1103,14 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 .chat-order-left, .chat-order-state { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
 .chat-order-state.up { color: var(--green); }
 .chat-order-state.down { color: var(--red); }
+.chat-go.course { color: var(--cyan); border-color: var(--cyan); }
+
+/* your course (Mutig / Bunkern / Pause) while it runs */
+.stance-chip { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; padding: 6px 10px;
+  border: 1px solid var(--line); border-left: 3px solid var(--st, var(--cyan)); border-radius: 6px; }
+.stance-chip.stance-bold { --st: var(--amber); }
+.stance-chip.stance-bunker { --st: var(--green); }
+.stance-chip.stance-pause { --st: var(--dim); }
+.stance-chip .stance-name { font-weight: 700; font-size: 13px; color: var(--hi); white-space: nowrap; }
+.stance-chip .stance-left { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.stance-chip.compact { margin: 0 12px 6px; align-self: flex-start; }

@@ -220,6 +220,19 @@ class ConfirmIn(BaseModel):
     token: str
 
 
+class StanceIn(BaseModel):
+    key: str
+
+
+@app.post("/api/stance")
+def set_stance(body: StanceIn):
+    """Set or end your course from the dashboard (the chat sets it with a confirm step)."""
+    try:
+        return engine.stance.set(body.key, by="you (dashboard)")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/chat/confirm")
 async def chat_confirm(body: ConfirmIn):
     return await engine.orders.confirm(body.token)

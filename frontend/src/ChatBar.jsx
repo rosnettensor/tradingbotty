@@ -8,7 +8,8 @@ const SUGGESTIONS = [
   "Was hat der Daily Brain heute entschieden?",
   "Was macht der Fast-Topf?",
   "Läuft jeder Agent sauber?",
-  "kaufe ADA für 30 CHF im Fast Pot",
+  "Heute mehr Risiko",
+  "Gewinne bunkern",
 ];
 
 const load = () => {
@@ -135,8 +136,8 @@ function OrderButtons({ o, busy, onGo, onDrop }) {
   if (!left) return <div className="chat-order-state">abgelaufen: schreib die Order nochmal</div>;
   return (
     <div className="chat-order">
-      <button className={`chat-go ${o.side === "SELL" ? "sell" : "buy"}`} disabled={busy} onClick={onGo}>
-        {o.side === "SELL" ? "Verkaufen" : "Kaufen"}: Ausführen
+      <button className={`chat-go ${o.kind === "stance" ? "course" : o.side === "SELL" ? "sell" : "buy"}`} disabled={busy} onClick={onGo}>
+        {o.kind === "stance" ? "Kurs setzen" : `${o.side === "SELL" ? "Verkaufen" : "Kaufen"}: Ausführen`}
       </button>
       <button className="chat-drop" onClick={onDrop}>Abbrechen</button>
       <span className="chat-order-left">{left}s</span>
