@@ -436,9 +436,10 @@ function FastPot({ state, lab, openAgent }) {
   const [mode, setMode] = useState(f.mode || "chf");
   const [chf, setChf] = useState(f.chf ?? 40);
   const [pct, setPct] = useState(f.pct ?? 13);
+  const [floor, setFloor] = useState(f.floor ?? 30);
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (f.mode) { setMode(f.mode); setChf(f.chf); setPct(f.pct); } }, [f.mode, f.chf, f.pct]);
+  useEffect(() => { if (f.mode) { setMode(f.mode); setChf(f.chf); setPct(f.pct); setFloor(f.floor ?? 30); } }, [f.mode, f.chf, f.pct, f.floor]);
   const total = w.total || 0;
   const pot = mode === "chf" ? Math.max(0, Number(chf) + (f.realized || 0)) : (total * pct) / 100;
   const slots = Math.floor(pot / (f.min_slot || 32));
@@ -453,7 +454,7 @@ function FastPot({ state, lab, openAgent }) {
       if (!window.confirm(`Give the fast pot ${pot.toFixed(2)} ${cur} of REAL money?\n\nRule: ${f.strategy}\nIt decides every 4 hours and may buy wild coins. It never sells your coins or the Daily Brain's, and the brain leaves this money alone. Worst case: the pot goes to zero, never more.${warn}`)) return;
     }
     setBusy(true);
-    await save({ on: !f.on, mode, chf: Number(chf), pct: Number(pct) });
+    await save({ on: !f.on, mode, chf: Number(chf), pct: Number(pct), floor: Number(floor) });
     setBusy(false);
   };
   const close = async () => {
@@ -490,6 +491,15 @@ function FastPot({ state, lab, openAgent }) {
               <input type="number" min="0" max="100" step="1" value={pct} onChange={(e) => setPct(e.target.value)} onBlur={() => save({ pct: Number(pct) })} /> %</div>
           )}
           <div className={slots < 1 ? "err-msg" : "dim small"}>= {pot.toFixed(2)} {cur}{mode === "chf" && f.realized ? ` (incl. ${f.realized >= 0 ? "+" : ""}${f.realized.toFixed(2)} won or lost so far)` : ""} · {slots < 1 ? `too small: each coin needs at least ${f.min_slot || 32} ${cur} (Fusion's 25 minimum plus room to sell after a drop)` : `${Math.min(slots, 2)} coin${Math.min(slots, 2) === 1 ? "" : "s"} at a time`}</div>
+          <div className="dim small">AUTO-OFF FLOOR</div>
+          <div className="pot-input"><span className="small">stop below</span>
+            <input type="number" min="0" step="5" value={floor} onChange={(e) => setFloor(e.target.value)} onBlur={() => save({ floor: Number(floor) })} /> {cur}</div>
+          <div className={Number(floor) > 0 && pot < Number(floor) ? "err-msg" : "dim small"}>
+            {Number(floor) > 0
+              ? `worth now ${(f.value ?? pot).toFixed(2)} ${cur} (cash + its coins at live prices). Below ${Number(floor).toFixed(2)} the pot sells its own coins at once, switches itself off and messages your phone. Never your coins or the Daily Brain's.`
+              : "0 = no floor: the pot keeps trading down to zero."}
+            {Number(floor) > 0 && pot < Number(floor) ? " The pot is below the floor now: raise the amount or lower the floor to switch it on." : ""}
+          </div>
         </div>
         <div>
           <div className="dim small">STATUS</div>
@@ -498,6 +508,12 @@ function FastPot({ state, lab, openAgent }) {
           {pos.map(([s, p]) => <div key={s} className="small">⚡ <b>{s}</b> in at {p.entry} for {p.cost?.toFixed(2)} {cur}{coins[s] ? <> · now {coins[s].value?.toFixed(2)} (<span className={coins[s].pnl >= 0 ? "up" : "down"}>{coins[s].pnl >= 0 ? "+" : ""}{coins[s].pnl?.toFixed(2)}</span>)</> : ""}</div>)}
         </div>
       </div>
+      {f.stopped && !f.on && (
+        <div className="floor-note">
+          <b className="down">⚡ Stopped by itself on {new Date(f.stopped.ts * 1000).toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</b>: the pot was worth {Number(f.stopped.value).toFixed(2)} {cur}, below your floor of {Number(f.stopped.floor).toFixed(2)} {cur}.
+          {f.stopped.done?.length ? ` ${f.stopped.done.join("; ")}.` : " It held no coins."} It stays off until you switch it on again: raise the amount or lower the floor first.
+        </div>
+      )}
       {msg && <p className="err-msg">{msg}</p>}
       {f.steps?.length > 0 && <ol className="steps small">{f.steps.map((x, i) => <li key={i}>{x}</li>)}</ol>}
     </section>

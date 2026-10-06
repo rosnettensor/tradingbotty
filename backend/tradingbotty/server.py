@@ -124,6 +124,7 @@ class FastIn(BaseModel):
     mode: str | None = None
     chf: float | None = None
     pct: float | None = None
+    floor: float | None = None
 
 
 class ControlsIn(BaseModel):
@@ -294,7 +295,7 @@ async def fast_get():
 @app.post("/api/fast")
 async def fast_set(body: FastIn):
     try:
-        return await engine.fast.set(body.on, body.strategy, body.mode, body.chf, body.pct)
+        return await engine.fast.set(body.on, body.strategy, body.mode, body.chf, body.pct, body.floor)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -315,6 +316,24 @@ async def patterns_get():
 @app.get("/api/report")
 def report():
     return {"text": engine.daily_report(), "telegram": bool(settings.telegram_token and settings.telegram_chat)}
+
+
+@app.get("/api/report/weekly")
+@app.post("/api/report/weekly")
+async def report_weekly(send: int = 0):
+    """The Sunday report card: ?send=0 shows the text, ?send=1 sends it to your phone now."""
+    if send:
+        if not engine.phone_channels():
+            raise HTTPException(400, "Add NTFY_TOPIC (or WhatsApp or Telegram) to .env and restart first.")
+        if not await engine.send_weekly():
+            raise HTTPException(400, "The message was refused: check the keys in .env (details in the agent feed).")
+    return {**engine.weekly(), "sent": bool(send)}
+
+
+@app.get("/api/diary")
+def diary(limit: int = 300):
+    """The trade diary: every real trade of the Daily Brain and the fast pot, newest first."""
+    return {"entries": engine.diary(max(1, min(300, limit)))}
 
 
 @app.post("/api/phone/test")
