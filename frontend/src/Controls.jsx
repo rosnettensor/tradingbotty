@@ -76,22 +76,31 @@ function Phone({ state }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [report] = usePoll("report", 300000);
+  const [week] = usePoll("report/weekly?send=0", 300000);
   const ph = state.phone || { channels: [] };
   const on = ph.channels.length > 0;
   const test = async () => {
     setBusy(true); setMsg("");
     try { await api("phone/test", {}); setMsg("Sent: check your phone."); } catch (e) { setMsg(e.message); } finally { setBusy(false); }
   };
+  const weekly = async () => {
+    setBusy(true); setMsg("");
+    try { await api("report/weekly?send=1", {}); setMsg("Sent the weekly report card: check your phone."); } catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  };
   return (
     <section className="panel">
       <h3>PHONE BRIEFING <span className={on ? "up" : "dim"}>· {on ? ph.channels.join(" + ") : "not set up"}</span></h3>
       <p className="dim small">Every morning at {ph.hour ?? 7}:00 Swiss time: account, the bot's own gain or loss, the night's decision, the fast pot, real trades of the last 24 hours, Guardian blocks and the Professor's review.
-        {ph.trades ? " Plus a short message on every real trade." : ""} Right away when the Guardian sells in an emergency. Time and trade messages: Settings, Phone.</p>
+        {ph.trades ? " Plus a short message on every real trade." : ""}{ph.weekly ? " Every Sunday at 19:00 the weekly report card: the bot's own result with a grade A to F, both traders' trades, the best and worst trade, Bitcoin's week." : ""} Right away when the Guardian sells in an emergency or the fast pot hits its floor. Time, trade and weekly messages: Settings, Phone.</p>
       {on
-        ? <button onClick={test} disabled={busy}>{busy ? "sending…" : "send a test message"}</button>
+        ? <div className="row-tools">
+            <button onClick={test} disabled={busy}>{busy ? "sending…" : "send a test message"}</button>
+            <button onClick={weekly} disabled={busy}>send weekly report now</button>
+          </div>
         : <p className="small">Easiest: install the free ntfy app, subscribe to a long secret topic name and put it into .env as NTFY_TOPIC, restart. WhatsApp: send the activation message from callmebot.com to their WhatsApp number, put your number and the apikey you get into .env (WHATSAPP_PHONE, WHATSAPP_APIKEY), restart. Telegram works too (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID).</p>}
       {msg && <p className={/Sent/.test(msg) ? "ok-msg" : "err-msg"}>{msg}</p>}
       {report?.text && <><h4>TODAY'S BRIEFING (PREVIEW)</h4><pre className="report">{report.text}</pre></>}
+      {week?.text && <><h4>WEEKLY REPORT CARD (PREVIEW)</h4><pre className="report">{week.title}{"\n\n"}{week.text}</pre></>}
     </section>
   );
 }

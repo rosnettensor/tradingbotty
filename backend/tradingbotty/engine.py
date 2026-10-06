@@ -687,6 +687,102 @@ class Engine:
             out.append("🔬 Patterns: " + "; ".join(found[:3]))
         return "\n\n".join(out)
 
+    # ------------------------------------------------------------------ Sunday report card
+    GRADE_RULE = ("A ≥ +2% · B ≥ +0.5% · C zwischen −0.5% und +0.5% · D bis −2% · F darunter "
+                  "(das eigene Ergebnis des Bots dieser Woche in % des Kontos)")
+
+    @staticmethod
+    def week_grade(pct: float | None) -> str:
+        """The grade is the bot's own result this week (what its trades added or lost vs doing nothing, from the
+        bot_edge chart) as a share of the account: A ≥ +2%, B ≥ +0.5%, C from −0.5% to +0.5% (a quiet week without
+        trades is a C), D down to −2%, F below. Bitcoin's week is shown next to it but doesn't change the grade."""
+        if pct is None:
+            return "–"
+        return "A" if pct >= 2 else "B" if pct >= 0.5 else "C" if pct > -0.5 else "D" if pct >= -2 else "F"
+
+    def _btc_week_pct(self) -> float | None:
+        """Bitcoin's change over the last 7 days: the minute prices kept for the charts, else the daily candles."""
+        now = time.time()
+        q = self.prices.quotes.get("BTC")
+        old = self.db.query("SELECT close FROM candles WHERE symbol='BTC' AND ts>=? AND ts<=? ORDER BY ts LIMIT 1",
+                            (now - 7 * 86400, now - 6.5 * 86400))
+        if q and q.price and old and old[0]["close"]:
+            return round((q.price / old[0]["close"] - 1) * 100, 2)
+        cd = self.__dict__.get("_daily")
+        c = (cd.c.get("BTC") or []) if cd else []
+        if len(c) >= 8 and c[-8] and c[-1]:
+            return round((c[-1] / c[-8] - 1) * 100, 2)
+        return None
+
+    def weekly(self) -> dict:
+        """The Sunday report card: the bot's own result this week, both traders' trades with wins and losses, the
+        best and worst closed trade from the diary, Bitcoin's week, a grade (rule in week_grade) and the Think Tank."""
+        now = time.time()
+        since = now - 7 * 86400
+        w = self.wallet or {}
+        cur = w.get("currency") or (self.live.currency if self.live else "CHF")
+        hist = [h for h in self.db.get("wallet_hist", []) if h[2] is not None]
+        edge = w.get("bot_edge") if w.get("bot_edge") is not None else (hist[-1][2] if hist else None)
+        start = next((h for h in hist if h[0] >= since), None)
+        week = round(edge - start[2], 2) if edge is not None and start else None
+        total = w.get("total") or (hist[-1][1] if hist else None)
+        pct = round(week / total * 100, 2) if week is not None and total else None
+        grade = self.week_grade(pct)
+        out = [f"🎓 Note {grade}"]
+        if week is not None:
+            since_txt = "" if start[0] <= since + 86400 else f" (gemessen seit {time.strftime('%d.%m.', time.localtime(start[0]))})"
+            out.append(f"{'📈' if week >= 0 else '📉'} Eigenes Ergebnis des Bots diese Woche: {week:+.2f} {cur} ({pct:+.2f}%)"
+                       f"{since_txt}\n    insgesamt {edge:+.2f} {cur}")
+        else:
+            out.append("📈 Eigenes Ergebnis des Bots: noch keine Daten (Konto noch nicht gelesen)")
+        counts = {(r["variant_id"], r["side"]): r["n"] for r in self.db.query(
+            "SELECT variant_id, side, COUNT(*) n FROM trades WHERE mode='live' AND ts>=? GROUP BY variant_id, side", (since,))}
+        closed = [d for d in self.db.get("diary") or [] if d.get("closed") and d["ts"] >= since]
+        for book, vid, label in (("brain", BRAIN_ID, "🧠 Daily Brain"), ("fast", "fast", "⚡ Fast-Topf")):
+            buys, sells = counts.get((vid, "BUY"), 0), counts.get((vid, "SELL"), 0)
+            mine = [d for d in closed if d["book"] == book]
+            won = sum(1 for d in mine if d["pnl"] > 0)
+            res = sum(d["pnl"] for d in mine)
+            out.append(f"{label}: {buys + sells} Trades ({buys} Käufe, {sells} Verkäufe)"
+                       + (f"\n    {won} gewonnen · {len(mine) - won} verloren · zusammen {res:+.2f} {cur}" if mine
+                          else "\n    keine Position geschlossen"))
+        if closed:
+            best = max(closed, key=lambda d: d["pnl"])
+            worst = min(closed, key=lambda d: d["pnl"])
+            line = lambda d: (f"{d['symbol']}{' ⚡' if d['book'] == 'fast' else ''} {d['pnl']:+.2f} {cur} "  # noqa: E731
+                              f"({d['pnl_pct']:+.1f}%)")
+            out.append(f"🏆 Bester Trade: {line(best)}" + (f"\n🥀 Schlechtester: {line(worst)}" if worst is not best else ""))
+        btc = self._btc_week_pct()
+        out.append(f"₿ Bitcoin diese Woche: {btc:+.2f}%" if btc is not None else "₿ Bitcoin diese Woche: kein Preis")
+        tt = (self.tt or {}).get("counts") or {}
+        if tt.get("tested"):
+            prev = (self.db.get("weekly_tt") or {}).get("tested")
+            new = f" (+{tt['tested'] - prev} diese Woche)" if prev is not None and tt["tested"] >= prev else ""
+            out.append(f"💡 Think Tank: {tt['tested']} Ideen getestet{new} · {tt.get('candidate', 0)} Kandidaten · "
+                       f"{tt.get('promising', 0)} vielversprechend")
+        out.append(f"ℹ️ Notenregel: {self.GRADE_RULE}")
+        return {"title": f"📊 Wochen-Zeugnis · Note {grade}", "text": "\n\n".join(out), "grade": grade, "pct": pct,
+                "week": week, "btc_pct": btc}
+
+    async def send_weekly(self, scheduled: bool = False) -> bool:
+        r = self.weekly()
+        ok = await self.notify(r["text"], title=r["title"], tags=["bar_chart"], priority=3)
+        if ok and scheduled:  # the Think Tank's count now, for next Sunday's "+N this week"
+            self.db.set("weekly_tt", {"ts": time.time(), **((self.tt or {}).get("counts") or {})})
+        return ok
+
+    async def weekly_tick(self) -> None:
+        """Every Sunday from 19:00 Swiss time, once a week: the report card to your phone (Settings, Phone)."""
+        if not self.phone_channels() or not self.settings["phone"].get("weekly", True):
+            return
+        now = self._local_now()
+        day = time.strftime("%Y-%m-%d", now)
+        if now.tm_wday != 6 or now.tm_hour < 19 or self.db.get("weekly_day") == day:
+            return
+        self.db.set("weekly_day", day)
+        if await self.send_weekly(scheduled=True):
+            self._log("Engine", "info", f"Weekly report card sent by {' and '.join(self.phone_channels())}.")
+
     # ------------------------------------------------------------------ live trading
     async def set_mode(self, mode: str) -> dict:
         if mode == "paper":
@@ -720,13 +816,19 @@ class Engine:
         ids = getattr(self.live, "asset_ids", {})  # the app broker keys balances by asset id
         return float(bal.get(symbol.upper(), bal.get(ids.get(symbol.upper(), "?"), 0.0)) or 0.0)
 
-    def _record(self, sym: str, side: str, ex: dict, notional: float, reason: str, book: str = "brain") -> None:
+    def _record(self, sym: str, side: str, ex: dict, notional: float, reason: str, book: str = "brain",
+                basis: dict | None = None) -> None:
+        """Book one real order: the trades table, the live feed, the trade diary and the phone. `basis` is what the
+        book paid for the coin it sells now ({"cost", "qty"}, read before the sell cleared it): with it, the diary
+        entry closes the position with its result after fees."""
+        entry = self._diary_entry(sym, side, ex, notional, reason, book, basis)  # before the insert: it reads the buys
         self.db.execute(
             "INSERT INTO trades(ts,variant_id,mode,symbol,side,qty,price,notional,fee,pnl,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (time.time(), BRAIN_ID if book == "brain" else "fast", "live", sym, side, float(ex.get("quantity", 0) or 0), float(ex.get("price", 0) or 0),
              notional, float(ex.get("fee", 0) or 0), None, reason))
         self.bus.publish("trade", {"mode": "live", "symbol": sym, "side": side, "notional": round(notional, 2),
                                    "reason": reason, "ts": time.time(), "book": book})
+        self._diary_add(entry)
         if self.settings["phone"].get("trades"):
             who = "⚡ Fast pot" if book == "fast" else "🧠 Daily Brain"
             cur = self.live.currency if self.live else ""
@@ -740,6 +842,96 @@ class Engine:
         Each only ever sells what it bought itself; your own coins are in neither."""
         return ("live_qty", "live_cost") if book == "brain" else ("fast_qty", "fast_cost")
 
+    # ------------------------------------------------------------------ trade diary
+    DIARY_MAX = 300           # newest first; older entries drop off (the trades table keeps everything)
+    LESSON_SYSTEM = (
+        "Du bist der nüchterne Trading-Coach von TradingBotty, einem Krypto-Bot mit echtem Geld. Du bekommst eine "
+        "gerade geschlossene Position als JSON. Antworte mit genau einer Zeile auf Deutsch (höchstens 160 Zeichen): "
+        "was diese Position lehrt, konkret und ehrlich. Nur aus den Daten, keine erfundenen Fakten, keine Floskeln."
+    )
+
+    def _open_buys(self, book: str, sym: str) -> list[dict]:
+        """The buys of the position a book is closing: every buy of this coin by this book since its last sell."""
+        vid = BRAIN_ID if book == "brain" else "fast"
+        last = self.db.query("SELECT MAX(ts) t FROM trades WHERE mode='live' AND variant_id=? AND symbol=? AND side='SELL'",
+                             (vid, sym))[0]["t"] or 0
+        return self.db.query("SELECT ts,qty,price,notional,fee,reason FROM trades WHERE mode='live' AND variant_id=? "
+                             "AND symbol=? AND side='BUY' AND ts>? ORDER BY ts", (vid, sym, last))
+
+    def _diary_entry(self, sym: str, side: str, ex: dict, notional: float, reason: str, book: str,
+                     basis: dict | None) -> dict:
+        """One diary line. A sell that closes a position also gets its entry price and time and the result after
+        fees: what the sell brought in (minus its fee) against what the book paid (its cost basis plus the buy fees)."""
+        now = time.time()
+        fee = float(ex.get("fee", 0) or 0)
+        e = {"id": f"{int(now * 1000)}-{book}-{sym}-{side}", "ts": now, "book": book, "side": side, "symbol": sym,
+             "amount": round(notional, 2), "price": float(ex.get("price", 0) or 0),
+             "qty": float(ex.get("quantity", 0) or 0), "fee": round(fee, 4), "reason": reason,
+             "currency": self.live.currency if self.live else (self.wallet or {}).get("currency", "CHF")}
+        if side != "SELL" or not basis or not basis.get("cost") or notional <= 0:
+            return e
+        buys = self._open_buys(book, sym)
+        cost = basis["cost"] + sum(float(b["fee"] or 0) for b in buys)
+        pnl = notional - fee - cost
+        e.update(closed=True, cost=round(cost, 2), pnl=round(pnl, 2), pnl_pct=round(pnl / cost * 100, 2),
+                 entry_price=(basis["cost"] / basis["qty"]) if basis.get("qty") else (buys[0]["price"] if buys else None),
+                 entry_ts=buys[0]["ts"] if buys else None, entry_reason=buys[0]["reason"] if buys else None)
+        e["lesson"], e["lesson_by"] = self._diary_math(e), "math"  # Claude's line replaces it if it comes
+        return e
+
+    @staticmethod
+    def _held_for(e: dict) -> str:
+        if not e.get("entry_ts"):
+            return "unbekannter Dauer"
+        h = (e["ts"] - e["entry_ts"]) / 3600
+        return f"{h:.0f} h" if h < 48 else f"{h / 24:.0f} Tagen"
+
+    @classmethod
+    def _diary_math(cls, e: dict) -> str:
+        """The plain-math post-mortem, when Claude can't write one (no key, no budget, no answer)."""
+        cur = e.get("currency", "CHF")
+        word = "Gewinn" if e["pnl"] >= 0 else "Verlust"
+        entry = f"rein bei {e['entry_price']:.6g}, " if e.get("entry_price") else ""
+        return (f"{word} {e['pnl']:+.2f} {cur} ({e['pnl_pct']:+.1f}%) nach Gebühren nach {cls._held_for(e)}: "
+                f"{entry}raus bei {e['price']:.6g}.")
+
+    def _diary_add(self, entry: dict) -> None:
+        diary = [entry, *(self.db.get("diary") or [])][:self.DIARY_MAX]
+        self.db.set("diary", diary)
+        if entry.get("closed") and self.llm.available:
+            try:  # never in the trade path: the order is booked, Claude answers whenever it answers
+                asyncio.get_running_loop().create_task(self._diary_lesson(entry["id"]))
+            except RuntimeError:
+                pass  # no event loop (tests): the plain-math line stays
+
+    async def _diary_lesson(self, eid: str) -> None:
+        """Ask Claude (fast model, a few hundred tokens, inside the AI budget) for a one-line post-mortem."""
+        e = next((x for x in self.db.get("diary") or [] if x.get("id") == eid), None)
+        if not e:
+            return
+        facts = {k: e.get(k) for k in ("book", "symbol", "reason", "entry_reason", "entry_price", "price", "amount",
+                                        "cost", "pnl", "pnl_pct", "currency")}
+        facts["book"] = "Fast-Topf (4-Stunden-Regel, Spielgeld)" if e["book"] == "fast" else "Daily Brain (Tagesstrategie)"
+        facts["gehalten"] = self._held_for(e)
+        try:
+            res = await self.llm.json_call("Trade Diary", self.LESSON_SYSTEM, json.dumps(facts, ensure_ascii=False),
+                                           {"type": "object", "properties": {"lesson": {"type": "string"}},
+                                            "required": ["lesson"], "additionalProperties": False}, max_tokens=300)
+        except Exception as ex:
+            self._log("Live Desk", "warn", f"Trade diary: Claude's post-mortem failed ({str(ex)[:80]}); the plain-math line stays.")
+            return
+        line = (res or {}).get("lesson")
+        if not isinstance(line, str) or not line.strip():
+            return  # no key, over budget or no answer: the plain-math line stays
+        diary = self.db.get("diary") or []
+        for x in diary:
+            if x.get("id") == eid:
+                x["lesson"], x["lesson_by"] = " ".join(line.split())[:240], "claude"
+        self.db.set("diary", diary)
+
+    def diary(self, limit: int = DIARY_MAX) -> list[dict]:
+        return (self.db.get("diary") or [])[:limit]
+
     async def _live_sell(self, symbol: str, reason: str, book: str = "brain") -> dict | None:
         """Sell all of a coin the bot bought itself. Coins you owned before stay untouched. Returns the fill."""
         kq, kc = self._book_keys(book)
@@ -750,6 +942,7 @@ class Engine:
                 return None
             res = await self.live.sell_fraction(symbol, 1.0, owned=mine)
             cost = self.db.get(kc, {})
+            basis = {"cost": float(cost.get(symbol, 0.0) or 0.0), "qty": mine}  # for the diary, before it's cleared
             owned.pop(symbol, None)
             cost.pop(symbol, None)
             self.db.set(kq, owned)
@@ -759,7 +952,7 @@ class Engine:
                 ex = res.get("execution", {}) or {}
                 if not float(ex.get("quantity", 0) or 0):
                     ex = {**ex, "quantity": mine}
-                self._record(symbol, "SELL", ex, float(ex.get("notional", 0) or 0), reason, book)
+                self._record(symbol, "SELL", ex, float(ex.get("notional", 0) or 0), reason, book, basis)
                 self._log("Live Desk", "live", f"LIVE SELL {symbol}: {ex.get('notional', '?')} {self.live.currency} "
                                                f"filled ({reason}).")
             self.live_errors = 0
@@ -1348,6 +1541,7 @@ class Engine:
             self._every(lambda: 60, self.fast.tick),
             self._every(lambda: 60, self.guard_tick),
             self._every(lambda: 60, self.morning_tick),
+            self._every(lambda: 60, self.weekly_tick),
             self._every(lambda: 1800, self.research_tick),
             self._every(lambda: 240, self.thinktank_tick),
         )
@@ -1408,7 +1602,8 @@ class Engine:
             "telegram": bool(self.settings.telegram_token and self.settings.telegram_chat),
             "moved": self.db.get("moved"),
             "phone": {"channels": self.phone_channels(), "hour": self.settings["phone"]["morning_hour"],
-                      "trades": bool(self.settings["phone"].get("trades")), "last": self.db.get("briefing_day")},
+                      "trades": bool(self.settings["phone"].get("trades")), "last": self.db.get("briefing_day"),
+                      "weekly": bool(self.settings["phone"].get("weekly", True)), "weekly_last": self.db.get("weekly_day")},
             "news": [{k: e.get(k) for k in ("ts", "source", "title", "link", "symbols", "sentiment", "impact", "event", "ai")}
                      for e in self.bb.news_events[:25]],
             "live_trades": self.db.query("SELECT COUNT(*) n, MAX(ts) last FROM trades WHERE mode='live'")[0],

@@ -123,6 +123,10 @@ function DeskCockpit({ state, pulse, focus, setFocus, openAgent }) {
       <section className="panel newsfeed">
         <News news={state.news || []} setFocus={setFocus} />
       </section>
+
+      <section className="panel diary">
+        <TradeDiary state={state} setFocus={setFocus} />
+      </section>
     </div>
   );
 }
@@ -148,6 +152,7 @@ function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
         <LineChart series={[{ id: "a", color: "var(--magenta)", bold: true, points: [...(w.history || []).map((h) => [h[0], h[1]]), [Date.now() / 1000, w.total]] }]} baseline={w.start_total} height={180} /></section>}</>],
     ["Guardian", <section className="panel guardpanel"><Guardian guard={state.guard || {}} shocks={state.shocks || {}} openAgent={openAgent} /></section>],
     ["Trades", <section className="panel positions"><LiveTrades trades={state.trades || []} cur={cur} setFocus={setFocus} /></section>],
+    ["Tagebuch", <section className="panel diary"><TradeDiary state={state} setFocus={setFocus} /></section>],
     ["Feed", <><section className="panel log"><Feed log={state.log || []} /></section><StatStrip state={state} openAgent={openAgent} /></>],
     ["News", <section className="panel newsfeed"><News news={state.news || []} setFocus={setFocus} /></section>],
   ];
@@ -504,6 +509,55 @@ function LiveTrades({ trades, cur, setFocus }) {
   );
 }
 
+/** The trade diary: every real trade of both traders as a card; a closed position shows its result after fees
+ *  and a one-line lesson (Claude's, or plain math without a key or budget). */
+function TradeDiary({ state, setFocus }) {
+  const [d] = usePoll("diary?limit=80", 60000, [state.live_trades?.n]);
+  const list = d?.entries || [];
+  const cur = state.wallet?.currency || "CHF";
+  const closed = list.filter((e) => e.closed);
+  const won = closed.filter((e) => e.pnl > 0).length;
+  return (
+    <>
+      <div className="row-head">
+        <h3>TRADE-TAGEBUCH <span className="dim">· every real trade of the Daily Brain and the fast pot · newest first</span></h3>
+        {closed.length > 0 && <span className="dim small">{closed.length} closed · {won} won · {closed.length - won} lost</span>}
+      </div>
+      {!d ? <div className="empty small">loading…</div> : !list.length ? (
+        <div className="empty small">No real trades yet. Every buy and sell of the Daily Brain and the fast pot lands here; when a position closes you see what it brought after fees and a one-line lesson.</div>
+      ) : (
+        <div className="diary-list">
+          {list.map((e) => <DiaryCard key={e.id} e={e} cur={cur} setFocus={setFocus} />)}
+        </div>
+      )}
+    </>
+  );
+}
+
+function DiaryCard({ e, cur, setFocus }) {
+  const c = e.currency || cur;
+  const sign = (x) => `${x >= 0 ? "+" : ""}${Number(x || 0).toFixed(2)}`;
+  const tone = e.closed ? (e.pnl > 0 ? "win" : e.pnl < 0 ? "loss" : "") : "";
+  return (
+    <div className={`diary-card ${tone}`}>
+      <div className="diary-head">
+        <span className={`side-badge ${e.side === "BUY" ? "buy" : "sell"}`}>{e.side}</span>
+        <button className="linkish" onClick={() => setFocus(e.symbol)}><b>{e.symbol}</b></button>
+        <span>{Number(e.amount || 0).toFixed(2)} {c}</span>
+        <span className="dim small">{e.book === "fast" ? "⚡ fast pot" : "🧠 brain"}</span>
+        <span className="dim small diary-time">{dayhm(e.ts)}</span>
+      </div>
+      {e.closed && (
+        <div className="diary-result">
+          <b className={pctColor(e.pnl)}>{sign(e.pnl)} {c} ({sign(e.pnl_pct)}%)</b> <span className="dim small">after fees · in at {fmt.price(e.entry_price)}{e.entry_ts ? ` (${dayhm(e.entry_ts)})` : ""}, out at {fmt.price(e.price)}</span>
+        </div>
+      )}
+      <div className="dim small diary-reason">{e.reason}</div>
+      {e.lesson && <div className="diary-lesson" title={e.lesson_by === "claude" ? "Claude's post-mortem" : "plain math (no AI key or budget)"}>{e.lesson_by === "claude" ? "🤖" : "🧮"} {e.lesson}</div>}
+    </div>
+  );
+}
+
 const FEED_FILTERS = [["all", "all"], ["trade", "trades"], ["ai", "AI"], ["warn", "problems"]];
 
 function Feed({ log }) {
@@ -585,7 +639,8 @@ function FastPotCard({ state, openAgent }) {
           <span className="dim">{live ? `next look in ${mins} min` : "standby: LIVE is off"}</span>
           {!f.robust && <span className="play">play money: the rule doesn't pass every check</span>}
         </>
-      ) : <span className="dim">off · a small, separate pot of real money for one fast rule, every 4 hours, next to the Daily Brain</span>}
+      ) : f.stopped ? <span className="down">stopped by itself {dayhm(f.stopped.ts)}: worth {Number(f.stopped.value).toFixed(2)} {cur}, below your floor of {Number(f.stopped.floor).toFixed(2)} {cur} · only you switch it on again</span>
+        : <span className="dim">off · a small, separate pot of real money for one fast rule, every 4 hours, next to the Daily Brain</span>}
       <span className="fast-note dim small">{f.note ? `last: ${f.note}` : ""}</span>
       <span className="row-tools">
         <button className="mini" onClick={() => openAgent("fast")}>agent</button>

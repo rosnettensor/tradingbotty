@@ -31,6 +31,9 @@ CONTROLS = [
      "the night's decision, the fast pot, real trades of the last 24h and the Professor's review."},
     {"key": "phone.trades", "label": "Message me on every real trade", "bool": True, "group": "Phone",
      "help": "A short message the moment the Daily Brain or the fast pot buys or sells with real money."},
+    {"key": "phone.weekly", "label": "Weekly report card on Sundays", "bool": True, "group": "Phone",
+     "help": "Every Sunday at 19:00 Swiss time: the bot's own result this week with a grade A to F, both traders' "
+     "trades with wins and losses, the best and worst closed trade, Bitcoin's week and the Think Tank."},
     # ---- speed
     {"key": "engine.news_poll_seconds", "label": "Read news every (seconds)", "min": 60, "max": 3600, "step": 60, "int": True,
      "group": "Speed", "help": "More often = the Guardian hears about a hack sooner, and a little more AI spend."},
@@ -45,6 +48,7 @@ DEFAULTS = {
     "live.use_my_coins": False,
     "phone.morning_hour": 7,
     "phone.trades": True,
+    "phone.weekly": True,
 }
 
 BY_KEY = {c["key"]: c for c in CONTROLS}

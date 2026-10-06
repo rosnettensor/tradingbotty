@@ -7,6 +7,8 @@
 - Exactly the tested rule: every 4 hours, right after a 4-hour candle closes, it asks the strategy from the fast lab
   what to hold, with the pot's real positions (entry price, peak, entry time) handed to it, and trades the difference.
 - Every order goes through the same Risk Officer checks (kill switch, Fusion minimum, spread, cash with fee room).
+- A floor (kv fast "floor", 30 by default): when the pot is worth less than that (its cash plus its coins at live
+  prices), it sells its own coins, switches itself off and tells your phone. Only you switch it on again.
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from . import fastlab, research
 DEFAULT = "Dip buyer: down 15%+ in 1d inside an uptrend, 2 slots, take +10% / stop -10%"  # the one robust fast rule
 MIN_SLOT = 32.0      # per position: Fusion's 25 (some coins 30) minimum, with room for a 20% drop before it can't be sold
 SETTLE = 120         # seconds after a candle closes before the exchange is sure to have it
+FLOOR = 30.0         # default floor: below this value the pot sells its coins and switches itself off
 
 
 class FastTrader:
@@ -29,7 +32,7 @@ class FastTrader:
     def cfg(self) -> dict:
         c = self.e.db.get("fast") or {}
         return {"on": False, "strategy": DEFAULT, "mode": "chf", "chf": 40.0, "pct": 13.0, "realized": 0.0,
-                "trades": 0, "wins": 0, "bar": None, "pos": {}, "steps": [], "note": "", **c}
+                "trades": 0, "wins": 0, "bar": None, "pos": {}, "steps": [], "note": "", "floor": FLOOR, **c}
 
     def save(self, c: dict) -> None:
         self.e.db.set("fast", c)
@@ -59,16 +62,29 @@ class FastTrader:
         in_coins = sum(self.e.db.get("fast_cost", {}).values())
         return round(max(0.0, self.pot_size(c) - in_coins), 2)
 
+    def value(self, prices: dict | None = None, c: dict | None = None) -> float:
+        """What the pot is worth right now: its cash (the pot minus what it paid for its coins) plus its coins at
+        live prices. Without `prices`, the prices of the last account read. A coin without a price counts at cost,
+        so a missing price can never look like a crash."""
+        c = c or self.cfg()
+        qty, cost = self.e.db.get("fast_qty", {}), self.e.db.get("fast_cost", {})
+        if not qty:
+            return self.pot_size(c)
+        if prices is None:
+            prices = {x["symbol"]: x.get("price") for x in (self.e.wallet or {}).get("fast_coins") or []}
+        coins = sum(q * prices[s] if prices.get(s) else cost.get(s, 0.0) for s, q in qty.items())
+        return round(self.pot_size(c) - sum(cost.values()) + coins, 2)
+
     def status(self) -> dict:
         c = self.cfg()
         nxt = (time.time() // fastlab.BAR + 1) * fastlab.BAR + SETTLE
         return {**{k: c[k] for k in ("on", "strategy", "mode", "chf", "pct", "realized", "trades", "wins", "steps",
-                                     "note", "pos")},
+                                     "note", "pos", "floor")},
                 "decided": c.get("ts"), "pot": self.pot_size(c), "slots": self.slots(c), "next": nxt,
-                "min_slot": MIN_SLOT, "robust": c.get("robust")}
+                "min_slot": MIN_SLOT, "robust": c.get("robust"), "value": self.value(c=c), "stopped": c.get("stopped")}
 
     async def set(self, on: bool | None = None, strategy: str | None = None, mode: str | None = None,
-                  chf: float | None = None, pct: float | None = None) -> dict:
+                  chf: float | None = None, pct: float | None = None, floor: float | None = None) -> dict:
         c = self.cfg()
         if strategy:
             if not fastlab.by_name(strategy) or not strategy.startswith(("Fast", "Pump", "Dip")):
@@ -81,11 +97,18 @@ class FastTrader:
             c["chf"] = max(0.0, float(chf))
         if pct is not None:
             c["pct"] = max(0.0, min(100.0, float(pct)))
+        if floor is not None:
+            c["floor"] = max(0.0, float(floor))
         if on is not None:
             if on and self.slots(c) < 1:
                 raise ValueError(f"the pot ({self.pot_size(c):.2f}) is below {MIN_SLOT:g} per coin: Fusion's 25 minimum "
                                  f"plus room to sell after a drop. Make the pot bigger.")
+            if on and self.value(c=c) < c["floor"]:
+                raise ValueError(f"the pot is worth {self.value(c=c):.2f}, below your floor of {c['floor']:.2f}: it would "
+                                 "stop again at once. Raise the amount or lower the floor first.")
             c["on"] = bool(on)
+            if on:
+                c.pop("stopped", None)  # you switched it on again: the floor note is done
             c["bar"] = None
             cur = getattr(self.e.live, "currency", "CHF")
             if on:
@@ -138,6 +161,8 @@ class FastTrader:
             return
         if not (e.wallet or {}).get("total"):
             return
+        if await self._below_floor(c):
+            return
         now = time.time()
         bar = (now // fastlab.BAR - 1) * fastlab.BAR  # the newest closed 4-hour candle (its open time)
         if c.get("bar") == bar or now < bar + fastlab.BAR + SETTLE:
@@ -152,6 +177,62 @@ class FastTrader:
                 e._log("Fast Trader", "error", msg)
         finally:
             e._fast_trading = False
+
+    async def _below_floor(self, c: dict) -> bool:
+        """The floor, checked every minute: below it the pot sells its own coins at once (play money, you want it
+        protected), switches itself off and sends your phone the numbers. The brain's coins and yours are never
+        touched: _live_sell(book="fast") only sells what the pot bought itself."""
+        e = self.e
+        floor = float(c.get("floor") or 0)
+        if floor <= 0:
+            return False
+        held = e.db.get("fast_qty", {})
+        prices = None
+        w = e.wallet or {}
+        fresh = w.get("fast_coins") and time.time() - (w.get("ts") or 0) < 120  # the account read every 30 s will do
+        if held and not fresh and hasattr(e.live, "prices"):
+            try:
+                prices = await e.live.prices()
+            except Exception:
+                prices = None  # can't read live prices: the last account read decides
+        worth = self.value(prices, c)
+        if worth >= floor:
+            return False
+        cur = getattr(e.live, "currency", "CHF")
+        done, phone = [], []  # the dashboard's words (English) and the phone's (German)
+        e._fast_trading = True
+        try:
+            c["on"] = False  # off first: nothing may buy while the coins are sold
+            self.save(c)
+            for sym in list(held):
+                ex = await e._live_sell(sym, f"fast pot: worth {worth:.2f} {cur}, below your floor of {floor:.2f}",
+                                        book="fast")
+                if ex:
+                    pnl = self.booked_sell(sym, ex)
+                    done.append(f"sold {sym} ({pnl:+.2f} {cur})")
+                    phone.append(f"🔴 {sym} verkauft ({pnl:+.2f} {cur})")
+                elif sym in e.db.get("fast_qty", {}):
+                    done.append(f"{sym}: Fusion refused the sell, sell it in the app")
+                    phone.append(f"⚠️ {sym}: Fusion hat den Verkauf abgelehnt, bitte in der App verkaufen")
+        finally:
+            e._fast_trading = False
+        c = self.cfg()
+        c["pos"] = {k: v for k, v in c["pos"].items() if k in e.db.get("fast_qty", {})}
+        c["stopped"] = {"ts": time.time(), "value": worth, "floor": floor, "done": done,
+                        "pot": self.pot_size(c), "realized": c["realized"]}
+        c["note"] = f"stopped: worth {worth:.2f} {cur}, below the floor of {floor:.2f}"
+        self.save(c)
+        e._log("Fast Trader", "live", f"Fast pot STOPPED: worth {worth:.2f} {cur}, below your floor of {floor:.2f} {cur}. "
+               + (f"Sold its coins: {'; '.join(done)}. " if done else "It held no coins. ")
+               + "Only you can switch it on again (raise the amount or lower the floor first).")
+        sold = "\n".join(phone) if phone else "Er hielt keine Coins."
+        e._notify_later(f"Der Fast-Topf ist nur noch {worth:.2f} {cur} wert, unter deiner Grenze von {floor:.2f} {cur}. "
+                        f"Er hat sich selbst ausgeschaltet.\n\n{sold}\n\n"
+                        f"Topf jetzt {self.pot_size(c):.2f} {cur} · gebucht {c['realized']:+.2f} {cur} seit Start.\n"
+                        "Deine Coins und die des Daily Brain bleiben unberührt. Einschalten nur durch dich "
+                        "(Research, Fast Trader Lab: Betrag erhöhen oder Grenze senken).",
+                        title="⚡ Fast-Topf gestoppt", tags=["octagonal_sign"], priority=4)
+        return True
 
     async def _candles(self, held: list[str]) -> research.Candles:
         e = self.e
