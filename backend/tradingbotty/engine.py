@@ -18,7 +18,8 @@ from . import altdata, controls, fastlab, patterns, research, thinktank
 from .fasttrader import FastTrader as FastPot
 from .agents.base import Blackboard, Source
 from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Guardian, LiveDesk, NewsHunter,
-                          PatternHunter, Professor, Researcher, RiskOfficer, ThinkTank, TrendWatch)
+                          PatternHunter, Professor, RegimeRadar, Researcher, RiskOfficer, ThinkTank, TrendWatch,
+                          AIManager)
 from .brokers.bitpanda import BitpandaBroker
 from .brokers.fusion import FusionBroker
 from .bus import Bus
@@ -110,8 +111,9 @@ class Engine:
             Source(self, "src_news", "News feeds", "Crypto news headlines (RSS)", h("news", self.social),
                    "The RSS feeds in Controls: CoinDesk, Cointelegraph, Decrypt, The Block, Bitcoin Magazine and more."),
         ]
-        self.team = [FusionScout(self), TrendWatch(self), DataCollector(self), NewsHunter(self), PatternHunter(self),
-                     Researcher(self), ThinkTank(self), Guardian(self), Professor(self), DailyBrain(self), FastTrader(self),
+        self.team = [FusionScout(self), TrendWatch(self), DataCollector(self), NewsHunter(self), RegimeRadar(self),
+                     PatternHunter(self), Researcher(self), ThinkTank(self), AIManager(self), Guardian(self),
+                     Professor(self), DailyBrain(self), FastTrader(self),
                      RiskOfficer(self), LiveDesk(self)]
         self._by_id = {a.id: a for a in self.sources + self.team}
         # remember news across restarts so headlines aren't re-read (and re-paid for) after every restart
@@ -661,6 +663,9 @@ class Engine:
         if b.get("note"):
             brain.append(f"    {b['note'][:220]}")
         out.append("\n".join(brain))
+        reg = self.db.get("regime") or {}
+        if reg.get("name"):
+            out.append(f"🧭 Market mood: {reg['name']} for {reg['days']} day{'s' if reg['days'] != 1 else ''}")
         f = self.fast.status()
         if f.get("on"):
             out.append(f"⚡ Fast pot {f.get('pot', 0):.2f} {cur}\n    {f.get('trades', 0)} trades · {f.get('realized', 0):+.2f} {cur} so far · "
@@ -1395,7 +1400,7 @@ class Engine:
     def state(self, light: bool = False) -> dict:
         res = self.db.get("research") or {}
         s = {
-            "mode": self.mode, "kill_switch": self.kill_switch, "simulate": self.settings.simulate,
+            "mode": self.mode, "regime": self.db.get("regime"), "kill_switch": self.kill_switch, "simulate": self.settings.simulate,
             "ai": self.llm.available, "budget": self.budget.snapshot(), "uptime": time.time() - self.started,
             "wallet": self.wallet,
             "brain": self.brain(),

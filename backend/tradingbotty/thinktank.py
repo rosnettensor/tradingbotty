@@ -54,6 +54,8 @@ FEATURES = {
     "dow": (False, "day of the week, 0 = Monday"),
     "moon": (False, "moon phase, 1 = full moon, -1 = new moon (a control: it should fail)"),
     "cycle": (False, "position in Bitcoin's 4-year halving cycle, 0 to 1"),
+    "mood": (False, "the Regime Radar's market mood: 1 bull, -1 bear, 0 sideways or wild (same for every coin)"),
+    "wild": (False, "how turbulent Bitcoin is vs all history, 0 calm to 1 the wildest (same for every coin)"),
 }
 UNARY = {"rank": "rank among all coins that day, 0 to 1", "demean": "minus the average over all coins that day",
          "abs": "absolute value", "sign": "-1, 0 or 1", "log1p": "log(1 + x)", "sq": "x squared", "neg": "minus x"}
@@ -296,6 +298,10 @@ def feature(cd: research.Candles, name: str, n: int) -> dict[str, list]:
                     col.append(sum(x > 0 for x in xs) / len(xs))
                 else:
                     col.append(_std(xs))
+        out = {s: col for s in coins}
+    elif name in ("mood", "wild"):
+        from . import regime
+        col = [None if r is None else r[name] for r in regime.classify(cd)]
         out = {s: col for s in coins}
     elif name in ("dow", "moon", "cycle"):
         col = []

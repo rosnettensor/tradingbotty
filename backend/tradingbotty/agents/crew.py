@@ -347,7 +347,11 @@ class NewsHunter(Agent):
         batch, self.pending = self.pending[:25], self.pending[25:]
         if batch:
             use_ai = self.ctx.settings["ai"]["news_ai"]
-            scored = (await self._score_ai(batch) if use_ai else None) or self._score_rules(batch)
+            coin_only = (self.ctx.db.get("ai_throttle") or {}).get("news_coin_only")
+            for_ai = [h for h in batch if h.symbols] if coin_only else batch  # the AI Manager's saving mode
+            rest = [h for h in batch if h not in for_ai]
+            scored = ((await self._score_ai(for_ai) if use_ai and for_ai else None) or self._score_rules(for_ai)) \
+                + (self._score_rules(rest) if rest else [])
             bb.news_events = (scored + bb.news_events)[:150]
             guard = [ev for ev in scored if ev["event"] in ("hack", "delisting") and ev["symbols"]]
             self.last_batch = {"ts": time.time(), "read": len(batch), "rated": len(scored),
@@ -535,7 +539,7 @@ class ThinkTank(Agent):
         e = self.ctx
         st = e.tt or {}
         ai = e.db.get("tt_ai") or {}
-        every = 6 * 3600
+        every = (e.db.get("ai_throttle") or {}).get("thinktank_hours", 6) * 3600  # the AI Manager may slow it
         due = self.queued or time.time() - ai.get("last", 0) > every
         self.next_run = ai.get("last", time.time()) + every
         if due and e.llm.available and not self._inventing and st.get("board") is not None:
@@ -594,6 +598,129 @@ class ThinkTank(Agent):
             self.say(f"New ideas from Claude: " + "; ".join(f"{i['name']} ({i['inspiration']})" for i in ideas))
         finally:
             self._inventing = False
+
+
+class RegimeRadar(Agent):
+    id = "regime"
+    name = "Regime Radar"
+    role = "Names the market's mood every day: bull, bear, sideways or wild"
+    inputs = ["src_binance"]
+    cadence = "once a day, after the daily candle closes"
+    explain = ("Plain math, free. Bitcoin against its 50- and 200-day averages, the share of coins above their own "
+               "50-day average, and Bitcoin's 30-day turbulence ranked against every day since 2017. Wild (top 15% "
+               "turbulence) wins over the others. It shows how long the mood has lasted, the last 90 days, and what "
+               "each mood meant for Bitcoin's next 30 days in history. The Think Tank can build ideas on the same "
+               "numbers (mood and wild).")
+    outputs = "today's market mood for the cockpit, the briefing and the Think Tank"
+
+    async def run(self, bb: Blackboard) -> None:
+        from .. import regime
+        e = self.ctx
+        cd = e.__dict__.get("_daily")
+        self.next_run = next_utc_midnight() + 900
+        if not cd:
+            self.summary = "waits for the daily history to load"
+            return
+        cur = e.db.get("regime") or {}
+        if cur.get("day") != cd.days[-1] or cur.get("coins") != len(cd.coins):
+            new = await asyncio.to_thread(regime.summary, cd)
+            if not new:
+                self.summary = "not enough history yet"
+                return
+            new["coins"] = len(cd.coins)
+            if cur.get("label") and cur["label"] != new["label"]:
+                self.say(f"The market's mood changed: {regime.LABELS[cur['label']]} -> {new['name']}. {new['meaning']}")
+            e.db.set("regime", new)
+            cur = new
+        st = cur["stats"]
+        self.summary = f"{cur['name']} for {cur['days']} day{'s' if cur['days'] != 1 else ''}"
+        self.detail = {
+            "did": [f"Today: {cur['name']} since {_day(cur['since'])}", cur["meaning"],
+                    f"Bitcoin {cur['btc_vs_50'] * 100:+.1f}% vs its 50-day and {cur['btc_vs_200'] * 100:+.1f}% vs its "
+                    f"200-day average; {round(cur['breadth'] * 100)}% of coins above their 50-day average; turbulence "
+                    f"higher than on {round(cur['wild'] * 100)}% of all days since 2017"],
+            "facts": [[regime.LABELS[k], f"{v['share_pct']}% of days; Bitcoin's next 30 days: {v['btc_next30_pct']}% on "
+                                          f"average, up {v['btc_next30_up_pct']}% of the time"] for k, v in st.items()],
+            "recent": cur.get("recent", []),
+        }
+
+
+class AIManager(Agent):
+    id = "aimanager"
+    name = "AI Manager"
+    role = "Measures what every AI call brings and slows down the ones that don't pay"
+    inputs = ["news", "thinktank", "professor"]
+    can_disable = True
+    cadence = "every hour"
+    explain = ("Plain math, free. Every hour it adds up what each AI agent spent in the last 7 days and what came "
+               "out of it. The News Hunter: if Claude found nothing that mattered (no hack, delisting or strong news "
+               "on a coin the bot trades) for more than 50 cents in a week, only headlines that name a coin go to "
+               "Claude, the rest is rated by rules. The Think Tank: if Claude's ideas pass less often than evolution's "
+               "(after 24 or more), Claude is asked once a day instead of every 6 hours. When less than a fifth of "
+               "the AI budget is left, both savings switch on. The Professor (the safety review) and your chat are "
+               "never slowed down.")
+    outputs = "savings modes for the News Hunter and the Think Tank"
+
+    def on_disable(self, bb: Blackboard) -> None:
+        self.ctx.db.set("ai_throttle", {})
+
+    async def run(self, bb: Blackboard) -> None:
+        e = self.ctx
+        mgr = e.db.get("ai_manager") or {}
+        if time.time() - mgr.get("ts", 0) < 3600:
+            self._show(mgr)
+            return
+        week = time.time() - 7 * 86400
+        rows = e.db.query("SELECT agent, COUNT(*) n, COALESCE(SUM(cost_usd),0) c FROM llm_calls WHERE ts>? GROUP BY agent",
+                          (week,))
+        spend = {r["agent"]: (r["n"], r["c"]) for r in rows}
+        snap = e.budget.snapshot()
+        left = max(0.0, snap["cap_total"] - snap["spent_total"])
+        tight = snap["cap_total"] > 0 and left / snap["cap_total"] < 0.2
+        # News Hunter: did Claude's ratings matter this week?
+        held = set(e.db.get("live_qty", {})) | set(e.db.get("fast_qty", {}))
+        useful = [ev for ev in bb.news_events if ev.get("ai") and ev.get("ts", 0) > week and
+                  (ev.get("event") in ("hack", "delisting") or (ev.get("impact", 0) >= 0.6 and set(ev.get("symbols") or []) & (held | set(research.UNIVERSE))))]
+        news_cost = spend.get("News Hunter", (0, 0.0))[1]
+        coin_only = tight or (news_cost > 0.5 and not useful)
+        # Think Tank: Claude's ideas vs evolution's
+        board = (e.tt or {}).get("recent", []) + (e.tt or {}).get("board", [])
+        def rate(origin):
+            xs = [x for x in board if x.get("origin") == origin]
+            ok = [x for x in xs if (x.get("verdict") or x.get("res", {}).get("verdict")) in ("promising", "candidate")]
+            return len(xs), (len(ok) / len(xs) if xs else None)
+        n_ai, r_ai = rate("Claude")
+        n_evo, r_evo = rate("evolution")
+        slow_tt = tight or (n_ai >= 24 and r_evo is not None and r_ai is not None and r_ai < r_evo)
+        throttle = {"news_coin_only": bool(coin_only), "thinktank_hours": 48 if tight else 24 if slow_tt else 6}
+        old = e.db.get("ai_throttle") or {}
+        if throttle != {k: old.get(k) for k in throttle}:
+            self.say("AI savings: " + ("News Hunter sends only coin headlines to Claude" if coin_only else "News Hunter at full AI")
+                     + f"; Think Tank asks Claude every {throttle['thinktank_hours']} hours"
+                     + (" (less than a fifth of the AI budget left)" if tight else "") + ".")
+        e.db.set("ai_throttle", throttle)
+        mgr = {"ts": time.time(), "throttle": throttle, "tight": tight, "left": round(left, 2),
+               "rows": [[a, n, round(c, 3)] for a, (n, c) in sorted(spend.items(), key=lambda kv: -kv[1][1])],
+               "news_useful": len(useful), "tt": {"claude": [n_ai, r_ai], "evolution": [n_evo, r_evo]}}
+        e.db.set("ai_manager", mgr)
+        self._show(mgr)
+
+    def _show(self, m: dict) -> None:
+        if not m:
+            return
+        t = m.get("throttle", {})
+        pct = lambda r: "–" if r is None else f"{round(r * 100)}%"  # noqa: E731
+        self.summary = (f"${sum(r[2] for r in m.get('rows', [])):.2f} AI in 7 days · "
+                        + ("saving on news" if t.get("news_coin_only") else "news at full AI")
+                        + f" · Think Tank every {t.get('thinktank_hours', 6)}h")
+        tt = m.get("tt", {})
+        self.detail = {
+            "did": [f"Checked at {_hm(m['ts'])}: ${m.get('left', 0):.2f} of the AI budget left" + (" (tight)" if m.get("tight") else ""),
+                    f"News Hunter: {m.get('news_useful', 0)} Claude ratings that mattered this week",
+                    f"Think Tank: Claude's ideas pass {pct(tt.get('claude', [0, None])[1])} of {tt.get('claude', [0])[0]}, "
+                    f"evolution's {pct(tt.get('evolution', [0, None])[1])} of {tt.get('evolution', [0])[0]}"],
+            "table": {"cols": ["agent", "AI calls (7 days)", "cost USD"], "rows": m.get("rows", [])},
+        }
 
 
 class Researcher(Agent):
