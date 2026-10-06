@@ -638,7 +638,7 @@ function FastPotCard({ state, openAgent }) {
           <span className="fast-pos">{pos.length ? pos.map(([s, p]) => {
             const c = coins[s];
             return <span key={s} className={`tag ${c?.pnl >= 0 ? "up" : "down"}`}>{s} {c ? `${c.pnl >= 0 ? "+" : ""}${c.pnl?.toFixed(2)}` : ""}</span>;
-          }) : <span className="dim">no coin right now: waiting for a pump on {f.slots} slot{f.slots === 1 ? "" : "s"}</span>}</span>
+          }) : <span className="dim">no coin right now: waiting for a signal on {f.slots} slot{f.slots === 1 ? "" : "s"}</span>}</span>
           <span className="dim">{live ? `next look in ${mins} min` : "standby: LIVE is off"}</span>
           {!f.robust && <span className="play">play money: the rule doesn't pass every check</span>}
         </>
