@@ -216,6 +216,15 @@ class ChatIn(BaseModel):
     history: list = []
 
 
+class ConfirmIn(BaseModel):
+    token: str
+
+
+@app.post("/api/chat/confirm")
+async def chat_confirm(body: ConfirmIn):
+    return await engine.orders.confirm(body.token)
+
+
 @app.post("/api/chat")
 async def chat(body: ChatIn):
     msg = body.message.strip()

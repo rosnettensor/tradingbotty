@@ -8,6 +8,7 @@ const SUGGESTIONS = [
   "Was hat der Daily Brain heute entschieden?",
   "Was macht der Fast-Topf?",
   "Läuft jeder Agent sauber?",
+  "kaufe ADA für 30 CHF im Fast Pot",
 ];
 
 const load = () => {
@@ -51,12 +52,31 @@ export default function ChatBar() {
     setBusy(true);
     try {
       const r = await api("chat", { message, history });
-      setMsgs((m) => [...m, { role: "assistant", content: r.answer || "…", cost: r.cost, offline: !r.ok }]);
+      setMsgs((m) => [...m, { role: "assistant", content: r.answer || "…", cost: r.cost, offline: !r.ok && !r.order, order: r.order }]);
     } catch (e) {
       setMsgs((m) => [...m, { role: "assistant", content: `Keine Antwort: ${e.message}`, error: true }]);
     } finally {
       setBusy(false);
       input.current?.focus();
+    }
+  };
+
+  // a proposed order: "Ausführen" sends it (one-time token), "Abbrechen" drops it; either way the buttons go away
+  const settle = (i, state) => setMsgs((m) => m.map((x, j) => (j === i ? { ...x, order: { ...x.order, state } } : x)));
+  const confirm = async (i) => {
+    const o = msgs[i]?.order;
+    if (!o || o.state || busy) return;
+    settle(i, "sending");
+    setBusy(true);
+    try {
+      const r = await api("chat/confirm", { token: o.token });
+      settle(i, r.ok ? "done" : "failed");
+      setMsgs((m) => [...m, { role: "assistant", content: r.answer, offline: !r.ok }]);
+    } catch (e) {
+      settle(i, "failed");
+      setMsgs((m) => [...m, { role: "assistant", content: `Nicht gesendet: ${e.message}`, error: true }]);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -72,6 +92,7 @@ export default function ChatBar() {
                 {msgs.map((m, i) => (
                   <div key={i} className={`chat-msg ${m.role === "user" ? "me" : "bot"}${m.error || m.offline ? " warn" : ""}`}>
                     <div className="chat-bubble"><Text s={m.content} /></div>
+                    {m.order && <OrderButtons o={m.order} busy={busy} onGo={() => confirm(i)} onDrop={() => settle(i, "dropped")} />}
                     {m.cost > 0 && <div className="chat-cost">${m.cost.toFixed(4)}</div>}
                   </div>
                 ))}
@@ -96,5 +117,29 @@ export default function ChatBar() {
         </div>
       )}
     </>
+  );
+}
+
+function OrderButtons({ o, busy, onGo, onDrop }) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    if (o.state) return undefined;
+    const t = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(t);
+  }, [o.state]);
+  const left = Math.max(0, Math.round(o.until - now));
+  if (o.state === "done") return <div className="chat-order-state up">gesendet</div>;
+  if (o.state === "failed") return <div className="chat-order-state down">nicht gesendet</div>;
+  if (o.state === "dropped") return <div className="chat-order-state">abgebrochen</div>;
+  if (o.state === "sending") return <div className="chat-order-state">sende…</div>;
+  if (!left) return <div className="chat-order-state">abgelaufen: schreib die Order nochmal</div>;
+  return (
+    <div className="chat-order">
+      <button className={`chat-go ${o.side === "SELL" ? "sell" : "buy"}`} disabled={busy} onClick={onGo}>
+        {o.side === "SELL" ? "Verkaufen" : "Kaufen"}: Ausführen
+      </button>
+      <button className="chat-drop" onClick={onDrop}>Abbrechen</button>
+      <span className="chat-order-left">{left}s</span>
+    </div>
   );
 }

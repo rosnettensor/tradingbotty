@@ -15,6 +15,7 @@ import time
 from collections import deque
 
 from . import altdata, controls, fastlab, patterns, research, thinktank
+from .chatorders import ChatOrders
 from .fasttrader import FastTrader as FastPot
 from .agents.base import Blackboard, Source
 from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Guardian, LiveDesk, NewsHunter,
@@ -89,6 +90,7 @@ class Engine:
         self._last_said: dict[str, float] = {}
         self.started = time.time()
         self.fast = FastPot(self)                  # the fast pot: small, separate real money, every 4 hours
+        self.orders = ChatOrders(self)             # orders typed in the chat bar, sent only after you confirm
 
         h = lambda key, feed: (lambda: feed.healthy.get(key, False))  # noqa: E731
         self.sources = [
@@ -1715,7 +1717,11 @@ class Engine:
         return "LIVE (real money)" if (mode or self.mode) == "live" else "STANDBY (nothing trades)"
 
     async def chat(self, message: str, history: list[dict]) -> dict:
-        """Answer the owner's question about the bot, in the bot's own voice, from a snapshot of its state."""
+        """Answer the owner's question about the bot, in the bot's own voice, from a snapshot of its state.
+        An order ("kaufe ADA für 30 CHF im Fast Pot") becomes a proposal to confirm instead, read without the AI."""
+        order = await self.orders.understand(message)
+        if order:
+            return order
         de = self._german(message)
         if not self.llm.available:
             return self._chat_offline(message, "Ich kann gerade nicht frei antworten: es ist kein ANTHROPIC_API_KEY "
