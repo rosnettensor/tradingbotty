@@ -140,7 +140,7 @@ class PumpRider(Strategy):
                      + (f", volume {vol_x:g}x" if vol_x else ""))
         self.explain = (f"Every 4 hours: buys the coins that rose at least {round(min_move * 100)}% over the last "
                         f"{_hours(look)}" + (f" on at least {vol_x:g}x their usual volume" if vol_x else "")
-                        + " (biggest first), betting the move continues. Sells at +{round(tp * 100)}%, "
+                        + f" (biggest first), betting the move continues. Sells at +{round(tp * 100)}%, "
                         f"{round(stop * 100)}% below the peak, or after {_hours(max_hold)}.")
         self.peak: dict[str, float] = {}
         self.entry_px: dict[str, float] = {}
