@@ -808,7 +808,7 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
   .topbar .budget { display: none; }
   .logo { font-size: 15px; }
   nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; gap: 0; display: grid; grid-template-columns: repeat(4, 1fr);
-    background: var(--overlay); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    background: var(--overlay); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
     border-top: 1px solid var(--line); padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)); }
   nav button { border: 0; border-radius: 6px; padding: 10px 2px; font-size: 11px; margin: 0 2px; }
   main { padding: 10px 10px calc(78px + env(safe-area-inset-bottom, 0px)); }
@@ -888,10 +888,10 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 .chat-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: center; align-items: flex-start;
   padding: max(12vh, calc(env(safe-area-inset-top, 0px) + 12px)) 12px 12px;
   background: rgba(0, 0, 0, 0.35); background: color-mix(in srgb, var(--bg) 55%, transparent);
-  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); animation: chat-in 0.14s ease-out; }
+  -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); animation: chat-in 0.14s ease-out; }
 .chat-box { width: min(680px, 100%); max-height: calc(100svh - 24vh); display: flex; flex-direction: column; overflow: hidden;
   background: var(--overlay); border: 1px solid var(--line); border-radius: 12px;
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--faint) inset; }
 @keyframes chat-in { from { opacity: 0; } }
 .chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 14px 6px; display: grid; gap: 10px; align-content: start;
@@ -921,7 +921,7 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
   .chat-fab { display: grid; place-items: center; position: fixed; z-index: 45; right: 14px;
     bottom: calc(70px + env(safe-area-inset-bottom, 0px)); width: 48px; height: 48px; padding: 0; border-radius: 50%;
     font-size: 20px; text-transform: none; background: var(--overlay); border-color: var(--line);
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); }
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); }
   .chat-backdrop { padding: calc(env(safe-area-inset-top, 0px) + 10px) 8px 8px; }
   .chat-box { max-height: calc(100svh - 20px - env(safe-area-inset-top, 0px)); }
   .chat-input input { font-size: 16px; }
@@ -946,3 +946,130 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 .tt-recent code { overflow-wrap: anywhere; }
 .tt-grammar { white-space: pre-wrap; font-size: 11px; }
 .amber { color: var(--amber); }
+
+/* ================================================================== TRADE CINEMA
+   A new real trade: shockwave rings, the coin big, side and amount. Colors follow the skin's tokens. */
+.tc { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; cursor: pointer; overflow: hidden;
+  padding: env(safe-area-inset-top, 0px) 16px env(safe-area-inset-bottom, 0px); --c: var(--green);
+  background: rgba(0, 0, 0, 0.75); background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); animation: tc-in 0.22s ease-out both; }
+.tc.sell { --c: var(--magenta); }
+.tc.out { animation: tc-out 0.38s ease-in forwards; }
+.tc-flash { position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--c) 50%, transparent), transparent 55%);
+  animation: tc-flash 1.1s ease-out both; }
+.tc-rings { position: absolute; inset: 0; pointer-events: none; }
+.tc-rings i { position: absolute; left: 50%; top: 50%; width: 50vmax; height: 50vmax; margin: -25vmax 0 0 -25vmax;
+  border-radius: 50%; border: 2px solid var(--c); box-shadow: 0 0 30px var(--c), inset 0 0 30px var(--c);
+  opacity: 0; will-change: transform, opacity; animation: tc-ring 2.4s cubic-bezier(0.12, 0.7, 0.3, 1) both; }
+.tc-rings i:nth-child(2) { animation-delay: 0.22s; border-width: 1px; }
+.tc-rings i:nth-child(3) { animation-delay: 0.5s; }
+.tc-rings i:nth-child(4) { animation-delay: 1.05s; border-width: 1px; }
+.tc-card { position: relative; display: grid; justify-items: center; gap: 6px; text-align: center; padding: 20px;
+  animation: tc-pop 0.7s cubic-bezier(0.2, 1.35, 0.4, 1) 0.06s both; }
+.tc-kicker { font: 600 11px var(--mono); letter-spacing: 0.26em; color: var(--dim); }
+.tc-side { font: 800 clamp(20px, 5vw, 34px) var(--display); letter-spacing: 0.45em; padding-left: 0.45em; color: var(--c); }
+.tc-sym { font: 800 clamp(76px, 24vw, 210px)/0.95 var(--display); color: var(--hi); letter-spacing: 0.02em;
+  text-shadow: 0 0 46px color-mix(in srgb, var(--c) 70%, transparent), 0 0 3px var(--c); }
+.tc-amt { font: 600 clamp(22px, 6.4vw, 42px) var(--mono); color: var(--hi); font-variant-numeric: tabular-nums; }
+.tc-amt small, .tc-pnl small { font-size: 0.5em; color: var(--dim); font-weight: 400; letter-spacing: 0.08em; }
+.tc-pnl { font: 700 clamp(18px, 5vw, 30px) var(--mono); padding: 4px 16px; border-radius: 999px; border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 10%, transparent); font-variant-numeric: tabular-nums; }
+.tc-why { max-width: min(560px, 86vw); font-size: 13px; color: var(--text); opacity: 0.85; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tc-hint { margin-top: 12px; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); opacity: 0.8; }
+@keyframes tc-in { from { opacity: 0; } }
+@keyframes tc-out { to { opacity: 0; transform: scale(1.04); } }
+@keyframes tc-flash { 0% { opacity: 0; transform: scale(0.6); } 12% { opacity: 1; } 100% { opacity: 0.25; transform: scale(1.3); } }
+@keyframes tc-ring { 0% { opacity: 0.95; transform: scale(0.04); } 70% { opacity: 0.25; } 100% { opacity: 0; transform: scale(2.3); } }
+@keyframes tc-pop { 0% { opacity: 0; transform: scale(0.6); } 100% { opacity: 1; transform: none; } }
+:root[data-skin="minimal"] .tc.sell { --c: var(--red); }
+:root[data-skin="terminal"] .tc-rings i { border-radius: 50% !important; }
+:root[data-skin="bridge"] .tc-sym { font-weight: 700; letter-spacing: 0.06em; }
+@media (prefers-reduced-motion: reduce) {
+  .tc-rings, .tc-flash { display: none; }
+  .tc-card { animation: none; }
+  .tc { animation: tc-in 0.3s ease-out both; }
+  .tc.out { animation: tc-out-fade 0.3s ease-in forwards; }
+}
+@keyframes tc-out-fade { to { opacity: 0; } }
+.sound-toggle { padding: 3px 7px; font-size: 14px; line-height: 1.2; text-transform: none; letter-spacing: 0; }
+.sound-toggle:not(.on) { opacity: 0.7; }
+
+/* ---- agent graph: lights travelling along a line while its agent works */
+.edge-pulse { pointer-events: none; }
+.edge-pulse .ep-glow { fill: var(--pc); opacity: 0.28; }
+.edge-pulse .ep-core { fill: var(--hi); stroke: var(--pc); stroke-width: 1.5; }
+:root[data-skin="minimal"] .edge-pulse .ep-glow { opacity: 0.14; }
+:root[data-skin="minimal"] .edge-pulse .ep-core { fill: var(--pc); stroke: var(--bg); }
+@media (prefers-reduced-motion: reduce) { .edge-pulse { display: none; } }
+
+/* ---- AURORA: frosted glass over a slow northern-lights sky. Green when the account is up today, red/magenta when down
+   (data-mood on <html>, set by App.jsx). */
+@property --aur-a { syntax: "<color>"; inherits: false; initial-value: #1e4fb0; }
+@property --aur-b { syntax: "<color>"; inherits: false; initial-value: #6b3fc4; }
+@property --aur-c { syntax: "<color>"; inherits: false; initial-value: #0f7f86; }
+:root[data-skin="aurora"] {
+  --bg: #0b1020; --bg2: #121a38; --panel: rgba(255, 255, 255, 0.055); --line: rgba(255, 255, 255, 0.14); --text: #e4ebff; --dim: #a3b0d4;
+  --cyan: #5ee7ff; --magenta: #ff7ad9; --amber: #ffc861; --violet: #b49bff; --green: #4dffa6; --red: #ff6b85;
+  --hi: #ffffff; --overlay: rgba(11, 16, 32, 0.74); --sunk: rgba(0, 0, 0, 0.22); --track: rgba(255, 255, 255, 0.09); --faint: rgba(255, 255, 255, 0.06);
+  --scan: transparent; --ink-shadow: 0 1px 10px rgba(0, 0, 0, 0.7), 0 0 2px rgba(0, 0, 0, 0.8); --radius: 16px; --sphere-blend: add;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace; --display: "Inter", system-ui, sans-serif;
+  color-scheme: dark;
+}
+:root[data-skin="aurora"] body { background: var(--bg); font-family: "Inter", system-ui, sans-serif; }
+:root[data-skin="aurora"] body::after { display: none; }
+:root[data-skin="aurora"] body::before { content: ""; position: fixed; inset: -30vmax; z-index: -2; pointer-events: none;
+  background:
+    radial-gradient(closest-side at 32% 38%, color-mix(in srgb, var(--aur-a) 60%, transparent), transparent),
+    radial-gradient(closest-side at 68% 30%, color-mix(in srgb, var(--aur-b) 50%, transparent), transparent),
+    radial-gradient(closest-side at 52% 72%, color-mix(in srgb, var(--aur-c) 48%, transparent), transparent);
+  transition: --aur-a 3s ease, --aur-b 3s ease, --aur-c 3s ease;
+  animation: aurora-drift 56s ease-in-out infinite alternate; will-change: transform; }
+:root[data-skin="aurora"][data-mood="up"] body::before { --aur-a: #11905e; --aur-b: #0f6f9e; --aur-c: #2b9a70; }
+:root[data-skin="aurora"][data-mood="down"] body::before { --aur-a: #a81f4a; --aur-b: #7d2a9c; --aur-c: #b0306e; }
+@keyframes aurora-drift {
+  0% { transform: translate3d(-4%, -2%, 0) rotate(0deg) scale(1); }
+  50% { transform: translate3d(3%, 2%, 0) rotate(9deg) scale(1.08); }
+  100% { transform: translate3d(-2%, 4%, 0) rotate(-7deg) scale(1.03); }
+}
+:root[data-skin="aurora"] .panel, :root[data-skin="aurora"] .inspector, :root[data-skin="aurora"] .flow {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.025));
+  border: 1px solid rgba(255, 255, 255, 0.13); border-radius: var(--radius);
+  -webkit-backdrop-filter: blur(18px) saturate(150%); backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.10); }
+:root[data-skin="aurora"] .panel::before { left: 18px; width: 46px; height: 2px; border-radius: 2px; box-shadow: none;
+  background: linear-gradient(90deg, var(--cyan), var(--violet)); }
+:root[data-skin="aurora"] .panel h3 { color: rgba(228, 235, 255, 0.72); letter-spacing: 0.16em; }
+:root[data-skin="aurora"] .topbar { background: rgba(11, 16, 32, 0.55); border-bottom-color: rgba(255, 255, 255, 0.10); }
+@media (min-width: 641px) {   /* phones: no filter on the top bar, it would trap the fixed tab bar */
+  :root[data-skin="aurora"] .topbar { -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); }
+}
+:root[data-skin="aurora"] .logo { background: linear-gradient(90deg, #8ff5ff, #c4a8ff 55%, #ff9ee6); -webkit-background-clip: text;
+  background-clip: text; color: transparent; text-shadow: none; letter-spacing: 0.12em; }
+:root[data-skin="aurora"] .logo span { color: transparent; text-shadow: none; }
+:root[data-skin="aurora"] button { border-radius: 10px; border-color: rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.04); }
+:root[data-skin="aurora"] button:hover { border-color: rgba(94, 231, 255, 0.6); box-shadow: 0 0 14px rgba(94, 231, 255, 0.18); }
+:root[data-skin="aurora"] nav button { border-radius: 999px; border-color: transparent; }
+:root[data-skin="aurora"] nav button.active { background: rgba(255, 255, 255, 0.14); color: var(--hi); border-color: rgba(255, 255, 255, 0.22); box-shadow: none; }
+:root[data-skin="aurora"] .mode.paper { border-color: rgba(94, 231, 255, 0.6); }
+:root[data-skin="aurora"] .skin-pick { border-radius: 10px; }
+:root[data-skin="aurora"] .ticker { background: rgba(0, 0, 0, 0.18); border-bottom-color: rgba(255, 255, 255, 0.08); }
+:root[data-skin="aurora"] .cockpit3 .core { background: radial-gradient(ellipse at 50% 42%, rgba(94, 231, 255, 0.09), transparent 65%),
+  linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)); border-color: rgba(255, 255, 255, 0.14); }
+:root[data-skin="aurora"] .cockpit3 .core::before, :root[data-skin="aurora"] .core-vignette { display: none; }
+:root[data-skin="aurora"] .mhero { background: transparent; }
+:root[data-skin="aurora"] .mhud { background: rgba(255, 255, 255, 0.10); border-color: rgba(255, 255, 255, 0.12); }
+:root[data-skin="aurora"] .mhud > div { background: rgba(11, 16, 32, 0.6); }
+:root[data-skin="aurora"] .equity { text-shadow: 0 2px 24px rgba(94, 231, 255, 0.35); }
+:root[data-skin="aurora"] .agent-node { background: rgba(11, 16, 32, 0.92); border-radius: 12px; }
+:root[data-skin="aurora"] .chat-box { border-radius: 18px; }
+:root[data-skin="aurora"] .tc { background: rgba(11, 16, 32, 0.72); -webkit-backdrop-filter: blur(10px) saturate(140%); backdrop-filter: blur(10px) saturate(140%); }
+@media (max-width: 640px) {
+  :root[data-skin="aurora"] .panel, :root[data-skin="aurora"] .inspector {
+    -webkit-backdrop-filter: blur(12px) saturate(140%); backdrop-filter: blur(12px) saturate(140%); }
+  :root[data-skin="aurora"] nav { background: rgba(11, 16, 32, 0.8); }
+}
+@media (prefers-reduced-motion: reduce) { :root[data-skin="aurora"] body::before { animation: none; transition: none; } }
+:root[data-skin="aurora"] .react-flow { --xy-background-color: transparent; }
+:root[data-skin="aurora"] .logo small { opacity: 1; }   /* opacity would drop it out of the gradient text */

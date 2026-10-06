@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Background, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges } from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Background, BaseEdge, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges, getBezierPath } from "@xyflow/react";
 import { useSkin } from "./skins.js";
 import "@xyflow/react/dist/style.css";
 import { Toggle } from "./components.jsx";
@@ -61,6 +61,28 @@ function AgentNode({ data }) {
 
 const nodeTypes = { agent: AgentNode };
 
+// A line between two agents. While the upstream agent is working (running, or ran in the last 20s) little lights
+// travel along it. Pure SVG animation (SMIL), so the browser moves them without any JavaScript per frame.
+function PulseEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, data }) {
+  const [path] = getBezierPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition });
+  const dur = data?.dur || 2.2;
+  return (
+    <>
+      <BaseEdge id={id} path={path} style={style} />
+      {data?.pulse && (data.dots === 2 ? [0, 0.5] : [0]).map((k) => (
+        <g key={k} className="edge-pulse" style={{ "--pc": data.color }}>
+          <circle r="9" className="ep-glow" />
+          <circle r="3.6" className="ep-core" />
+          <animateMotion dur={`${dur}s`} begin={`${-k * dur}s`} repeatCount="indefinite" path={path} calcMode="spline"
+            keyPoints="0;1" keyTimes="0;1" keySplines="0.45 0 0.55 1" />
+        </g>
+      ))}
+    </>
+  );
+}
+
+const edgeTypes = { pulse: PulseEdge };
+
 export default function Agents({ state, avatars = {}, want }) {
   const light = useSkin(useState, useEffect) === "minimal";
   const agentNodes = state.nodes || [];
@@ -69,7 +91,7 @@ export default function Agents({ state, avatars = {}, want }) {
     try { return want || localStorage.getItem("tb-agent") || "brain"; } catch { return want || "brain"; }
   });
   const [rfNodes, setRfNodes] = useState([]);
-  const [, tick] = useState(0);
+  const [now, tick] = useState(0);
   useEffect(() => { if (want) setSelected(want); }, [want]);
   useEffect(() => { try { localStorage.setItem("tb-agent", selected || ""); } catch { /* ignore */ } }, [selected]);
   useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 5000); return () => clearInterval(t); }, []);
@@ -84,14 +106,35 @@ export default function Agents({ state, avatars = {}, want }) {
     }));
   }, [agentNodes, selected, avatars]);
 
-  const edges = useMemo(() => agentNodes.flatMap((n) => n.inputs.filter((src) => agentNodes.some((x) => x.id === src)).map((src) => {
-    const from = agentNodes.find((x) => x.id === src);
-    const active = from && from.status !== "off" && from.status !== "idle" && Date.now() / 1000 - from.last_run < 90;
-    return {
-      id: `${src}-${n.id}`, source: src, target: n.id, animated: active,
-      style: { stroke: from?.status === "error" ? "var(--red)" : from?.kind === "source" ? "var(--violet)" : from?.kind === "gate" ? "var(--amber)" : "var(--cyan)", strokeWidth: 2, opacity: active ? 0.9 : 0.25 },
-    };
-  })), [agentNodes]);
+  // When did each agent last really do something? The bot steps every agent on every tick (so last_run is always
+  // fresh), so "working" = it is running, wrote to the log, or its status/summary changed in the last 20 seconds.
+  const changed = useRef({});
+  const log = state.log;
+  const edges = useMemo(() => {
+    const t = Date.now() / 1000;
+    for (const n of agentNodes) {
+      const sig = `${n.status}|${n.summary}`;
+      const r = changed.current[n.id];
+      if (!r) changed.current[n.id] = { sig, at: 0 };
+      else if (r.sig !== sig) changed.current[n.id] = { sig, at: t };
+    }
+    const logged = {};
+    for (const l of log || []) logged[l.agent] = Math.max(logged[l.agent] || 0, l.ts);
+    return agentNodes.flatMap((n) => n.inputs.filter((src) => agentNodes.some((x) => x.id === src)).map((src) => {
+      const from = agentNodes.find((x) => x.id === src);
+      const age = t - (from?.last_run || 0);
+      const active = from && from.status !== "off" && from.status !== "idle" && age < 90;
+      const busy = from?.status === "running" || t - (logged[from?.name] || 0) < 20 || t - (changed.current[src]?.at || 0) < 20;
+      const live = from?.kind === "source" && from.status === "ok" && age < 20;  // a live data feed: a slow, steady trickle
+      const hot = from && from.status !== "off" && from.status !== "error" && (busy || live);
+      const color = from?.status === "error" ? "var(--red)" : from?.kind === "source" ? "var(--violet)" : from?.kind === "gate" ? "var(--amber)" : "var(--cyan)";
+      return {
+        id: `${src}-${n.id}`, source: src, target: n.id, type: "pulse", animated: active && !hot,
+        data: { pulse: hot, color, dur: busy ? 1.9 : 3.4, dots: busy ? 2 : 1 },
+        style: { stroke: color, strokeWidth: busy ? 2.5 : 2, opacity: busy ? 1 : active ? 0.9 : 0.25 },
+      };
+    }));
+  }, [agentNodes, log, now]);
 
   const onNodesChange = useCallback((changes) => {
     setRfNodes((nds) => {
@@ -109,7 +152,7 @@ export default function Agents({ state, avatars = {}, want }) {
   return (
     <div className="nodes-view">
       <div className="flow">
-        <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange}
+        <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={onNodesChange}
           onNodeClick={(_, n) => setSelected(n.id)} fitView colorMode={light ? "light" : "dark"} proOptions={{ hideAttribution: true }}>
           <Background color="var(--line)" gap={24} />
           <MiniMap pannable zoomable nodeColor={(n) => (n.data.node.kind === "source" ? "var(--violet)" : n.data.node.kind === "gate" ? "var(--amber)" : "var(--cyan)")}
@@ -129,7 +172,7 @@ export default function Agents({ state, avatars = {}, want }) {
           <span><i style={{ background: "var(--violet)" }} />data source</span>
           <span><i style={{ background: "var(--cyan)" }} />agent</span>
           <span><i style={{ background: "var(--amber)" }} />gate on real money</span>
-          <span className="dim">moving lines = data flowed in the last 90s</span>
+          <span className="dim">lights = an agent is working (last 20s) or a feed is live · moving lines = data flowed in the last 90s</span>
         </div>
       </div>
       <aside className="inspector">
