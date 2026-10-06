@@ -4,13 +4,14 @@ export const SKINS = [
   ["minimal", "Minimal"],
   ["terminal", "Terminal"],
   ["bridge", "Bridge"],
+  ["aurora", "Aurora"],
 ];
 
 export function currentSkin() {
   try { const s = localStorage.getItem("tb-skin"); return SKINS.some(([k]) => k === s) ? s : "neon"; } catch { return "neon"; }
 }
 
-const BAR = { neon: "#05060a", minimal: "#ffffff", terminal: "#000000", bridge: "#000000" };
+const BAR = { neon: "#05060a", minimal: "#ffffff", terminal: "#000000", bridge: "#000000", aurora: "#0b1020" };
 
 export function applySkin(skin) {
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", BAR[skin] || BAR.neon);

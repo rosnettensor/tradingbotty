@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChipList, Slider, Toggle } from "./components.jsx";
 import { api, usePoll } from "./useBot.js";
+import { SoundToggle, previewTrade } from "./TradeCinema.jsx";
 
 export default function Controls({ state }) {
   return (
@@ -10,6 +11,7 @@ export default function Controls({ state }) {
         <Moved state={state} />
         <HowItTrades state={state} />
         <Phone state={state} />
+        <TradeShow state={state} />
       </div>
       <Sources />
     </div>
@@ -92,6 +94,21 @@ function Phone({ state }) {
         : <p className="small">Easiest: install the free ntfy app, subscribe to a long secret topic name and put it into .env as NTFY_TOPIC, restart. WhatsApp: send the activation message from callmebot.com to their WhatsApp number, put your number and the apikey you get into .env (WHATSAPP_PHONE, WHATSAPP_APIKEY), restart. Telegram works too (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID).</p>}
       {msg && <p className={/Sent/.test(msg) ? "ok-msg" : "err-msg"}>{msg}</p>}
       {report?.text && <><h4>TODAY'S BRIEFING (PREVIEW)</h4><pre className="report">{report.text}</pre></>}
+    </section>
+  );
+}
+
+function TradeShow({ state }) {
+  const sym = (state.trades || [])[0]?.symbol || state.trend?.rows?.[0]?.symbol || "BTC";
+  return (
+    <section className="panel trade-show">
+      <h3>TRADE ANIMATION <span className="dim">· this screen only</span></h3>
+      <p className="dim small">A real trade plays a short full-screen moment here (tap or Esc closes it). Sound is off until you switch it on.</p>
+      <div className="btn-row">
+        <button onClick={() => previewTrade("BUY", sym)}>▶ demo buy</button>
+        <button onClick={() => previewTrade("SELL", sym)}>▶ demo sell</button>
+        <SoundToggle />
+      </div>
     </section>
   );
 }

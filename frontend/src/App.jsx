@@ -5,6 +5,7 @@ import Agents from "./Agents.jsx";
 import Research from "./Research.jsx";
 import Controls from "./Controls.jsx";
 import ChatBar from "./ChatBar.jsx";
+import TradeCinema, { SoundToggle } from "./TradeCinema.jsx";
 import { Sparkline } from "./charts.jsx";
 import { SKINS, applySkin, currentSkin } from "./skins.js";
 
@@ -34,6 +35,8 @@ export default function App() {
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("tb-tab", onTab); };
   }, []);
   const openAgent = (id) => { setAgent(id); setTab("agents"); };
+  const mood = moodOf(state?.wallet);
+  useEffect(() => { document.documentElement.dataset.mood = mood; }, [mood]);
 
   if (!state) {
     return <div className="boot"><div className="boot-text">CONNECTING TO TRADINGBOTTY{connected ? "…" : " (is the bot running?)"}</div></div>;
@@ -50,8 +53,18 @@ export default function App() {
         {tab === "controls" && <Controls state={state} />}
       </main>
       <ChatBar />
+      <TradeCinema trades={state.trades} currency={state.wallet?.currency || "CHF"} />
     </div>
   );
+}
+
+// Is the account up or down today? The aurora skin tints its sky with it (data-mood on <html>).
+function moodOf(w) {
+  if (!w || w.error) return "flat";
+  const day = w.change_24h ?? w.bot_edge;
+  if (day == null || !w.total) return "flat";
+  const pct = (day / w.total) * 100;
+  return pct > 0.1 ? "up" : pct < -0.1 ? "down" : "flat";
 }
 
 function Backdrop({ src }) {
@@ -102,6 +115,7 @@ function TopBar({ state, connected, tab, setTab, logo }) {
         onChange={(e) => { setSkin(e.target.value); applySkin(e.target.value); }}>
         {SKINS.map(([k, name]) => <option key={k} value={k}>◐ {name}</option>)}
       </select>
+      <SoundToggle />
       <span className={`badge ${connected ? "ok" : "bad"}`}>{connected ? "● LINK" : "○ OFFLINE"}</span>
       <div className="budget" title="AI spend: last 24h vs daily allowance, and total vs your hard cap (grows with 10% of the bot's gains)">
         <span>AI {state.ai ? "" : "(off) "}{fmt.usd(b.spent_today)}/{fmt.usd(b.cap_today)} today</span>
