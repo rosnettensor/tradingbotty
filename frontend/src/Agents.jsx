@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Background, BaseEdge, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges, getBezierPath } from "@xyflow/react";
-import { useSkin } from "./skins.js";
+import Universe from "./Universe.jsx";
 import "@xyflow/react/dist/style.css";
 import { Toggle } from "./components.jsx";
 import { ago, api, fmt, usePoll } from "./useBot.js";
@@ -84,7 +84,11 @@ function PulseEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, tar
 const edgeTypes = { pulse: PulseEdge };
 
 export default function Agents({ state, avatars = {}, want }) {
-  const light = useSkin(useState, useEffect) === "minimal";
+  const [view, setView] = useState(() => { try { return localStorage.getItem("tb-agents-view") || "3d"; } catch { return "3d"; } });
+  useEffect(() => { try { localStorage.setItem("tb-agents-view", view); } catch { /* ignore */ } }, [view]);
+  const [board] = usePoll("scoreboard", 60000);
+  const [list, setList] = useState(false);
+  const scores = useMemo(() => Object.fromEntries((board?.rows || []).map((r) => [r.id, r.score])), [board]);
   const agentNodes = state.nodes || [];
   const [positions, setPositions] = useState(loadPositions);
   const [selected, setSelected] = useState(() => {
@@ -151,35 +155,73 @@ export default function Agents({ state, avatars = {}, want }) {
   const counts = agentNodes.filter((n) => n.kind !== "source").reduce((m, n) => ({ ...m, [n.status]: (m[n.status] || 0) + 1 }), {});
   return (
     <div className="nodes-view">
-      <div className="flow">
+      <div className={`flow ${view === "3d" ? "flow-3d" : ""}`}>
+        {view === "3d" ? (
+          <Universe nodes={agentNodes} log={state.log} scores={scores} currency={state.wallet?.currency || "CHF"}
+            selected={selected} onSelect={setSelected} />
+        ) : (
         <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={onNodesChange}
-          onNodeClick={(_, n) => setSelected(n.id)} fitView colorMode={light ? "light" : "dark"} proOptions={{ hideAttribution: true }}>
+          onNodeClick={(_, n) => setSelected(n.id)} fitView colorMode="dark" proOptions={{ hideAttribution: true }}>
           <Background color="var(--line)" gap={24} />
           <MiniMap pannable zoomable nodeColor={(n) => (n.data.node.kind === "source" ? "var(--violet)" : n.data.node.kind === "gate" ? "var(--amber)" : "var(--cyan)")}
-            maskColor={light ? "rgba(0,0,0,0.08)" : "rgba(5,6,10,0.7)"} bgColor="var(--bg)" />
+            maskColor="rgba(5,6,10,0.7)" bgColor="var(--bg)" />
           <Controls />
         </ReactFlow>
-        <button className="reset-layout" onClick={() => { try { localStorage.removeItem(POS_KEY); } catch { /* ignore */ } setPositions({}); setRfNodes((r) => r.map((n) => ({ ...n, position: defaultPosition(n.id) }))); }}>reset layout</button>
+        )}
+        <div className="seg view-pick" role="group" aria-label="Ansicht">
+          <button className={view === "3d" ? "active" : ""} onClick={() => setView("3d")}>3D-Universum</button>
+          <button className={view === "2d" ? "active" : ""} onClick={() => setView("2d")}>Plan 2D</button>
+        </div>
+        {view === "2d" && <button className="reset-layout" onClick={() => { try { localStorage.removeItem(POS_KEY); } catch { /* ignore */ } setPositions({}); setRfNodes((r) => r.map((n) => ({ ...n, position: defaultPosition(n.id) }))); }}>reset layout</button>}
         <div className="roster">
           <span className="roster-sum">{agentNodes.filter((n) => n.kind !== "source").length} agents · {counts.ok || 0} ok{counts.warn ? ` · ${counts.warn} warn` : ""}{counts.error ? ` · ${counts.error} error` : ""}</span>
-          {agentNodes.map((n) => (
+          {view === "3d" && <button className="roster-toggle" onClick={() => setList(!list)}>{list ? "Liste zu" : "Liste"}</button>}
+          {(view === "2d" || list) && agentNodes.map((n) => (
             <button key={n.id} className={`${n.id === selected ? "active" : ""} k-${n.kind}`} onClick={() => setSelected(n.id)}>
               <span className={`dot st-${n.status}`} />{n.name}
             </button>
           ))}
         </div>
-        <div className="flow-legend">
-          <span><i style={{ background: "var(--violet)" }} />data source</span>
-          <span><i style={{ background: "var(--cyan)" }} />agent</span>
-          <span><i style={{ background: "var(--amber)" }} />gate on real money</span>
-          <span className="dim">lights = an agent is working (last 20s) or a feed is live · moving lines = data flowed in the last 90s</span>
-        </div>
+        {view === "3d" ? (
+          <div className="flow-legend uv-legend">
+            <span><i style={{ background: "var(--violet)" }} />Datenquelle</span>
+            <span><i style={{ background: "var(--cyan)" }} />Agent</span>
+            <span><i style={{ background: "var(--amber)" }} />Tor zum echten Geld</span>
+            <span><i style={{ background: "var(--magenta)" }} />Du</span>
+            <span className="dim">Grösse und Ring = Punktestand ({state.wallet?.currency || "CHF"}, grün Gewinn, rot Verlust) · schnelles Pulsieren = arbeitet gerade · Lichter auf den Fäden = Daten fliessen · Monde = denkt mit Claude · ziehen = drehen, Rad = Zoom</span>
+          </div>
+        ) : (
+          <div className="flow-legend">
+            <span><i style={{ background: "var(--violet)" }} />data source</span>
+            <span><i style={{ background: "var(--cyan)" }} />agent</span>
+            <span><i style={{ background: "var(--amber)" }} />gate on real money</span>
+            <span className="dim">lights = an agent is working (last 20s) or a feed is live · moving lines = data flowed in the last 90s</span>
+          </div>
+        )}
       </div>
       <aside className="inspector">
         {sel ? <Inspector key={sel.id} n={sel} avatar={avatars[sel.id]} byId={byId} log={state.log || []} pick={setSelected} />
+          : VIRTUAL_INFO[selected] ? <VirtualInfo id={selected} board={board} />
           : <p className="dim">Click an agent to see exactly what it does and what it just did.</p>}
       </aside>
     </div>
+  );
+}
+
+const VIRTUAL_INFO = {
+  bank: ["🏦 Bank & Prüfer", "Bauplan 2", "Das Parlament (History Lab, Think Tank) schlägt Strategien vor. Der Prüfer verlangt: robust im Labor, im Plus auch mit doppelten Gebühren, 14 Tage im Schatten. Die Bank verteilt dann das Geld des Daily Brain per Thompson Sampling (höchstens 50% pro Strategie, Cash konkurriert mit). Modus Probe: der beste Kandidat handelt sofort 15% echt. Alles dazu im Cockpit unter Bank.", []],
+  you: ["🙋 Du", "Chat und Kurs", "Deine Chat-Orders (kaufen, verkaufen) und dein Kurs (Mutig, Bunkern, Pause) gehen wie jede Order durch den Risk Officer. Dein Punktestand: was deine Chat-Trades gebracht haben und was deine Verkäufe gegenüber der Regel verpasst oder gespart haben (Geister-Trades).", ["you", "course"]],
+};
+
+function VirtualInfo({ id, board }) {
+  const [title, role, text, rows] = VIRTUAL_INFO[id];
+  const mine = (board?.rows || []).filter((r) => rows.includes(r.id));
+  return (
+    <>
+      <div className="insp-title"><div><h3>{title}</h3><p className="role">{role}</p></div></div>
+      <p className="explain">{text}</p>
+      {mine.length > 0 && <dl className="facts">{mine.map((r) => <FactRow key={r.id} k={r.name} v={`${r.score >= 0 ? "+" : ""}${r.score.toFixed(2)} ${board.currency || "CHF"} · ${r.detail || ""}`} />)}</dl>}
+    </>
   );
 }
 

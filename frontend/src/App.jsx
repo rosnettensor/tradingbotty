@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, fmt, useBot, usePoll } from "./useBot.js";
 import Cockpit from "./Cockpit.jsx";
 import Agents from "./Agents.jsx";
@@ -7,7 +7,7 @@ import Controls from "./Controls.jsx";
 import ChatBar from "./ChatBar.jsx";
 import TradeCinema, { SoundToggle } from "./TradeCinema.jsx";
 import { Sparkline } from "./charts.jsx";
-import { SKINS, applySkin, currentSkin } from "./skins.js";
+import { PALETTES, applyPalette, currentPalette } from "./skins.js";
 
 const TABS = ["cockpit", "agents", "research", "controls"];
 
@@ -58,6 +58,41 @@ export default function App() {
   );
 }
 
+// The Aurora design in another palette. Remembered in this browser.
+function PalettePick() {
+  const [pal, setPal] = useState(currentPalette);
+  const [open, setOpen] = useState(false);
+  const box = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const off = (e) => { if (!box.current?.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", off);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", off); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const sw = (c) => ({ "--sw-a": c[0], "--sw-b": c[1], "--sw-c": c[2] });
+  const cur = PALETTES.find(([k]) => k === pal) || PALETTES[0];
+  return (
+    <div className="pal" ref={box}>
+      <button className="pal-btn" title="Farben" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <i className="pal-dot" style={sw(cur[2])} /><span className="pal-name">{cur[1]}</span>
+      </button>
+      {open && (
+        <div className="pal-menu" role="menu">
+          {PALETTES.map(([k, name, c, what]) => (
+            <button key={k} role="menuitemradio" aria-checked={k === pal} className={k === pal ? "active" : ""} title={what}
+              onClick={() => { setPal(k); applyPalette(k); }}>
+              <i className="pal-dot" style={sw(c)} />{name}
+            </button>
+          ))}
+          <small>{cur[3]}</small>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Is the account up or down today? The aurora skin tints its sky with it (data-mood on <html>).
 function moodOf(w) {
   if (!w || w.error) return "flat";
@@ -100,7 +135,6 @@ function TopBar({ state, connected, tab, setTab, logo }) {
     }
   };
   const kill = () => api("kill", { on: !state.kill_switch });
-  const [skin, setSkin] = useState(currentSkin);
   return (
     <header className="topbar">
       {logo ? <img className="logo-img" src={logo} alt="TradingBotty" /> : <div className="logo"><small>RALPH'S</small> TRADING<span>BOTTY</span></div>}
@@ -111,10 +145,7 @@ function TopBar({ state, connected, tab, setTab, logo }) {
       </nav>
       <div className="spacer" />
       {state.simulate && <span className="badge warn" title="Random-walk prices for testing">SIMULATED DATA</span>}
-      <select className="skin-pick" value={skin} title="Look of the dashboard"
-        onChange={(e) => { setSkin(e.target.value); applySkin(e.target.value); }}>
-        {SKINS.map(([k, name]) => <option key={k} value={k}>◐ {name}</option>)}
-      </select>
+      <PalettePick />
       <SoundToggle />
       <span className={`badge ${connected ? "ok" : "bad"}`}>{connected ? "● LINK" : "○ OFFLINE"}</span>
       <div className="budget" title="AI spend: last 24h vs daily allowance, and total vs your hard cap (grows with 10% of the bot's gains)">

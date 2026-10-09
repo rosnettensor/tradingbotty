@@ -1,8 +1,8 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./styles.css";
-import { applySkin, currentSkin } from "./skins.js";
+import { applyPalette, currentPalette } from "./skins.js";
 
-applySkin(currentSkin());
+applyPalette(currentPalette());
 
 createRoot(document.getElementById("root")).render(<App />);
