@@ -124,8 +124,8 @@ class ChatOrders:
             who = "Fast Pot" if book == "fast" else "Daily Brain"
             notes = []
             if book == "brain":
-                notes.append("Der Daily Brain kann den Coin in einer späteren Nacht wieder kaufen, wenn sein Signal "
-                             "noch steht.")
+                notes.append("Der Daily Brain kauft ihn frühestens nach der nächsten Tageskerze wieder, und nur, "
+                             "wenn sein Signal dann noch steht.")
             text = (f"**{sym} verkaufen ({who}):** {qty:.6g} Stück, gekauft für {cost:.2f} {cur}, zum aktuellen Kurs. "
                     "Fusion-Gebühr etwa 0.25%.")
             return self._propose({"side": "SELL", "book": book, "symbol": sym, "all": False}, text, notes)
@@ -244,6 +244,8 @@ class ChatOrders:
                                                    "der Betrag liegt unter dem Minimum). Details im Feed."}
                 got = float(ex.get("notional", 0) or 0)
                 extra = ""
+                if o["book"] == "brain":  # the brain mustn't buy it straight back on the same daily candle
+                    e.db.set("brain_sold_by_you", {**(e.db.get("brain_sold_by_you") or {}), o["symbol"]: time.time()})
                 if o["book"] == "fast":
                     pnl = e.fast.booked_sell(o["symbol"], ex)
                     extra = f", Ergebnis {pnl:+.2f} {cur} nach Gebühren"

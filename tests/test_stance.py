@@ -103,3 +103,16 @@ def test_brain_sizes_new_coins_by_the_course_and_pause_buys_nothing(tmp_path, mo
     assert f.buys == [] and "your course is ⏸ Pause" in " ".join(e.brain()["steps"])
     f, _ = _brain(tmp_path / "m", monkeypatch, "bold")
     assert sum(a for _, a in f.buys) == 200.0                            # bigger, but never above the 200 cap
+
+
+def test_brain_does_not_buy_back_a_coin_you_sold_by_chat_on_the_same_candle(tmp_path, monkeypatch):
+    f, e = _brain(tmp_path, monkeypatch, "normal")
+    assert ("SOL", 100.0) in f.buys
+    run(e._live_sell("SOL", "daily brain: sold by you (chat)"))
+    e.db.set("brain_sold_by_you", {"SOL": time.time()})
+    f.buys.clear()
+    b = e.brain()
+    b.pop("day", None)  # e.g. a change in Controls: the brain re-decides on the same daily candle
+    e.db.set("brain", b)
+    run(e.brain_tick())
+    assert f.buys == [] and "SOL not bought back" in " ".join(e.brain()["steps"])

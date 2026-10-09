@@ -1309,6 +1309,10 @@ class Engine:
             if sym not in owned and not course["buys"]:
                 done.append(f"{sym} not bought: your course is {course['name']}")
                 continue
+            sold = (self.db.get("brain_sold_by_you") or {}).get(sym, 0)
+            if sym not in owned and cd and sold > cd.days[-1] + 86400:  # sold after the candle this decision reads
+                done.append(f"{sym} not bought back: you sold it by chat, the brain waits for the next daily candle")
+                continue
             if sym not in owned and sym in self.stance.locked():
                 done.append(f"{sym} not bought again: Bunkern locked its gain")
                 continue
