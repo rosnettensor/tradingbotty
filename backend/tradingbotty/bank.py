@@ -34,6 +34,10 @@ NEW = ["Mood switch: breakout 20/10 in a bull market, dip buying when sideways, 
        "Breakout 20/10 days, 3 slots, BTC filter 50d, sized by wildness",
        "Dip buyer daily: down 15%+ in 2 days, above its 100-day average, take +10% / stop -10%, BTC filter 50d"]
 CASH = "Cash"
+PROBE_SHARE = 0.15     # probation: the best candidate still in the shadow trades this share of the brain's money
+PROBE_MAX = 0.25       # ...raised so each coin reaches Fusion's minimum, but never above this
+PROBE_COIN = 30.0      # the smallest probation buy per coin, in your currency (Fusion's minimum is 25, some 30)
+MODES = ("shadow", "probe", "live")
 
 
 def _day_index(cd, ts: float) -> int:
@@ -104,12 +108,17 @@ class Bank:
     def cfg(self) -> dict:
         b = self.e.db.get("bank") or {}
         b.setdefault("live", False)
+        b.setdefault("mode", "live" if b["live"] else "shadow")
+        b["live"] = b["mode"] == "live"
         b.setdefault("shadow", {})
         b.setdefault("history", [])
         return b
 
     def save(self, b: dict) -> None:
         self.e.db.set("bank", b)
+
+    def mode(self) -> str:
+        return self.cfg()["mode"]
 
     def candidates(self, res: dict | None) -> list[tuple[str, str]]:
         """(name, who proposed it): the brain's own strategy, the new proposals, then the best robust ones."""
@@ -194,7 +203,17 @@ class Bank:
         eligible = {r["name"] for r in report if r["stage"] in ("passed", "incumbent")}
         live_split = split(prob, eligible)
         shadow_split = split(prob, {r["name"] for r in report})  # what it would do if everyone were examined
+        # probation: the incumbent keeps its money, the best candidate the examiner still watches gets a small share
+        waiting = [r["name"] for r in report if r["stage"] == "shadow"]
+        probe = max(waiting, key=lambda n: prob.get(n, 0), default=None)
+        inc = [r["name"] for r in report if r["stage"] == "incumbent"] or [r["name"] for r in report if r["stage"] == "passed"]
+        probe_split = {CASH: 1.0}
+        if inc:
+            probe_split = {inc[0]: 1.0 - (PROBE_SHARE if probe else 0.0)}
+            if probe:
+                probe_split[probe] = PROBE_SHARE
         for r in report:
+            r["probe_pct"] = round(probe_split.get(r["name"], 0) * 100, 1)
             r["win_pct"] = round(prob.get(r["name"], 0) * 100, 1)
             r["share_pct"] = round(live_split.get(r["name"], 0) * 100, 1)
             r["shadow_share_pct"] = round(shadow_split.get(r["name"], 0) * 100, 1)
@@ -209,15 +228,18 @@ class Bank:
             hist.append([day, 1.0])
         b["history"] = hist[-400:]
         b["report"] = {"ts": now, "day": day, "rows": report, "split": live_split, "shadow_split": shadow_split,
+                       "probe_split": probe_split, "probe": probe,
                        "cash_win_pct": round(prob.get(CASH, 0) * 100, 1), "eligible": sorted(eligible)}
         self.save(b)
         return b["report"]
 
-    def target(self, cd) -> tuple[dict[str, float], list[str], dict]:
-        """Live: the blend of every eligible candidate's holdings by the bank's split.
+    def target(self, cd, budget: float | None = None) -> tuple[dict[str, float], list[str], dict]:
+        """The blend of the candidates' holdings by the bank's split (live) or the probation split (probe).
         Returns (weights, steps, owners): owners maps each coin to the strategy with the biggest stake in it."""
         rep = self.cfg().get("report") or {}
-        split_ = rep.get("split") or {}
+        probing = self.mode() == "probe"
+        split_ = (rep.get("probe_split") if probing else rep.get("split")) or {}
+        probe = rep.get("probe") if probing else None
         weights: dict[str, float] = {}
         stake: dict[str, tuple[float, object]] = {}
         steps = []
@@ -229,11 +251,18 @@ class Bank:
             if not strat:
                 continue
             tgt = research.current_target(cd, strat)
+            if name == probe and tgt and budget:  # each probation coin at least Fusion's minimum, all of them capped
+                floor = PROBE_COIN / budget
+                tgt = {k: max(share * w, floor) / share for k, w in tgt.items()}
+                total = sum(share * w for w in tgt.values())
+                if total > PROBE_MAX:
+                    tgt = {k: w * PROBE_MAX / total for k, w in tgt.items()}
             for sym, w in tgt.items():
                 weights[sym] = weights.get(sym, 0.0) + share * w
                 if share * w > stake.get(sym, (0.0, None))[0]:
                     stake[sym] = (share * w, research.by_name(name))
-            steps.append(f"Bank: {share * 100:.0f}% nach \"{name}\" → " + (", ".join(sorted(tgt)) or "Cash"))
+            steps.append(f"Bank{' (Probe)' if name == probe else ''}: {share * 100:.0f}% nach \"{name}\" → "
+                         + (", ".join(sorted(tgt)) or "Cash"))
         tot = sum(weights.values())
         if tot > 1:
             weights = {k: v / tot for k, v in weights.items()}
@@ -241,22 +270,30 @@ class Bank:
                 {k: st for k, (_, st) in stake.items()})
 
     def set_live(self, on: bool) -> dict:
+        return self.set_mode("live" if on else "shadow")
+
+    def set_mode(self, mode: str) -> dict:
+        if mode not in MODES:
+            raise ValueError(f"unknown bank mode {mode}")
         b = self.cfg()
-        b["live"] = bool(on)
+        b["mode"], b["live"] = mode, mode == "live"
         self.save(b)
+        on = mode != "shadow"
         br = self.e.brain()
         br.pop("day", None)  # the brain re-decides at its next check with (or without) the bank's blend
         self.e.db.set("brain", br)
         rep = b.get("report") or {}
+        split_ = (rep.get("probe_split") if mode == "probe" else rep.get("split")) or {}
         self.e._log("Bank", "live" if on else "info",
-                    ("Bank LIVE: the daily brain now buys the bank's blend: " + ", ".join(
-                        f"{k} {v * 100:.0f}%" for k, v in (rep.get("split") or {}).items()))
+                    (f"Bank {'PROBATION' if mode == 'probe' else 'LIVE'}: the daily brain now buys this blend: "
+                     + ", ".join(f"{k} {v * 100:.0f}%" for k, v in split_.items()))
                     if on else "Bank back in shadow mode: the daily brain follows its one strategy again.")
         return self.info()
 
     def info(self) -> dict:
         b = self.cfg()
         h = b.get("history") or []
-        return {"live": b["live"], "report": b.get("report"), "history": h[-120:],
+        return {"live": b["live"], "mode": b["mode"], "report": b.get("report"), "history": h[-120:],
+                "probe_share": PROBE_SHARE,
                 "shadow_pct": round((h[-1][1] - 1) * 100, 2) if h else None,
                 "since": h[0][0] if h else None, "shadow_days": SHADOW_DAYS, "max_share": MAX_SHARE}

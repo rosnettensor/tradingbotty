@@ -695,15 +695,27 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 
 /* ===== trade diary, fast pot floor ===== */
 .cockpit3 .diary { grid-area: diary; }
-.diary-list { display: grid; gap: 8px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); max-height: 460px; overflow-y: auto; }
-.diary-card { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: var(--radius); padding: 8px 10px; display: grid; gap: 4px; min-width: 0; background: var(--sunk); }
+.diary-list { display: grid; gap: 4px; align-items: start; grid-template-columns: minmax(0, 1fr); max-height: 460px; overflow-y: auto; }
+.diary-card { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 8px; min-width: 0; background: var(--sunk); transition: border-color .2s, background .2s; }
 .diary-card.win { border-left-color: var(--green); }
 .diary-card.loss { border-left-color: var(--red); }
-.diary-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
-.diary-time { margin-left: auto; }
-.side-badge { font: 700 10px var(--mono); letter-spacing: 0.12em; padding: 0 6px; border: 1px solid; border-radius: 3px; }
-.side-badge.buy { color: var(--green); border-color: var(--green); }
-.side-badge.sell { color: var(--red); border-color: var(--red); }
+.diary-card.open { background: var(--panel); }
+.diary-list .diary-card button.diary-head, .diary-list .diary-card button.diary-head:hover { all: unset; box-sizing: border-box; cursor: pointer; width: 100%; display: grid; align-items: center; gap: 8px;
+  grid-template-columns: 40px 56px 16px 56px minmax(0, 1fr) auto 88px 12px; padding: 6px 10px; font: inherit; color: inherit; }
+.diary-list .diary-card button.diary-head:focus-visible { outline: 1px solid var(--cyan); outline-offset: -1px; }
+.diary-head .side-badge { justify-self: start; }
+.diary-amt { color: var(--dim); font-variant-numeric: tabular-nums; }
+.diary-pnl { justify-self: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.diary-time { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.diary-gist { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (max-width: 640px) {
+  .diary-list .diary-card button.diary-head { grid-template-columns: 40px minmax(0, 1fr) 16px auto 74px 10px; gap: 6px; }
+  .diary-amt, .diary-gist { display: none; }
+}
+.diary-chev { color: var(--dim); transition: transform .2s; justify-self: end; }
+.diary-card.open .diary-chev { transform: rotate(90deg); color: var(--cyan); }
+.diary-body { display: grid; gap: 6px; padding: 0 10px 10px; animation: diary-in .18s ease-out; }
+@keyframes diary-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
 .diary-reason { overflow-wrap: anywhere; }
 .diary-lesson { font-size: 12px; color: var(--text); border-top: 1px dashed var(--line); padding-top: 4px; }
 .why-toggle { font-size: 11px; padding: 0 4px; }
@@ -750,8 +762,8 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 .cockpit3 .bankpanel { grid-area: bank; }
 .powers-line { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 2px 0 12px; color: var(--dim); }
 .parl-t { color: var(--magenta); } .court-t { color: var(--red); } .you-t { color: var(--green); } .gov-t { color: var(--cyan); }
-.bank-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 16px; align-items: start; margin-bottom: 12px; }
-@media (max-width: 980px) { .bank-top { grid-template-columns: minmax(0, 1fr); } }
+.bank-top { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 16px; align-items: start; margin-bottom: 12px; }
+.bank-top > * { min-width: 0; }
 .split { display: grid; gap: 6px; margin-top: 4px; min-width: 0; }
 .split-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--sunk); border: 1px solid var(--line); }
 .split-bar i { display: block; height: 100%; }
@@ -759,7 +771,7 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 .split-legend span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .split-legend i, .bank-table .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .split-legend b { color: var(--text); font-family: var(--mono); }
-.bank-result { display: grid; text-align: right; }
+.bank-result { display: grid; text-align: right; justify-self: end; }
 .bank-result small { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 .bank-result b { font: 700 24px var(--mono); font-variant-numeric: tabular-nums; }
 .tbl-wrap { overflow-x: auto; }
@@ -1196,3 +1208,5 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 .widget-setup .row-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
 .widget-script { width: 100%; margin-top: 8px; font: 11px/1.4 ui-monospace, monospace; color: var(--text); background: var(--sunk);
   border: 1px solid var(--line); border-radius: 6px; padding: 8px; resize: vertical; box-sizing: border-box; }
+.bank-actions .seg button { padding: 6px 12px; font-size: 11px; letter-spacing: .08em; border-radius: 0; }
+.bank-actions .seg { border-radius: 10px; }

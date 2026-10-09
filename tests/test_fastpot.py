@@ -203,3 +203,29 @@ def test_a_deposit_entered_twice_counts_once(tmp_path, monkeypatch):
     assert e.db.get("hold_start")["fiat"] == 80.0 and e.db.get("account_start")["total"] == 358.0
     assert len(e.db.get("flows")) == 1
     assert [h[2] for h in e.db.get("wallet_hist")] == [2.0, 2.0, 2.0]
+
+
+def test_live_exits_sell_at_the_stop_between_two_4h_candles(tmp_path, monkeypatch):
+    e, m = _setup(tmp_path, monkeypatch, _pump_candles(pump=False))
+    c = e.fast.cfg()
+    c.update(on=True, chf=60.0)                       # default rule: dip buyer, +10% / -10%
+    c["pos"] = {"SOL": {"entry": 10.0, "since": time.time(), "cost": 30.0}, "ADA": {"entry": 10.0, "since": time.time(), "cost": 30.0}}
+    e.fast.save(c)
+    e.db.set("fast_qty", {"SOL": 3.0, "ADA": 3.0})
+    e.db.set("fast_cost", {"SOL": 30.0, "ADA": 30.0})
+    m.bal.update(SOL=3.0, ADA=3.0)
+    e.fusion_prices = {"SOL": 9.5, "ADA": 10.2}      # -5% and +2%: nothing yet
+    asyncio.run(e.fast.watch())
+    assert not m.sells
+    e.fusion_prices = {"SOL": 8.95, "ADA": 11.1}     # -10.5% and +11%: both go now
+    m.px.update(SOL=8.95, ADA=11.1)
+    asyncio.run(e.fast.watch())
+    assert {s for s, _ in m.sells} == {"SOL", "ADA"}
+    st = e.fast.status()
+    assert not st["pos"] and st["realized"] == pytest.approx(-3.15 + 3.3, abs=0.02)
+    sell = next(d for d in e.diary() if d["symbol"] == "SOL")
+    assert "Live-Stopp" in sell["why"][0][1]
+    c = e.fast.cfg()
+    c["live_exits"] = False
+    e.fast.save(c)
+    asyncio.run(e.fast.watch())                       # switched off: no more checks

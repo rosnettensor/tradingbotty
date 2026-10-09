@@ -90,3 +90,27 @@ def test_bank_round_and_live_blend(tmp_path, monkeypatch):
     assert set(owners) == set(w) or set(w) <= set(owners)
     info = e.bank.set_live(True)
     assert info["live"] and "day" not in e.brain()
+
+
+def test_probation_gives_the_best_shadow_candidate_a_small_real_share(tmp_path, monkeypatch):
+    from fakes import FakeFusion, _engine
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    cd = _cd()
+    strat = "Breakout 20/10 days, 3 slots, BTC filter 50d"
+    e.db.set("brain", {"on": True, "strategy": strat})
+    res = {"rows": [{"name": n, "robust": True, "fees2x": {"return_pct": 10}, "full": {"sharpe": 1.0},
+                     "years_won": 6, "years_total": 9, "skill_prob": 0.9, "group": "x"} for n in [strat, *bank.NEW]]}
+    rep = e.bank.refresh(cd, res)
+    assert rep["probe"] in bank.NEW and rep["probe_split"][strat] == 1 - bank.PROBE_SHARE
+    assert e.bank.mode() == "shadow"
+    info = e.bank.set_mode("probe")
+    assert info["mode"] == "probe" and not info["live"]
+    w, steps, owners = e.bank.target(cd, budget=300.0)
+    assert sum(w.values()) <= 1.0001
+    probe_coins = research.current_target(cd, research.by_name(rep["probe"]))
+    for s in probe_coins:                              # each probation coin reaches Fusion's minimum
+        assert w.get(s, 0) * 300 >= bank.PROBE_COIN - 0.01 or w.get(s, 0) >= bank.PROBE_MAX / len(probe_coins) - 1e-3
+    assert any("(Probe)" in s for s in steps) or not probe_coins
+    import pytest
+    with pytest.raises(ValueError):
+        e.bank.set_mode("yolo")

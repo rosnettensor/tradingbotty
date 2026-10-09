@@ -538,7 +538,7 @@ function TradeDiary({ state, setFocus }) {
   return (
     <>
       <div className="row-head">
-        <h3>TRADE-TAGEBUCH <span className="dim">· every real trade of the Daily Brain and the fast pot · newest first</span></h3>
+        <h3>TRADE-TAGEBUCH <span className="dim">· jeder echte Trade · tippe eine Zeile für Details</span></h3>
         {closed.length > 0 && <span className="dim small">{closed.length} closed · {won} won · {closed.length - won} lost</span>}
       </div>
       {!d ? <div className="empty small">loading…</div> : !list.length ? (
@@ -552,29 +552,40 @@ function TradeDiary({ state, setFocus }) {
   );
 }
 
+const shortTime = (ts) => new Date(ts * 1000).toLocaleString("de-CH", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+const gist = (r = "") => r.replace(/^(daily brain|fast pot):\s*/i, "").replace(/\s*\(.*?\)\s*/g, " ").trim();
+
 function DiaryCard({ e, cur, setFocus }) {
   const c = e.currency || cur;
   const sign = (x) => `${x >= 0 ? "+" : ""}${Number(x || 0).toFixed(2)}`;
   const tone = e.closed ? (e.pnl > 0 ? "win" : e.pnl < 0 ? "loss" : "") : "";
-  const [why, setWhy] = useState(false);
-  const hasWhy = (e.why || []).length > 0 || (e.entry_why || []).length > 0;
+  const [open, setOpen] = useState(false);
   return (
-    <div className={`diary-card ${tone}`}>
-      <div className="diary-head">
+    <div className={`diary-card ${tone} ${open ? "open" : ""}`}>
+      <button className="diary-head" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className={`side-badge ${e.side === "BUY" ? "buy" : "sell"}`}>{e.side}</span>
-        <button className="linkish" onClick={() => setFocus(e.symbol)}><b>{e.symbol}</b></button>
-        <span>{Number(e.amount || 0).toFixed(2)} {c}</span>
-        <span className="dim small">{e.book === "fast" ? "⚡ fast pot" : "🧠 brain"}</span>
-        <span className="dim small diary-time">{dayhm(e.ts)}</span>
-      </div>
-      {e.closed && (
-        <div className="diary-result">
-          <b className={pctColor(e.pnl)}>{sign(e.pnl)} {c} ({sign(e.pnl_pct)}%)</b> <span className="dim small">after fees · in at {fmt.price(e.entry_price)}{e.entry_ts ? ` (${dayhm(e.entry_ts)})` : ""}, out at {fmt.price(e.price)}</span>
+        <b className="diary-sym">{e.symbol}</b>
+        <span className="dim small" title={e.book === "fast" ? "fast pot" : "Daily Brain"}>{e.book === "fast" ? "⚡" : "🧠"}</span>
+        <span className="small diary-amt">{Number(e.amount || 0).toFixed(2)}</span>
+        <span className="dim small diary-gist">{gist(e.reason)}</span>
+        {e.closed
+          ? <b className={`diary-pnl ${pctColor(e.pnl)}`}>{sign(e.pnl)} <span className="small">({sign(e.pnl_pct)}%)</span></b>
+          : <span className="diary-pnl dim small">{e.side === "BUY" ? "offen" : "–"}</span>}
+        <span className="dim small diary-time">{shortTime(e.ts)}</span>
+        <span className="diary-chev" aria-hidden="true">›</span>
+      </button>
+      {open && (
+        <div className="diary-body">
+          {e.closed && (
+            <div className="small">
+              <b className={pctColor(e.pnl)}>{sign(e.pnl)} {c}</b> <span className="dim">nach Gebühren · rein {fmt.price(e.entry_price)}{e.entry_ts ? ` (${dayhm(e.entry_ts)})` : ""}, raus {fmt.price(e.price)}</span>
+            </div>
+          )}
+          <div className="dim small diary-reason">{e.reason} · <button className="linkish" onClick={() => setFocus(e.symbol)}>{e.symbol} im Chart</button></div>
+          <WhyLines e={e} />
+          {e.lesson && <div className="diary-lesson" title={e.lesson_by === "claude" ? "Claude's post-mortem" : "plain math (no AI key or budget)"}>{e.lesson_by === "claude" ? "🤖" : "🧮"} {e.lesson}</div>}
         </div>
       )}
-      <div className="dim small diary-reason">{e.reason}{hasWhy && <> · <button className="linkish why-toggle" onClick={() => setWhy(!why)}>{why ? "weniger" : "Warum?"}</button></>}</div>
-      {why && <WhyLines e={e} />}
-      {e.lesson && <div className="diary-lesson" title={e.lesson_by === "claude" ? "Claude's post-mortem" : "plain math (no AI key or budget)"}>{e.lesson_by === "claude" ? "🤖" : "🧮"} {e.lesson}</div>}
     </div>
   );
 }

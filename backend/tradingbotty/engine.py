@@ -20,6 +20,7 @@ from .stance import Stance, swiss
 from . import scoreboard
 from .scoreboard import Ghosts
 from .bank import Bank
+from . import bank as bank_mod
 from .fasttrader import FastTrader as FastPot
 from .agents.base import Blackboard, Source
 from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Guardian, LiveDesk, NewsHunter,
@@ -472,7 +473,8 @@ class Engine:
         passed = [r["name"] for r in rep["rows"] if r["stage"] == "passed"]
         self._log("Bank", "info", f"Bank round: {len(rep['rows'])} candidates in the shadow, {len(passed)} passed the "
                                   f"examiner. Split for real money: {top}"
-                                  + (" (LIVE)" if self.bank.cfg()["live"] else " (shadow only: the bank isn't live)."))
+                                  + {"live": " (LIVE)", "probe": f". Probation: {rep.get('probe') or 'nobody yet'}"}.get(
+                                      self.bank.mode(), " (shadow only: the bank isn't live)."))
         return rep
 
     async def _hunt_patterns(self, cd: "research.Candles") -> None:
@@ -1249,7 +1251,9 @@ class Engine:
         now = time.time()
         tried = self.__dict__.setdefault("_lab_tried", {})
         last = (self.db.get("research") or {}).get("ts", 0)
-        if now // 86400 > last // 86400 and now % 86400 > 900 and now - tried.get("research", 0) > 3600:
+        names = {r["name"] for r in (self.db.get("research") or {}).get("rows") or []}
+        new = names and any(n not in names for n in bank_mod.NEW)  # new proposals: test them now, not tomorrow
+        if ((now // 86400 > last // 86400 and now % 86400 > 900) or new) and now - tried.get("research", 0) > 3600:
             tried["research"] = now  # a failed run (no data reachable) is tried again in an hour, not every tick
             await self.run_research()
         last = (self.db.get("fastlab") or {}).get("ts", 0)
@@ -1321,8 +1325,11 @@ class Engine:
             if not strat:
                 raise ValueError(f"strategy {b['strategy']} no longer exists")
             bank_steps, name, owners = [], strat.name, None
-            if self.bank.cfg()["live"] and (self.bank.cfg().get("report") or {}).get("split"):
-                target, bank_steps, owners = self.bank.target(cd)
+            if self.bank.mode() != "shadow" and (self.bank.cfg().get("report") or {}).get("split"):
+                total = (self.wallet or {}).get("total") or 0.0
+                pot = self.fast.pot_size() if self.fast.on() else 0.0
+                budget = max(0.0, min(self.settings["live"]["max_invest"], (total - pot) * 0.98))
+                target, bank_steps, owners = self.bank.target(cd, budget)
                 name = "bank blend"
             else:
                 target = research.current_target(cd, strat)
@@ -1662,6 +1669,7 @@ class Engine:
             self._every(lambda: 30, self._poll_wallet),
             self._every(lambda: 300, self.brain_tick),
             self._every(lambda: 60, self.fast.tick),
+            self._every(lambda: 60, self.fast.watch),
             self._every(lambda: 60, self.stance.tick),
             self._every(lambda: 300, self.ghosts.tick),
             self._every(lambda: 60, self.guard_tick),

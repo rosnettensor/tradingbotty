@@ -255,7 +255,8 @@ def set_stance(body: StanceIn):
 
 
 class BankIn(BaseModel):
-    live: bool
+    live: bool | None = None
+    mode: str | None = None
     confirm: str = ""
 
 
@@ -268,9 +269,15 @@ def bank_info():
 @app.post("/api/bank")
 def bank_live(body: BankIn):
     """Let the bank split the daily brain's real money (needs the words BANK LIVE), or send it back to the shadow."""
-    if body.live and body.confirm.strip().upper() != "BANK LIVE":
+    mode = body.mode or ("live" if body.live else "shadow")
+    if mode == "live" and body.confirm.strip().upper() != "BANK LIVE":
         raise HTTPException(400, "type BANK LIVE to let the bank move real money")
-    return engine.bank.set_live(body.live)
+    if mode == "probe" and body.confirm.strip().upper() != "PROBE":
+        raise HTTPException(400, "confirm the probation with PROBE")
+    try:
+        return engine.bank.set_mode(mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.post("/api/bank/refresh")

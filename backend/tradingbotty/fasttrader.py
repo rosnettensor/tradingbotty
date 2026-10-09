@@ -153,6 +153,45 @@ class FastTrader:
         self.save(c)
         return {"done": done, **self.status()}
 
+    # ------------------------------------------------------------------ live exits, every minute
+    async def watch(self) -> None:
+        """Take profit and stop on the live price, every minute, instead of only when a 4-hour candle closes.
+        Measured against what the pot really paid (amount / quantity, in your currency). API3 fell to -13.7% before
+        the 4-hour check could sell it at its -10% stop; this sells it close to -10%."""
+        e = self.e
+        c = self.cfg()
+        if (not c["on"] or not c.get("live_exits", True) or e.mode != "live" or not e.live or e.kill_switch
+                or e.__dict__.get("_fast_trading")):
+            return
+        strat = fastlab.by_name(c["strategy"])
+        tp, stop = getattr(strat, "tp", None), getattr(strat, "stop", None)
+        prices = e.__dict__.get("fusion_prices") or {}
+        qty, cost = e.db.get("fast_qty", {}), e.db.get("fast_cost", {})
+        hits = []
+        for s, q in qty.items():
+            px, paid = prices.get(s), cost.get(s)
+            if not px or not paid or not q or s not in c["pos"]:
+                continue
+            r = px * q / paid
+            if tp and r >= 1 + tp:
+                hits.append((s, "take profit", r))
+            elif stop and r <= 1 - stop:
+                hits.append((s, "stop", r))
+        if not hits:
+            return
+        e._fast_trading = True
+        try:
+            for s, why, r in hits:
+                e.why("fast", s, "SELL", [["ok" if why == "take profit" else "no",
+                                           f"Live-{'Ziel' if why == 'take profit' else 'Stopp'}: {(r - 1) * 100:+.1f}% "
+                                           f"gegenüber dem Kaufpreis, sofort verkauft statt bis zur 4-Stunden-Kerze zu warten"]])
+                ex = await e._live_sell(s, f"fast pot: live {why} ({c['strategy']})", book="fast")
+                if ex:
+                    pnl = self.booked_sell(s, ex)
+                    e._log("Fast Trader", "live", f"Live {why} on {s}: {pnl:+.2f} {e.live.currency} ({(r - 1) * 100:+.1f}%).")
+        finally:
+            e._fast_trading = False
+
     # ------------------------------------------------------------------ the decision, every 4 hours
     async def tick(self) -> None:
         e = self.e
