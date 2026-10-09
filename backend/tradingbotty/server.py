@@ -56,7 +56,8 @@ app = FastAPI(title="TradingBotty", lifespan=lifespan)
 class PasswordGate:
     """With TB_PASSWORD set (always on a server), every page, API call and live feed needs the password.
     The browser asks once (any user name), then a cookie keeps you signed in for 30 days."""
-    OPEN = {"/api/health", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/manifest.webmanifest",  # the phone fetches the icon without the password
+    OPEN = {"/api/health", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png", "/favicon.svg",
+            "/manifest.webmanifest",  # the phone fetches the icon without the password
             "/api/widget"}  # checks its own read-only key (see widget_key)
 
     def __init__(self, app, password: str | None):
