@@ -644,7 +644,7 @@ pre.report { font-size: 11px; white-space: pre-wrap; background: var(--sunk); pa
 
 /* ===== cockpit v0.6: the core as the centerpiece, fast pot ===== */
 .cockpit3 { grid-template-columns: minmax(280px, 1fr) minmax(420px, 1.6fr) minmax(280px, 1fr);
-  grid-template-areas: "wallet wallet wallet" "brain brain brain" "fast fast fast" "watch core guard" "watch core equity" "stats stats stats" "focus focus focus" "pos log news" "diary diary diary"; }
+  grid-template-areas: "wallet wallet wallet" "brain brain brain" "fast fast fast" "watch core guard" "watch core equity" "stats stats stats" "focus focus focus" "pos log news" "diary diary diary" "score score score"; }
 .cockpit3 .fastbar { grid-area: fast; }
 .cockpit3 .core { min-height: 640px; position: relative; overflow: hidden;
   background: radial-gradient(ellipse at 50% 42%, rgba(0,240,255,0.10), rgba(255,43,214,0.05) 38%, transparent 70%), var(--panel);
@@ -653,10 +653,10 @@ pre.report { font-size: 11px; white-space: pre-wrap; background: var(--sunk); pa
   background: repeating-linear-gradient(0deg, var(--faint) 0 1px, transparent 1px 3px); }
 .cockpit3 .sphere { min-height: 480px; }
 @media (max-width: 1250px) {
-  .cockpit3 { grid-template-columns: 1fr 1fr; grid-template-areas: "wallet wallet" "brain brain" "fast fast" "core core" "watch guard" "watch equity" "stats stats" "focus focus" "pos news" "diary diary" "log log"; }
+  .cockpit3 { grid-template-columns: 1fr 1fr; grid-template-areas: "wallet wallet" "brain brain" "fast fast" "core core" "watch guard" "watch equity" "stats stats" "focus focus" "pos news" "diary diary" "score score" "log log"; }
 }
 @media (max-width: 820px) {
-  .cockpit3 { grid-template-columns: 1fr; grid-template-areas: "wallet" "brain" "fast" "core" "watch" "guard" "stats" "focus" "equity" "pos" "diary" "news" "log"; }
+  .cockpit3 { grid-template-columns: 1fr; grid-template-areas: "wallet" "brain" "fast" "core" "watch" "guard" "stats" "focus" "equity" "pos" "diary" "score" "news" "log"; }
   .cockpit3 .core { min-height: 520px; }
   .cockpit3 .sphere { min-height: 400px; }
   .core-hud { display: none; }
@@ -695,7 +695,7 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 
 /* ===== trade diary, fast pot floor ===== */
 .cockpit3 .diary { grid-area: diary; }
-.diary-list { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); max-height: 460px; overflow-y: auto; }
+.diary-list { display: grid; gap: 8px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); max-height: 460px; overflow-y: auto; }
 .diary-card { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: var(--radius); padding: 8px 10px; display: grid; gap: 4px; min-width: 0; background: var(--sunk); }
 .diary-card.win { border-left-color: var(--green); }
 .diary-card.loss { border-left-color: var(--red); }
@@ -706,6 +706,48 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 .side-badge.sell { color: var(--red); border-color: var(--red); }
 .diary-reason { overflow-wrap: anywhere; }
 .diary-lesson { font-size: 12px; color: var(--text); border-top: 1px dashed var(--line); padding-top: 4px; }
+.why-toggle { font-size: 11px; padding: 0 4px; }
+.why { display: grid; gap: 6px; border-top: 1px dashed var(--line); padding-top: 6px; font-size: 12px; }
+.why-block { display: grid; gap: 2px; }
+.why-line { display: grid; grid-template-columns: 14px 1fr; gap: 4px; overflow-wrap: anywhere; }
+
+/* ===== scoreboard (Bauplan 2, phase 1) ===== */
+.cockpit3 .scoreboard { grid-area: score; }
+.score-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 980px) { .score-grid { grid-template-columns: minmax(0, 1fr); } }
+.score-rows { display: grid; gap: 2px; align-content: start; }
+.score-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) minmax(60px, 140px) 82px; gap: 10px; align-items: center;
+  padding: 7px 4px; border-bottom: 1px solid var(--line); }
+.score-icon { font-size: 18px; text-align: center; }
+.score-name { min-width: 0; }
+.score-name .small { overflow-wrap: anywhere; }
+.score-val { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.score-bar { position: relative; height: 8px; background: var(--sunk); border-radius: 4px; }
+.score-bar::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--dim); opacity: .5; }
+.score-bar i { position: absolute; top: 0; bottom: 0; border-radius: 4px; }
+.score-bar i.pos { left: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+.score-bar i.neg { right: 50%; background: var(--red); box-shadow: 0 0 8px var(--red); }
+.role-chip { font: 600 9px var(--mono); letter-spacing: .1em; text-transform: uppercase; padding: 1px 5px; border-radius: 3px;
+  border: 1px solid var(--line); color: var(--dim); vertical-align: 2px; }
+.role-chip.gov { color: var(--cyan); border-color: var(--cyan); }
+.role-chip.court { color: var(--red); border-color: var(--red); }
+.role-chip.you { color: var(--green); border-color: var(--green); }
+.role-chip.parl { color: var(--magenta, #ff2bd6); border-color: var(--magenta, #ff2bd6); }
+.score-side { display: grid; gap: 14px; align-content: start; min-width: 0; }
+.score-side h4 { margin: 0 0 6px; font: 600 11px var(--mono); letter-spacing: .12em; }
+.losscheck, .ghosts { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; background: var(--sunk); min-width: 0; }
+.loss-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.loss-stats span { display: grid; }
+.loss-stats small { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.loss-stats b { font-family: var(--mono); font-size: 16px; font-variant-numeric: tabular-nums; }
+.loss-exits { display: grid; gap: 2px; font-size: 12px; }
+.loss-exits div { display: flex; justify-content: space-between; gap: 8px; }
+.loss-exits b { font-family: var(--mono); }
+.ghost { display: grid; gap: 2px; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.ghost:last-child { border-bottom: 0; }
+.ghost.done { opacity: .75; }
+.mpage .score-row { grid-template-columns: 24px minmax(0, 1fr) 76px; }
+.mpage .score-bar { display: none; }
 .mpage .diary-list { grid-template-columns: minmax(0, 1fr); max-height: none; overflow: visible; }
 .floor-note { border: 1px solid var(--red); border-radius: var(--radius); padding: 8px 10px; margin: 6px 0; font-size: 12px; }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
+import Scoreboard, { WhyLines } from "./Scoreboard.jsx";
 import StanceChip from "./StanceChip.jsx";
 import { DailyChart, LineChart } from "./charts.jsx";
 import { Stat, Tabs } from "./components.jsx";
@@ -129,6 +130,10 @@ function DeskCockpit({ state, pulse, focus, setFocus, openAgent }) {
       <section className="panel diary">
         <TradeDiary state={state} setFocus={setFocus} />
       </section>
+
+      <section className="panel scoreboard">
+        <Scoreboard state={state} />
+      </section>
     </div>
   );
 }
@@ -155,6 +160,7 @@ function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
     ["Guardian", <section className="panel guardpanel"><Guardian guard={state.guard || {}} shocks={state.shocks || {}} openAgent={openAgent} /></section>],
     ["Trades", <section className="panel positions"><LiveTrades trades={state.trades || []} cur={cur} setFocus={setFocus} /></section>],
     ["Tagebuch", <section className="panel diary"><TradeDiary state={state} setFocus={setFocus} /></section>],
+    ["Punkte", <section className="panel scoreboard"><Scoreboard state={state} /></section>],
     ["Feed", <><section className="panel log"><Feed log={state.log || []} /></section><StatStrip state={state} openAgent={openAgent} /></>],
     ["News", <section className="panel newsfeed"><News news={state.news || []} setFocus={setFocus} /></section>],
   ];
@@ -544,6 +550,8 @@ function DiaryCard({ e, cur, setFocus }) {
   const c = e.currency || cur;
   const sign = (x) => `${x >= 0 ? "+" : ""}${Number(x || 0).toFixed(2)}`;
   const tone = e.closed ? (e.pnl > 0 ? "win" : e.pnl < 0 ? "loss" : "") : "";
+  const [why, setWhy] = useState(false);
+  const hasWhy = (e.why || []).length > 0 || (e.entry_why || []).length > 0;
   return (
     <div className={`diary-card ${tone}`}>
       <div className="diary-head">
@@ -558,7 +566,8 @@ function DiaryCard({ e, cur, setFocus }) {
           <b className={pctColor(e.pnl)}>{sign(e.pnl)} {c} ({sign(e.pnl_pct)}%)</b> <span className="dim small">after fees · in at {fmt.price(e.entry_price)}{e.entry_ts ? ` (${dayhm(e.entry_ts)})` : ""}, out at {fmt.price(e.price)}</span>
         </div>
       )}
-      <div className="dim small diary-reason">{e.reason}</div>
+      <div className="dim small diary-reason">{e.reason}{hasWhy && <> · <button className="linkish why-toggle" onClick={() => setWhy(!why)}>{why ? "weniger" : "Warum?"}</button></>}</div>
+      {why && <WhyLines e={e} />}
       {e.lesson && <div className="diary-lesson" title={e.lesson_by === "claude" ? "Claude's post-mortem" : "plain math (no AI key or budget)"}>{e.lesson_by === "claude" ? "🤖" : "🧮"} {e.lesson}</div>}
     </div>
   );

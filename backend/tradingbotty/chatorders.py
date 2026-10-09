@@ -238,12 +238,20 @@ class ChatOrders:
                 return {"ok": True, "answer": "Fast Pot: " + ("; ".join(res["done"]) or "nichts verkauft") + "."}
             if o["side"] == "SELL":
                 who = "fast pot" if o["book"] == "fast" else "daily brain"
+                value = next((c["value"] for c in (e.wallet or {}).get("fast_coins" if o["book"] == "fast" else "coins") or []
+                              if c["symbol"] == o["symbol"]), 0)
+                e.why(o["book"], o["symbol"], "SELL", [["warn", "Du hast per Chat verkauft, nicht die Regel"]])
                 ex = await e._live_sell(o["symbol"], f"{who}: sold by you (chat)", book=o["book"])
                 if not ex:
                     return {"ok": False, "answer": f"{o['symbol']} wurde nicht verkauft (Fusion hat abgelehnt oder "
                                                    "der Betrag liegt unter dem Minimum). Details im Feed."}
                 got = float(ex.get("notional", 0) or 0)
                 extra = ""
+                pos = (e.fast.cfg().get("pos") or {}).get(o["symbol"]) if o["book"] == "fast" else None
+                if not (pos or {}).get("manual"):  # the rule's coin: follow it as if you had let the rule decide
+                    st = fastlab.by_name(e.fast.cfg().get("strategy") or "") if o["book"] == "fast" else None
+                    e.ghosts.add(o["book"], o["symbol"], "you", "Per Chat verkauft statt die Regel entscheiden zu lassen",
+                                 value or got, kind="keep", tp=getattr(st, "tp", None), stop=getattr(st, "stop", None))
                 if o["book"] == "brain":  # the brain mustn't buy it straight back on the same daily candle
                     e.db.set("brain_sold_by_you", {**(e.db.get("brain_sold_by_you") or {}), o["symbol"]: time.time()})
                 if o["book"] == "fast":
@@ -251,6 +259,8 @@ class ChatOrders:
                     extra = f", Ergebnis {pnl:+.2f} {cur} nach Gebühren"
                 return {"ok": True, "answer": f"✅ {o['symbol']} verkauft für {got:.2f} {cur}{extra}."}
             sym = o["symbol"]
+            e.why("fast", sym, "BUY", [["warn", "Du hast per Chat gekauft, nicht die Regel"],
+                                       ["info", "Der Fast Pot verkauft ihn nach seiner Regel (Ziel, Stopp oder Zeit)"]])
             try:
                 amount, got = await e._live_buy(sym, o["amount"], "fast pot: bought by you (chat)", book="fast")
             except Exception as ex:

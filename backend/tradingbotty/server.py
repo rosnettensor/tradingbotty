@@ -373,6 +373,12 @@ async def report_weekly(send: int = 0):
     return {**engine.weekly(), "sent": bool(send)}
 
 
+@app.get("/api/scoreboard")
+def scoreboard():
+    """Bauplan 2, phase 1: each agent's score in your currency, the loss check and the ghost trades."""
+    return engine.scoreboard()
+
+
 @app.get("/api/diary")
 def diary(limit: int = 300):
     """The trade diary: every real trade of the Daily Brain and the fast pot, newest first."""

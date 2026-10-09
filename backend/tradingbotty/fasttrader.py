@@ -16,7 +16,7 @@ import bisect
 import math
 import time
 
-from . import fastlab, research
+from . import fastlab, research, scoreboard
 
 DEFAULT = "Dip buyer: down 15%+ in 1d inside an uptrend, 2 slots, take +10% / stop -10%"  # the one robust fast rule
 MIN_SLOT = 32.0      # per position: Fusion's 25 (some coins 30) minimum, with room for a 20% drop before it can't be sold
@@ -288,6 +288,7 @@ class FastTrader:
             px = cd.c[s][i]
             p = c["pos"][s]
             why = ("take profit" if px and px >= p["entry"] * 1.1 else "stop" if px and px < p["entry"] else "time or exit rule")
+            e.why("fast", s, "SELL", scoreboard.fast_why(cd, strat, s, i, "SELL", p["entry"], p.get("ts")))
             ex = await e._live_sell(s, f"fast pot: {why} ({name})", book="fast")
             if ex:
                 pnl = self.booked_sell(s, ex)
@@ -299,14 +300,22 @@ class FastTrader:
         brain_coins = e.db.get("live_qty", {})
         pairs = getattr(e.live, "pairs", None) or {}
         course = e.stance.get()
+        hours = (getattr(strat, "max_hold", None) or 18) * fastlab.BAR / 3600
+
+        def ghost(s, who, why):
+            e.ghosts.add("fast", s, who, why, self.pot_size(c) / max(1, slots), hours=hours,
+                         tp=getattr(strat, "tp", None), stop=getattr(strat, "stop", None))
+
         for s in [s for s in want if s not in held]:
             if slots < 1:
                 break
             if not course["buys"]:
                 done.append(f"{s}: signal, but your course is {course['name']}")
+                ghost(s, "course", f"Kurs {course['name']}: Dip-Signal nicht genutzt")
                 continue
             if s in e.stance.locked():
                 done.append(f"{s}: signal, but Bunkern locked its gain earlier")
+                ghost(s, "course", "Bunkern: nach gesichertem Gewinn nicht wieder gekauft")
                 continue
             if pairs and s not in pairs:
                 done.append(f"{s}: signal, but not on Fusion")
@@ -314,8 +323,11 @@ class FastTrader:
             if s in brain_coins:
                 done.append(f"{s}: signal, but the daily brain holds it (no doubling up)")
                 continue
-            if e.guard().get(s):
+            g = e.guard().get(s)
+            if g:
                 done.append(f"{s}: signal, but the Guardian blocks it")
+                ghost(s, "professor" if g.get("sources") == ["The Professor"] else "guardian",
+                      f"Kauf gesperrt: {(g.get('titles') or [g.get('reason', '?')])[0]}")
                 continue
             in_pot = len([x for x in c["pos"] if x in e.db.get("fast_qty", {})])
             if in_pot >= slots:
@@ -323,6 +335,9 @@ class FastTrader:
             size = round(self.pot_size(c) / slots * course["size"], 2)  # Mutig / Bunkern
             invested = sum(e.db.get("fast_cost", {}).values())
             size = min(size, self.pot_size(c) - invested)  # never more than the pot
+            e.why("fast", s, "BUY", scoreboard.fast_why(cd, strat, s, i, "BUY")
+                  + [["info", f"Grösse: {size:.2f} {cur} = Topf {self.pot_size(c):.2f} / {slots} Platz"
+                      + (f" × Kurs {course['size']:g}" if course["size"] != 1 else "")]])
             try:
                 amount, got = await e._live_buy(s, size, f"fast pot: {name}", book="fast")
             except Exception as ex:

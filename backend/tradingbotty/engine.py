@@ -17,6 +17,8 @@ from collections import deque
 from . import altdata, controls, fastlab, patterns, research, thinktank
 from .chatorders import ChatOrders
 from .stance import Stance, swiss
+from . import scoreboard
+from .scoreboard import Ghosts
 from .fasttrader import FastTrader as FastPot
 from .agents.base import Blackboard, Source
 from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Guardian, LiveDesk, NewsHunter,
@@ -93,6 +95,9 @@ class Engine:
         self.fast = FastPot(self)                  # the fast pot: small, separate real money, every 4 hours
         self.orders = ChatOrders(self)             # orders typed in the chat bar, sent only after you confirm
         self.stance = Stance(self)                 # your course for a while: Mutig, Bunkern, Pause or Normal
+        self.ghosts = Ghosts(self)                 # trades an agent stopped, followed as if they had happened
+        self._why: dict[tuple, list] = {}          # (book, symbol, side) -> the facts behind the next order
+        self.fusion_prices: dict[str, float] = {}  # Fusion's prices in your currency, from the last account read
 
         h = lambda key, feed: (lambda: feed.healthy.get(key, False))  # noqa: E731
         self.sources = [
@@ -555,7 +560,14 @@ class Engine:
                 if (held and s not in ("BTC", "ETH") and entry.get("reason") in self.GUARD_EVENTS
                         and len(news) >= 2 and not entry.get("sold")):
                     for b in held:
+                        value = next((c.get("value", 0) for c in (self.wallet or {}).get("coins" if b == "brain" else "fast_coins") or []
+                                      if c["symbol"] == s), 0)
+                        self.why(b, s, "SELL", [["no", f"Guardian: {entry['reason']}-News von {', '.join(news)}"],
+                                                ["info", f"\"{entry['titles'][0][:120]}\""]])
                         ex = await self._live_sell(s, reason=f"guardian: {entry['reason']} news", book=b)
+                        if ex:
+                            self.ghosts.add(b, s, "guardian", f"Notverkauf wegen {entry['reason']}-News", value or
+                                            float(ex.get("notional", 0) or 0), kind="keep")
                         if b == "fast" and ex:
                             self.fast.booked_sell(s, ex)
                     entry["sold"] = not any(s in self.db.get(self._book_keys(b)[0], {}) for b in held)
@@ -828,12 +840,17 @@ class Engine:
         ids = getattr(self.live, "asset_ids", {})  # the app broker keys balances by asset id
         return float(bal.get(symbol.upper(), bal.get(ids.get(symbol.upper(), "?"), 0.0)) or 0.0)
 
+    def why(self, book: str, sym: str, side: str, lines: list) -> None:
+        """The facts behind the next order of this book (read once by _record)."""
+        self._why[(book, sym, side)] = [x for x in lines if x]
+
     def _record(self, sym: str, side: str, ex: dict, notional: float, reason: str, book: str = "brain",
-                basis: dict | None = None) -> None:
+                basis: dict | None = None, checks: list | None = None) -> None:
         """Book one real order: the trades table, the live feed, the trade diary and the phone. `basis` is what the
         book paid for the coin it sells now ({"cost", "qty"}, read before the sell cleared it): with it, the diary
         entry closes the position with its result after fees."""
         entry = self._diary_entry(sym, side, ex, notional, reason, book, basis)  # before the insert: it reads the buys
+        self._add_why(entry, checks)
         self.db.execute(
             "INSERT INTO trades(ts,variant_id,mode,symbol,side,qty,price,notional,fee,pnl,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (time.time(), BRAIN_ID if book == "brain" else "fast", "live", sym, side, float(ex.get("quantity", 0) or 0), float(ex.get("price", 0) or 0),
@@ -860,7 +877,10 @@ class Engine:
     LESSON_SYSTEM = (
         "Du bist der nüchterne Trading-Coach von TradingBotty, einem Krypto-Bot mit echtem Geld. Du bekommst eine "
         "gerade geschlossene Position als JSON. Antworte mit genau einer Zeile auf Deutsch (höchstens 160 Zeichen): "
-        "was diese Position lehrt, konkret und ehrlich. Nur aus den Daten, keine erfundenen Fakten, keine Floskeln."
+        "was diese Position lehrt, konkret und ehrlich. Nur aus den Daten, keine erfundenen Fakten, keine Floskeln. "
+        "Ursachen nennst du nur, wenn sie in 'warum_gekauft' oder 'warum_verkauft' stehen. Fehlen sie, sag, was die "
+        "Regel getan hat, ohne zu raten. Ein Ausstieg nach Regel ist kein Fehler: sag dann, ob der Verlust für diese "
+        "Regel normal ist (Trendfolge verliert oft 5 bis 15% und lebt von seltenen grossen Gewinnern)."
     )
 
     def _open_buys(self, book: str, sym: str) -> list[dict]:
@@ -891,6 +911,30 @@ class Engine:
                  entry_ts=buys[0]["ts"] if buys else None, entry_reason=buys[0]["reason"] if buys else None)
         e["lesson"], e["lesson_by"] = self._diary_math(e), "math"  # Claude's line replaces it if it comes
         return e
+
+    def _add_why(self, entry: dict, checks: list | None) -> None:
+        """The facts of this order, Bitcoin's price for the comparison, and for a sell the facts of its buy."""
+        book, sym, side = entry["book"], entry["symbol"], entry["side"]
+        try:
+            lines = list(self._why.pop((book, sym, side), None) or [])
+            if not lines:
+                lines.append(["info", entry["reason"]])
+            lines += [scoreboard.checks_line(checks)] if checks else []
+            lines += scoreboard.context_why(self)
+            entry["why"] = [x for x in lines if x][:12]
+        except Exception as ex:  # the facts are a nice-to-have: never in the way of booking a real order
+            entry["why"] = [["info", entry["reason"]]]
+            self._log("Scoreboard", "warn", f"Couldn't collect the facts for {sym}: {str(ex)[:80]}")
+        btc = self.fusion_prices.get("BTC")
+        if btc:
+            entry["btc"] = btc
+        if entry.get("closed"):
+            buy = next((d for d in self.db.get("diary") or [] if d.get("book") == book and d.get("symbol") == sym
+                        and d.get("side") == "BUY"), None)
+            if buy:
+                entry["entry_why"] = buy.get("why")
+                if buy.get("btc") and btc:
+                    entry["btc_in"], entry["btc_out"] = buy["btc"], btc
 
     @staticmethod
     def _held_for(e: dict) -> str:
@@ -926,6 +970,10 @@ class Engine:
                                         "cost", "pnl", "pnl_pct", "currency")}
         facts["book"] = "Fast-Topf (4-Stunden-Regel, Spielgeld)" if e["book"] == "fast" else "Daily Brain (Tagesstrategie)"
         facts["gehalten"] = self._held_for(e)
+        facts["warum_gekauft"] = [x[1] for x in e.get("entry_why") or []]
+        facts["warum_verkauft"] = [x[1] for x in e.get("why") or []]
+        if e.get("btc_in") and e.get("btc_out"):
+            facts["bitcoin_im_selben_zeitraum_pct"] = round((e["btc_out"] / e["btc_in"] - 1) * 100, 1)
         try:
             res = await self.llm.json_call("Trade Diary", self.LESSON_SYSTEM, json.dumps(facts, ensure_ascii=False),
                                            {"type": "object", "properties": {"lesson": {"type": "string"}},
@@ -941,6 +989,9 @@ class Engine:
             if x.get("id") == eid:
                 x["lesson"], x["lesson_by"] = " ".join(line.split())[:240], "claude"
         self.db.set("diary", diary)
+
+    def scoreboard(self) -> dict:
+        return scoreboard.board(self)
 
     def diary(self, limit: int = DIARY_MAX) -> list[dict]:
         return (self.db.get("diary") or [])[:limit]
@@ -1037,6 +1088,7 @@ class Engine:
                 checks.append(["spread", "unknown", f"order book unreadable ({str(ex)[:60]})"])
             else:
                 if spread > cfg["max_spread_pct"]:
+                    self.ghosts.add(book, sym, "risk", f"Spread {spread:.2f}% über deinem Limit", amount)
                     raise stop(f"spread {spread:.2f}% is above your {cfg['max_spread_pct']}% limit")
                 checks.append(["spread", "ok", f"{spread:.2f}% ≤ {cfg['max_spread_pct']}%"])
         bal = await self.live.balances()
@@ -1073,7 +1125,7 @@ class Engine:
         owned = self.db.get(kq, {})
         owned[sym] = owned.get(sym, 0.0) + got
         self.db.set(kq, owned)
-        self._record(sym, "BUY", ex, amount, reason, book)
+        self._record(sym, "BUY", ex, amount, reason, book, checks=checks)
         self._risk_note(f"BUY {sym} {amount:.2f} {cur}", checks, "sent")
         return amount, got
 
@@ -1252,7 +1304,7 @@ class Engine:
                 raise ValueError(f"strategy {b['strategy']} no longer exists")
             target = research.current_target(cd, strat)
             regime = getattr(strat, "regime", None)
-            note, steps = await self._brain_rebalance(target, strat.name, cd)
+            note, steps = await self._brain_rebalance(target, strat.name, cd, strat)
             b = {**self.brain(), "day": cd.days[-1], "ts": time.time(), "target": target, "note": note, "steps": steps,
                  "regime_days": regime, "btc_ok": research.btc_uptrend(cd, len(cd.days) - 1, regime) if regime else None,
                  "explain": strat.explain}
@@ -1263,7 +1315,7 @@ class Engine:
             self._brain_busy = False
             self._brain_target = {}
 
-    async def _brain_rebalance(self, target: dict[str, float], name: str, cd=None) -> tuple[str, list[str]]:
+    async def _brain_rebalance(self, target: dict[str, float], name: str, cd=None, strat=None) -> tuple[str, list[str]]:
         """Sell the bot's coins the strategy no longer wants, then buy the ones it wants up to its share of your cap."""
         cfg, cur = self.settings["live"], self.live.currency
         pairs = getattr(self.live, "pairs", None) or {}
@@ -1292,6 +1344,8 @@ class Engine:
                             f"by the bot: sell it in the Bitpanda app, the bot then forgets it")
                 continue
             errors = self.live_errors
+            if cd and strat:
+                self.why("brain", sym, "SELL", scoreboard.brain_why(cd, strat, sym, "SELL"))
             await self._live_sell(sym, reason=f"daily brain: {name} no longer holds it")
             if sym in self.db.get("live_qty", {}):
                 self.live_errors = errors  # one coin Fusion won't sell must not stop live trading
@@ -1308,6 +1362,8 @@ class Engine:
                 continue
             if sym not in owned and not course["buys"]:
                 done.append(f"{sym} not bought: your course is {course['name']}")
+                self.ghosts.add("brain", sym, "course", f"Kurs {course['name']}: Kauf-Signal nicht genutzt",
+                                w * budget, price=prices.get(sym))
                 continue
             sold = (self.db.get("brain_sold_by_you") or {}).get(sym, 0)
             if sym not in owned and cd and sold > cd.days[-1] + 86400:  # sold after the candle this decision reads
@@ -1315,10 +1371,16 @@ class Engine:
                 continue
             if sym not in owned and sym in self.stance.locked():
                 done.append(f"{sym} not bought again: Bunkern locked its gain")
+                self.ghosts.add("brain", sym, "course", "Bunkern: nach gesichertem Gewinn nicht wieder gekauft",
+                                w * budget, price=prices.get(sym))
                 continue
             blocked = self.guard().get(sym)
             if blocked:
                 done.append(f"{sym} not bought: the Guardian blocks it ({blocked['reason']})")
+                if sym not in owned:
+                    who = "professor" if blocked.get("sources") == ["The Professor"] else "guardian"
+                    self.ghosts.add("brain", sym, who, f"Kauf gesperrt: {(blocked.get('titles') or [blocked['reason']])[0]}",
+                                    w * budget, price=prices.get(sym))
                 continue
             want = w * budget - owned.get(sym, 0.0) * prices.get(sym, 0.0)
             if sym not in owned:
@@ -1340,6 +1402,10 @@ class Engine:
                     done.append(f"{sym}: raise 'Biggest single live order' above {min_amt:g} {cur}")
                     continue
             for _ in range(parts):
+                if cd and strat:
+                    self.why("brain", sym, "BUY", scoreboard.brain_why(cd, strat, sym, "BUY")
+                             + [["info", f"Grösse: {w * 100:.0f}% vom Budget {budget:.2f} {cur}"
+                                 + (f" × Kurs {course['size']:g}" if course["size"] != 1 and sym not in owned else "")]])
                 try:
                     amount, _ = await self._live_buy(sym, chunk, f"daily brain: {name}")
                 except Exception as ex:  # one refused order skips this coin today, never the whole decision
@@ -1387,6 +1453,8 @@ class Engine:
             return
         if getattr(b, "pairs", None):
             self.fusion_coins = set(b.pairs)
+        if prices:
+            self.fusion_prices = prices
         qty, cost = self.db.get("live_qty", {}), self.db.get("live_cost", {})
         fqty, fcost = self.db.get("fast_qty", {}), self.db.get("fast_cost", {})
         fast_coins = []
@@ -1568,6 +1636,7 @@ class Engine:
             self._every(lambda: 300, self.brain_tick),
             self._every(lambda: 60, self.fast.tick),
             self._every(lambda: 60, self.stance.tick),
+            self._every(lambda: 300, self.ghosts.tick),
             self._every(lambda: 60, self.guard_tick),
             self._every(lambda: 60, self.morning_tick),
             self._every(lambda: 60, self.weekly_tick),
@@ -1728,6 +1797,12 @@ class Engine:
             "agents": [{"name": a.name, "status": a.status, "summary": cut(a.summary, 120)}
                        for a in self._by_id.values()],
         }
+        try:
+            sb = self.scoreboard()
+            ctx["scoreboard"] = {"rows": [f"{r['name']}: {r['score']:+.2f} ({cut(r['detail'], 80)})" for r in sb["rows"][:8]],
+                                 "loss_check": cut(sb["losses"].get("verdict"), 220)}
+        except Exception:
+            pass
         logs = self.db.query("SELECT ts,agent,level,message FROM agent_log ORDER BY id DESC LIMIT 25")[::-1]
         out = ""
         for size in (160, 100, 60, 0):  # shorten the log until the whole context fits

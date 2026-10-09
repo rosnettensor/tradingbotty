@@ -157,10 +157,16 @@ class Stance:
         try:
             for book, sym, peak, r in sells:
                 who = "fast pot" if book == "fast" else "daily brain"
+                value = next((c["value"] for c in (w.get("fast_coins") if book == "fast" else w.get("coins")) or []
+                              if c["symbol"] == sym), 0)
+                e.why(book, sym, "SELL", [["warn", f"Bunkern: war +{(peak - 1) * 100:.0f}% im Plus, fiel auf "
+                                                   f"+{(r - 1) * 100:.1f}%: Gewinn gesichert"]])
                 ex = await e._live_sell(sym, f"{who}: Bunkern locked the gain (was +{(peak - 1) * 100:.0f}%, "
                                              f"now +{(r - 1) * 100:.1f}%)", book=book)
                 if ex and book == "fast":
                     e.fast.booked_sell(sym, ex)
+                if ex:
+                    e.ghosts.add(book, sym, "course", "Bunkern verkaufte früher als die Regel", value, kind="keep")
                 s = e.db.get("stance") or {}
                 (s.get("peaks") or {}).pop(f"{book}:{sym}", None)
                 if ex:
