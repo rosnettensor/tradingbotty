@@ -4,12 +4,13 @@ import Cockpit from "./Cockpit.jsx";
 import Agents from "./Agents.jsx";
 import Research from "./Research.jsx";
 import Controls from "./Controls.jsx";
+import Pulse from "./Pulse.jsx";
 import ChatBar from "./ChatBar.jsx";
 import TradeCinema, { SoundToggle } from "./TradeCinema.jsx";
 import { Sparkline } from "./charts.jsx";
-import { PALETTES, applyPalette, currentPalette } from "./skins.js";
+import { PALETTES, applyPalette, currentPalette, flipInk } from "./skins.js";
 
-const TABS = ["cockpit", "agents", "research", "controls"];
+const TABS = ["cockpit", "pulse", "agents", "research", "controls"];
 
 export default function App() {
   const { state, connected, pulse } = useBot();
@@ -23,9 +24,11 @@ export default function App() {
   const [agent, setAgent] = useState(null);  // jump to one agent's inspector from anywhere
   useEffect(() => { try { localStorage.setItem("tb-tab", tab); } catch { /* private mode */ } }, [tab]);
   useEffect(() => { try { if (focus) localStorage.setItem("tb-focus", focus); } catch { /* private mode */ } }, [focus]);
-  useEffect(() => {  // keys 1-4 switch tabs
+  useEffect(() => {  // keys 1-5 switch tabs
     const onKey = (e) => {
       if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "t" || e.key === "T") { flipInk(); return; }
       const i = Number(e.key) - 1;
       if (i >= 0 && i < TABS.length) setTab(TABS[i]);
     };
@@ -45,9 +48,10 @@ export default function App() {
     <div className={`app ${state.mode === "live" ? "is-live" : ""}`}>
       {media?.background && <Backdrop src={media.background} />}
       <TopBar state={state} connected={connected} tab={tab} setTab={setTab} logo={media?.logo} />
-      <Ticker items={state.ticker || []} onPick={(s) => { setFocus(s); setTab("cockpit"); }} />
+      <Ticker items={state.ticker || []} onPick={(s) => { setFocus(s); setTab("pulse"); }} />
       <main>
         {tab === "cockpit" && <Cockpit state={state} pulse={pulse} focus={focus} setFocus={setFocus} openAgent={openAgent} />}
+        {tab === "pulse" && <Pulse state={state} focus={focus} setFocus={setFocus} />}
         {tab === "agents" && <Agents state={state} avatars={media?.avatars || {}} want={agent} />}
         {tab === "research" && <Research state={state} openAgent={openAgent} />}
         {tab === "controls" && <Controls state={state} />}
@@ -71,6 +75,11 @@ function PalettePick() {
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("pointerdown", off); document.removeEventListener("keydown", esc); };
   }, [open]);
+  useEffect(() => {  // the T key changes the palette from outside the menu
+    const on = () => setPal(currentPalette());
+    window.addEventListener("tb-skin", on);
+    return () => window.removeEventListener("tb-skin", on);
+  }, []);
   const sw = (c) => ({ "--sw-a": c[0], "--sw-b": c[1], "--sw-c": c[2] });
   const cur = PALETTES.find(([k]) => k === pal) || PALETTES[0];
   return (
@@ -86,7 +95,7 @@ function PalettePick() {
               <i className="pal-dot" style={sw(c)} />{name}
             </button>
           ))}
-          <small>{cur[3]}</small>
+          <small>{cur[3]} · Taste T wechselt hell/dunkel</small>
         </div>
       )}
     </div>

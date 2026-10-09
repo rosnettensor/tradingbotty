@@ -521,6 +521,15 @@ def move_back():
     return {"ok": True}
 
 
+@app.get("/api/pulse")
+async def pulse():
+    """Every coin of the test universe, how they move together and the market's breadth (the Pulse tab)."""
+    try:
+        return await engine.pulse()
+    except ValueError as e:
+        raise HTTPException(503, str(e))
+
+
 @app.get("/api/candles/{symbol}")
 def candles(symbol: str, minutes: int = 240):
     try:

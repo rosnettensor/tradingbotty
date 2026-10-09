@@ -86,6 +86,9 @@ function readPalette() {
   };
 }
 
+// light palettes draw ink on paper (normal blending); dark ones glow (additive light)
+const inkMode = () => getComputedStyle(document.documentElement).getPropertyValue("--sphere-blend").trim() === "normal";
+
 const fmtScore = (x) => `${x >= 0 ? "+" : "−"}${Math.abs(x).toFixed(2)}`;
 
 export default function Universe({ nodes, log, scores, currency = "CHF", selected, onSelect }) {
@@ -95,6 +98,12 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
   const tip = useRef(null);
   const live = useRef({});
   const [hover, setHover] = useState(null);
+  const [ink, setInk] = useState(inkMode);
+  useEffect(() => {  // a light palette needs other materials: rebuild the scene when it flips
+    const on = () => setInk(inkMode());
+    window.addEventListener("tb-skin", on);
+    return () => window.removeEventListener("tb-skin", on);
+  }, []);
   live.current.nodes = nodes;
   live.current.log = log;
   live.current.scores = scores;
@@ -103,6 +112,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
 
   useEffect(() => {
     const el = mount.current;
+    const BLEND = ink ? THREE.NormalBlending : THREE.AdditiveBlending;
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
@@ -157,19 +167,19 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
       const g = new THREE.Group();
       g.position.copy(home);
       const mat = new THREE.ShaderMaterial({
-        vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, blending: BLEND,
         uniforms: { uColor: { value: new THREE.Color() }, uRim: { value: new THREE.Color() }, uTime: { value: 0 }, uGlow: { value: 1 }, uAlpha: { value: 1 } },
       });
       const shell = new THREE.Mesh(sphereGeo, mat);
       shell.userData.id = n.id;
-      const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+      const coreMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, blending: BLEND, depthWrite: false });
       const core = new THREE.Mesh(coreGeo, coreMat);
-      const haloMat = new THREE.SpriteMaterial({ map: glow, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.5 });
+      const haloMat = new THREE.SpriteMaterial({ map: glow, transparent: true, blending: BLEND, depthWrite: false, opacity: 0.5 });
       const halo = new THREE.Sprite(haloMat);
-      const ringMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+      const ringMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, blending: BLEND, depthWrite: false, side: THREE.DoubleSide });
       const ring = new THREE.Mesh(new THREE.TorusGeometry(1.32, 0.05, 8, 96, 0.001), ringMat);
       ring.rotation.x = 1.0;
-      const selMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+      const selMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, blending: BLEND, depthWrite: false, side: THREE.DoubleSide });
       const sel = new THREE.Mesh(new THREE.RingGeometry(1.55, 1.62, 96), selMat);
       const moons = [];
       g.add(halo, shell, core, ring, sel);
@@ -186,7 +196,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
       if (s) return s;
       const geo = new THREE.BufferGeometry();
       geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array((SEG + 1) * 3), 3));
-      const mat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false });
+      const mat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.3, blending: BLEND, depthWrite: false });
       const line = new THREE.Line(geo, mat);
       world.add(line);
       s = { key, from, to, line, geo, mat, curve: new THREE.QuadraticBezierCurve3(new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()), next: 0, hot: 0 };
@@ -195,7 +205,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
     };
 
     const spark = (s, speed = 0.45, size = 0.5, bright = 1) => {
-      const m = new THREE.SpriteMaterial({ map: glow, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: bright });
+      const m = new THREE.SpriteMaterial({ map: glow, transparent: true, blending: BLEND, depthWrite: false, opacity: bright });
       m.color.copy(s.mat.color);
       const sp = new THREE.Sprite(m);
       sp.scale.setScalar(size);
@@ -204,7 +214,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
     };
 
     const wave = (b, color) => {
-      const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+      const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, blending: BLEND, depthWrite: false, side: THREE.DoubleSide });
       const w = new THREE.Mesh(new THREE.RingGeometry(0.96, 1.0, 64), m);
       w.position.copy(b.g.position);
       w.lookAt(camera.position);
@@ -380,7 +390,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
         // moons for agents that think with Claude
         const wantMoons = n.uses_ai ? 2 : 0;
         while (b.moons.length < wantMoons) {
-          const m = new THREE.Mesh(moonGeo, new THREE.MeshBasicMaterial({ color: pal.hi, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending }));
+          const m = new THREE.Mesh(moonGeo, new THREE.MeshBasicMaterial({ color: pal.hi, transparent: true, opacity: 0.9, blending: BLEND }));
           b.g.add(m);
           b.moons.push(m);
         }
@@ -519,7 +529,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
       labelEls.forEach((d) => d.remove());
       el.removeChild(renderer.domElement);
     };
-  }, []);
+  }, [ink]);
 
   const all = [...(nodes || []), ...VIRTUAL];
   const h = hover && all.find((n) => n.id === hover);

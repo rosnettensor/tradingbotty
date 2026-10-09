@@ -14,7 +14,7 @@ import re
 import time
 from collections import deque
 
-from . import altdata, controls, fastlab, patterns, research, thinktank
+from . import altdata, controls, fastlab, market, patterns, research, thinktank
 from .chatorders import ChatOrders
 from .stance import Stance, swiss
 from . import scoreboard
@@ -1808,6 +1808,17 @@ class Engine:
 
     async def publish_prices(self) -> None:
         self.bus.publish("prices", self.ticker())
+
+    async def pulse(self) -> dict:
+        """The Pulse tab: every coin, how they move together and the market's breadth (see market.py)."""
+        cd = await self._daily_candles()
+        live = {s: p for s, p in (self.fusion_prices or {}).items() if p}
+        live.update({q.symbol: q.price for q in self.prices.quotes.values() if q.price and q.symbol not in live})
+        snap = await asyncio.to_thread(market.snapshot, cd, live)
+        snap["held"] = {"brain": sorted(self.db.get("live_qty", {})), "fast": sorted(self.db.get("fast_qty", {}))}
+        snap["guard"] = sorted(self.guard())
+        snap["owners"] = self.brain().get("owners") or {}
+        return snap
 
     def ticker(self) -> list[dict]:
         return [{"symbol": q.symbol, "price": q.price, "change": round(q.change_24h_pct, 2),
