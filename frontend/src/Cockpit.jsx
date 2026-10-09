@@ -351,7 +351,12 @@ function BrainBar({ state, openAgent }) {
       <button className="brain-label" onClick={() => openAgent("brain")} title="open the Daily Brain">DAILY BRAIN {b.on ? (live ? "● LIVE" : "· STANDBY") : "· OFF"}</button>
       <div className="bb-main">
         <b>{b.strategy || "no strategy picked"}</b>
-        <span>holds {holds.length ? holds.map(([s, x]) => `${s} ${Math.round(x * 100)}%`).join(" · ") : "nothing (cash)"}</span>
+        <span>holds {holds.length ? holds.map(([s, x], i) => {
+          const own = (b.owners || {})[s];
+          const probe = own && own === b.probe;
+          return <span key={s} title={own ? `gekauft nach "${own}"` : ""}>{i ? " · " : ""}{s} {Math.round(x * 100)}%{probe && <span className="dim"> (Probe)</span>}</span>;
+        }) : "nothing (cash)"}</span>
+        {b.probe && <span className="dim small" title={b.probe}>+ Probe 15%: {b.probe.length > 42 ? b.probe.slice(0, 40) + "…" : b.probe}</span>}
         {t.btc && <span className={t.btc.ok ? "up" : "down"}>Bitcoin {t.btc.gap_pct > 0 ? "+" : ""}{t.btc.gap_pct}% vs its {t.btc.days}-day average{t.btc.ok ? "" : ": brain stays in cash"}</span>}
       </div>
       <div className="bb-next">

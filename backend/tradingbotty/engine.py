@@ -1399,7 +1399,9 @@ class Engine:
             steps = bank_steps + steps
             b = {**self.brain(), "day": cd.days[-1], "ts": time.time(), "target": target, "note": note, "steps": steps,
                  "regime_days": regime, "btc_ok": research.btc_uptrend(cd, len(cd.days) - 1, regime) if regime else None,
-                 "explain": strat.explain}
+                 "explain": strat.explain,
+                 "owners": {k: getattr(v, "name", str(v)) for k, v in (owners or {}).items() if v},
+                 "probe": (self.bank.cfg().get("report") or {}).get("probe") if self.bank.mode() == "probe" else None}
             self.db.set("brain", b)
         except Exception as ex:
             self._log("Daily Brain", "error", f"Daily decision failed: {str(ex) or type(ex).__name__}. Retrying in 5 minutes.")

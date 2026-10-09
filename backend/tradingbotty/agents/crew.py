@@ -960,7 +960,9 @@ class Professor(Agent):
         mine = next((r for r in res.get("rows", []) if r["name"] == b.get("strategy")), None)
         return {
             "decision": {"strategy": b.get("strategy"), "holds": b.get("target"), "note": b.get("note"),
-                         "btc_above_average": b.get("btc_ok")},
+                         "btc_above_average": b.get("btc_ok"),
+                         "bought_by_which_strategy": b.get("owners") or None,
+                         "probation_candidate_with_15pct": b.get("probe")},
             "btc": t.get("btc"),
             "tonight": t.get("preview"),
             "coins": [{k: r[k] for k in ("symbol", "state", "to_breakout_pct", "to_exit_pct", "strength_30d")}

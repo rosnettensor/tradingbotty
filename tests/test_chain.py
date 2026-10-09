@@ -62,6 +62,8 @@ def test_the_whole_chain(tmp_path, monkeypatch):
     # no spare cash: the brain trims only the slice above SOL's new share, it keeps both of its coins
     assert set(e.db.get("live_qty")) == {"SOL", "ETH", "ADA"} and any("trimmed" in x for x in e.brain()["steps"])
     ada = next(a for s, a in m.buys if s == "ADA")
+    b = e.brain()                                      # the cockpit can tell which strategy bought which coin
+    assert b["probe"] == rep["probe"] and b["owners"]["ADA"] == rep["probe"] and b["owners"]["SOL"] == STRAT
     assert ada >= 25  # at least Fusion's minimum: the slice above SOL's share paid for it, ETH's was too small to sell
     run(e._poll_wallet())
 
