@@ -756,7 +756,9 @@ def mutate(rng: random.Random, idea: dict, other: dict | None, n: int) -> dict:
              "score": show(tree), "origin": "evolution", "parent": idea["name"]}
     if what == "new trading rhythm" or rng.random() < 0.2:
         child.update(top=rng.choice([1, 2, 3, 4, 5]), hold=rng.choice([1, 3, 7]), btc_filter=rng.random() < 0.5)
-    if size(parse(child["score"])) > 30 or depth(parse(child["score"])) > 7:
+    try:
+        parse(child["score"])  # parse refuses formulas above 30 parts or 7 levels: grown too big, keep the parent's
+    except FormulaError:
         child["score"] = idea["score"]
     root = re.sub(r"^(Evo \d+: )+", "", idea["name"])
     child["name"] = f"Evo {n}: {root[:40]}"
@@ -803,17 +805,20 @@ def run_batch(cd: research.Candles, state: dict, queue: list[dict], brain: str |
     t0 = time.time()
     n = counts.get("tested", 0)
     while time.time() - t0 < seconds:
-        if queue:
-            idea = clean(queue.pop(0))
-        elif board and rng.random() < 0.75:
-            parents = sorted(board, key=lambda x: -x["res"]["fitness"])[:12]
-            a = rng.choice(parents)
-            b = rng.choice(parents) if rng.random() < 0.4 else None
-            idea = clean(mutate(rng, a, b if b is not a else None, n + 1))
-        else:
-            idea = clean({"name": f"Random {n + 1}", "score": show(random_formula(rng)), "origin": "random",
-                          "top": rng.choice([2, 3, 4]), "hold": rng.choice([1, 3, 7]), "btc_filter": rng.random() < 0.5,
-                          "theory": "A random formula: the search's way of trying what nobody would think of."})
+        try:  # one broken idea is skipped, it never costs the whole batch
+            if queue:
+                idea = clean(queue.pop(0))
+            elif board and rng.random() < 0.75:
+                parents = sorted(board, key=lambda x: -x["res"]["fitness"])[:12]
+                a = rng.choice(parents)
+                b = rng.choice(parents) if rng.random() < 0.4 else None
+                idea = clean(mutate(rng, a, b if b is not a else None, n + 1))
+            else:
+                idea = clean({"name": f"Random {n + 1}", "score": show(random_formula(rng)), "origin": "random",
+                              "top": rng.choice([2, 3, 4]), "hold": rng.choice([1, 3, 7]), "btc_filter": rng.random() < 0.5,
+                              "theory": "A random formula: the search's way of trying what nobody would think of."})
+        except (FormulaError, ValueError, KeyError, IndexError):
+            continue
         if not idea or key_of(idea) in seen:
             continue
         seen.add(key_of(idea))
