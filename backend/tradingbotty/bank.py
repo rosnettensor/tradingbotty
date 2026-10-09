@@ -36,7 +36,7 @@ NEW = ["Mood switch: breakout 20/10 in a bull market, dip buying when sideways, 
 CASH = "Cash"
 PROBE_SHARE = 0.15     # probation: the best candidate still in the shadow trades this share of the brain's money
 PROBE_MAX = 0.25       # ...raised so each coin reaches Fusion's minimum, but never above this
-PROBE_COIN = 30.0      # the smallest probation buy per coin, in your currency (Fusion's minimum is 25, some 30)
+PROBE_COIN = 32.0      # the smallest probation buy per coin, in your currency (Fusion wants 25, some coins 30, plus fee room)
 MODES = ("shadow", "probe", "live")
 
 
@@ -236,7 +236,29 @@ class Bank:
         self.save(b)
         return b["report"]
 
-    def target(self, cd, budget: float | None = None) -> tuple[dict[str, float], list[str], dict]:
+    @staticmethod
+    def _probe_coins(tgt: dict, share: float, budget: float, avoid: set, steps: list) -> dict:
+        """The probation's coins as weights of the candidate's share: each at least PROBE_COIN, together at most
+        PROBE_MAX. When that doesn't fit, fewer coins (blocked ones last) instead of orders below Fusion's minimum."""
+        room = max(PROBE_MAX, share) * budget
+        fits = int(room // PROBE_COIN)
+        if fits <= 0:
+            steps.append(f"Bank (Probe): {room:.0f} reicht nicht für eine Order von {PROBE_COIN:g}: wartet auf mehr Geld")
+            return {}
+        if len(tgt) > fits:
+            keep = sorted(tgt, key=lambda k: (k in avoid, -tgt[k]))[:fits]
+            steps.append(f"Bank (Probe): nur {fits} von {len(tgt)} Coins, damit jede Order über {PROBE_COIN:g} liegt"
+                         f" (weggelassen: {', '.join(sorted(set(tgt) - set(keep)))})")
+            tgt = {k: tgt[k] for k in keep}
+        floor = PROBE_COIN / budget
+        tot = sum(tgt.values()) or 1.0
+        out = {k: max(share * w / tot, floor) for k, w in tgt.items()}
+        total = sum(out.values())
+        if total > PROBE_MAX + 1e-9:
+            out = {k: w * PROBE_MAX / total for k, w in out.items()}  # still each ≥ floor: fits coins at most
+        return {k: w / share for k, w in out.items()}
+
+    def target(self, cd, budget: float | None = None, avoid: set | None = None) -> tuple[dict[str, float], list[str], dict]:
         """The blend of the candidates' holdings by the bank's split (live) or the probation split (probe).
         Returns (weights, steps, owners): owners maps each coin to the strategy with the biggest stake in it."""
         rep = self.cfg().get("report") or {}
@@ -255,11 +277,7 @@ class Bank:
                 continue
             tgt = research.current_target(cd, strat)
             if name == probe and tgt and budget:  # each probation coin at least Fusion's minimum, all of them capped
-                floor = PROBE_COIN / budget
-                tgt = {k: max(share * w, floor) / share for k, w in tgt.items()}
-                total = sum(share * w for w in tgt.values())
-                if total > PROBE_MAX:
-                    tgt = {k: w * PROBE_MAX / total for k, w in tgt.items()}
+                tgt = self._probe_coins(tgt, share, budget, avoid or set(), steps)
             for sym, w in tgt.items():
                 weights[sym] = weights.get(sym, 0.0) + share * w
                 if share * w > stake.get(sym, (0.0, None))[0]:

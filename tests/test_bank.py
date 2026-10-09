@@ -127,3 +127,25 @@ def test_probation_never_sells_everything_when_the_court_fails_the_brains_strate
     rep = e.bank.refresh(cd, {"rows": rows})
     assert next(r for r in rep["rows"] if r["name"] == strat)["stage"] == "failed"
     assert rep["probe_split"].get(strat) == 1 - bank.PROBE_SHARE and bank.CASH not in rep["probe_split"]
+
+
+def test_probation_on_a_small_account_buys_fewer_coins_not_orders_below_the_minimum(tmp_path, monkeypatch):
+    """09/10: 268 CHF budget, the candidate wanted 3 coins: squeezed to 25% they were 22.40 CHF each and Fusion
+    refused all of them. Now two coins (the Guardian-blocked one left out), each above the minimum."""
+    from fakes import FakeFusion, _engine
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    cd = _cd()
+    strat = "Breakout 20/10 days, 3 slots, BTC filter 50d"
+    e.db.set("brain", {"on": True, "strategy": strat})
+    rows = [{"name": n, "robust": True, "fees2x": {"return_pct": 10}, "full": {"sharpe": 1.0},
+             "years_won": 6, "years_total": 9, "skill_prob": 0.9, "group": "x"} for n in [strat, *bank.NEW]]
+    rep = e.bank.refresh(cd, {"rows": rows})
+    monkeypatch.setattr(research, "current_target", lambda c, s: {"NEAR": 1 / 3, "AAVE": 1 / 3, "SOL": 1 / 3}
+                        if s.name == rep["probe"] else {})
+    e.bank.set_mode("probe")
+    w, steps, _ = e.bank.target(cd, budget=268.0, avoid={"AAVE"})
+    assert set(w) == {"NEAR", "SOL"}, steps
+    assert all(v * 268 >= bank.PROBE_COIN - 0.01 for v in w.values())
+    assert sum(w.values()) <= bank.PROBE_MAX + 1e-6 and any("weggelassen: AAVE" in s for s in steps)
+    w, steps, _ = e.bank.target(cd, budget=100.0)          # 25 CHF of room: no order at all, and it says why
+    assert not w and any("reicht nicht" in s for s in steps)

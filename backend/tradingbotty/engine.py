@@ -136,6 +136,7 @@ class Engine:
         self._retire_paper()
         self._fix_double_flows()
         self._fast_to_dip()
+        self._probe_redecide()
         # the Think Tank: its state, its queue of ideas to test, and the ideas promoted to the history lab
         self.tt = {k: v for k, v in (self.db.get("thinktank") or {}).items()}
         if not self.db.get("tt_seeded"):
@@ -257,6 +258,16 @@ class Engine:
             self.fast.save({**c, "strategy": DEFAULT, "bar": None})
             self.db.log("Fast Trader", "info", f"Fast pot rule switched to {DEFAULT}: the only fast rule that passes "
                                                "every check (+59%/yr in the test, worst drop -11%).")
+
+    def _probe_redecide(self) -> None:
+        """One-time (2026-10-09): the first probation squeezed its coins to 22.40 CHF, below Fusion's minimum, so
+        nothing was bought. With the fix the brain decides again right after this start instead of at 02:00."""
+        if self.db.get("probe_fix_2026_10_09"):
+            return
+        self.db.set("probe_fix_2026_10_09", time.time())
+        b = self.brain()
+        if self.bank.mode() == "probe" and b.get("day"):
+            self.db.set("brain", {**b, "day": None})
 
     def _fix_double_flows(self) -> None:
         """One-time repair (2026-10-05): a deposit entered twice by hand counted twice. Keep the first entry, undo the
@@ -1379,7 +1390,7 @@ class Engine:
                 total = (self.wallet or {}).get("total") or 0.0
                 pot = self.fast.pot_size() if self.fast.on() else 0.0
                 budget = max(0.0, min(self.settings["live"]["max_invest"], (total - pot) * 0.98))
-                target, bank_steps, owners = self.bank.target(cd, budget)
+                target, bank_steps, owners = self.bank.target(cd, budget, avoid=set(self.guard()))
                 name = "bank blend"
             else:
                 target = research.current_target(cd, strat)
