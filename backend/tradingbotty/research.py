@@ -325,9 +325,13 @@ class Donchian(Strategy):
                       "calmest ones instead of the strongest."),
     }
 
+    SIZE_VOL = 0.035   # sized by wildness: a coin swinging more than 3.5% a day gets a smaller slot
+
     def __init__(self, entry: int, exit_: int, slots: int = 3, regime: int | None = 50, atr_mult: float = 3.0,
-                 filt: str | None = None, tp: float | None = None, lock: tuple[float, float] | None = None):
+                 filt: str | None = None, tp: float | None = None, lock: tuple[float, float] | None = None,
+                 sized: bool = False):
         self.entry, self.exit, self.slots, self.regime, self.atr_mult = entry, exit_, slots, regime, atr_mult
+        self.sized = sized
         self.filt, self.tp, self.lock = filt, tp, lock
         f = f", BTC filter {regime}d" if regime else ", no filter"
         rule = self.FILTERS.get(filt) or self.CALM.get(filt) or ("", "")
@@ -348,6 +352,12 @@ class Donchian(Strategy):
             self.explain += (f" Once a coin is up {round(lock[0] * 100)}%, it is sold if it falls back to "
                              f"+{round(lock[1] * 100)}%: a won trade can't turn into a loss.")
             self.group = "Trend + profit taking"
+        if sized:
+            self.name += ", sized by wildness"
+            self.explain += (f" A coin that swings more than {self.SIZE_VOL * 100:.1f}% a day gets a smaller slot "
+                             "(same risk per coin instead of the same amount); the rest stays in cash.")
+            self.group = "Trend + sizing"
+        self.size: dict[str, float] = {}
         self.peak: dict[str, float] = {}
         self.entry_px: dict[str, float] = {}
         self.locked: set[str] = set()
@@ -395,7 +405,7 @@ class Donchian(Strategy):
                     if s in self.locked and c <= ep * (1 + self.lock[1]):
                         out = True
             if not out:
-                keep[s] = 1 / self.slots
+                keep[s] = self.size.get(s, 1 / self.slots)
             else:
                 self.peak.pop(s, None)
                 self.entry_px.pop(s, None)
@@ -416,8 +426,93 @@ class Donchian(Strategy):
                     cands.append((-daily_vol(xs) if self.filt == "calmfirst" else xs[-1] / xs[0], s))
             for _, s in sorted(cands, reverse=True)[:self.slots - len(keep)]:
                 keep[s] = 1 / self.slots
+                if self.sized:
+                    vol = daily_vol(cd.closes(s, i, 31) or [])
+                    keep[s] = self.size[s] = round(min(1.0, self.SIZE_VOL / vol) / self.slots if vol > 0 else 1 / self.slots, 4)
                 self.peak[s] = self.entry_px[s] = cd.c[s][i]
         return keep if set(keep) != set(held) else None
+
+
+class DayDip(Strategy):
+    """Buys a coin after a sharp fall while its long trend still points up, sells on a quick bounce or a stop."""
+    group = "Dip buying"
+
+    def __init__(self, drop: float = 0.15, days: int = 2, tp: float = 0.10, stop: float = 0.10, hold: int = 5,
+                 trend: int = 100, slots: int = 3, regime: int | None = 50):
+        self.drop, self.days, self.tp, self.stop, self.hold, self.trend = drop, days, tp, stop, hold, trend
+        self.slots, self.regime = slots, regime
+        f = f", BTC filter {regime}d" if regime else ""
+        self.name = (f"Dip buyer daily: down {round(drop * 100)}%+ in {days} days, above its {trend}-day average, "
+                     f"take +{round(tp * 100)}% / stop -{round(stop * 100)}%{f}")
+        self.explain = (f"Buys a coin that fell at least {round(drop * 100)}% in {days} days while it is still above its "
+                        f"{trend}-day average, betting on a bounce. Sells at +{round(tp * 100)}%, -{round(stop * 100)}% "
+                        f"or after {hold} days. At most {slots} coins.")
+        self.entry_px: dict[str, float] = {}
+        self.since: dict[str, int] = {}
+
+    def target(self, cd, i, held):
+        keep = {}
+        for s in held:
+            c = cd.c[s][i]
+            ep = self.entry_px.get(s, c)
+            if c is not None and ep and (c >= ep * (1 + self.tp) or c <= ep * (1 - self.stop)
+                                         or i - self.since.get(s, i) >= self.hold):
+                self.entry_px.pop(s, None)
+                self.since.pop(s, None)
+            else:
+                keep[s] = 1 / self.slots
+        if not self.regime or btc_uptrend(cd, i, self.regime):
+            cands = []
+            for s in cd.coins:
+                if s in keep:
+                    continue
+                xs = cd.closes(s, i, self.trend)
+                if xs and len(xs) > self.days and xs[-1] > sma(xs) and xs[-1] / xs[-1 - self.days] - 1 <= -self.drop:
+                    cands.append((xs[-1] / xs[-1 - self.days], s))
+            for _, s in sorted(cands)[:self.slots - len(keep)]:
+                keep[s] = 1 / self.slots
+                self.entry_px[s] = cd.c[s][i]
+                self.since[s] = i
+        return keep if set(keep) != set(held) else None
+
+
+class RegimeSwitch(Strategy):
+    """The market-mood switch: one rule per mood from the Regime Radar (bull, sideways, bear, wild), cash where none
+    fits. When the mood changes, the old rule's coins are sold and the new rule starts fresh."""
+    group = "Mood switch"
+
+    def __init__(self, sideways: bool = True):
+        self.sideways = sideways
+        self.name = ("Mood switch: breakout 20/10 in a bull market, "
+                     + ("dip buying when sideways, " if sideways else "") + "cash otherwise")
+        self.explain = ("Follows the Regime Radar's daily mood. Bull: buys 20-day breakouts, sells under the 10-day low. "
+                        + ("Sideways: buys coins that fell 15%+ in 2 days inside an uptrend, +10% / -10%, max 5 days. "
+                           if sideways else "") + "Bear or wild: cash. Built to stop breakouts losing in sideways markets.")
+        self.mood: str | None = None
+        self.leg: Strategy | None = None
+
+    def _make(self, mood: str) -> Strategy | None:
+        if mood == "bull":
+            return Donchian(20, 10, regime=None)
+        if mood == "sideways" and self.sideways:
+            return DayDip(regime=None)
+        return None
+
+    def target(self, cd, i, held):
+        from . import regime  # regime imports this module
+        r = regime.classify(cd)[i]
+        mood = r["label"] if r else self.mood
+        if mood is None:
+            return None
+        if mood != self.mood:
+            self.mood, self.leg = mood, self._make(mood)
+            if self.leg is None:
+                return {}
+            want = self.leg.target(cd, i, {})
+            return want if want is not None else {}
+        if self.leg is None:
+            return None
+        return self.leg.target(cd, i, held)
 
 
 class Mix(Strategy):
@@ -479,6 +574,8 @@ def all_strategies() -> list[Strategy]:
     # take the gain early instead of letting it run: does locking in profits beat riding the trend?
     out += [Donchian(20, 10, tp=0.25), Donchian(20, 10, tp=0.5), Donchian(20, 10, lock=(0.1, 0.02)),
             Donchian(20, 10, lock=(0.2, 0.08))]
+    # Bauplan 2: proposals from the parliament, tested here before the bank may give them money
+    out += [Donchian(20, 10, sized=True), DayDip(), RegimeSwitch(sideways=False), RegimeSwitch(sideways=True)]
     out += [Mix(Donchian(20, 10), Rotation(30, 3), "Breakout 20/10, half Top 3 by 30-day strength"),
             Mix(Donchian(20, 10), BtcRegime(50), "Breakout 20/10, half Bitcoin above its 50-day average")]
     for make in EXTRA:

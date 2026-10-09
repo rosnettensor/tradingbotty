@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
+import BankPanel from "./BankPanel.jsx";
 import Scoreboard, { WhyLines } from "./Scoreboard.jsx";
 import StanceChip from "./StanceChip.jsx";
 import { DailyChart, LineChart } from "./charts.jsx";
@@ -134,6 +135,10 @@ function DeskCockpit({ state, pulse, focus, setFocus, openAgent }) {
       <section className="panel scoreboard">
         <Scoreboard state={state} />
       </section>
+
+      <section className="panel bankpanel">
+        <BankPanel />
+      </section>
     </div>
   );
 }
@@ -161,6 +166,7 @@ function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
     ["Trades", <section className="panel positions"><LiveTrades trades={state.trades || []} cur={cur} setFocus={setFocus} /></section>],
     ["Tagebuch", <section className="panel diary"><TradeDiary state={state} setFocus={setFocus} /></section>],
     ["Punkte", <section className="panel scoreboard"><Scoreboard state={state} /></section>],
+    ["Bank", <section className="panel bankpanel"><BankPanel /></section>],
     ["Feed", <><section className="panel log"><Feed log={state.log || []} /></section><StatStrip state={state} openAgent={openAgent} /></>],
     ["News", <section className="panel newsfeed"><News news={state.news || []} setFocus={setFocus} /></section>],
   ];

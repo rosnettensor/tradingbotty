@@ -254,6 +254,34 @@ def set_stance(body: StanceIn):
         raise HTTPException(400, str(e))
 
 
+class BankIn(BaseModel):
+    live: bool
+    confirm: str = ""
+
+
+@app.get("/api/bank")
+def bank_info():
+    """Phase 2: the candidates in the shadow, the examiner's verdicts and the bank's split of the brain's money."""
+    return engine.bank.info()
+
+
+@app.post("/api/bank")
+def bank_live(body: BankIn):
+    """Let the bank split the daily brain's real money (needs the words BANK LIVE), or send it back to the shadow."""
+    if body.live and body.confirm.strip().upper() != "BANK LIVE":
+        raise HTTPException(400, "type BANK LIVE to let the bank move real money")
+    return engine.bank.set_live(body.live)
+
+
+@app.post("/api/bank/refresh")
+async def bank_refresh():
+    """Run the bank's round now (normally once a day after the History Lab)."""
+    rep = await engine.bank_refresh()
+    if rep is None:
+        raise HTTPException(503, "the bank round failed: see the feed")
+    return engine.bank.info()
+
+
 @app.post("/api/chat/confirm")
 async def chat_confirm(body: ConfirmIn):
     return await engine.orders.confirm(body.token)

@@ -19,6 +19,7 @@ from .chatorders import ChatOrders
 from .stance import Stance, swiss
 from . import scoreboard
 from .scoreboard import Ghosts
+from .bank import Bank
 from .fasttrader import FastTrader as FastPot
 from .agents.base import Blackboard, Source
 from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Guardian, LiveDesk, NewsHunter,
@@ -96,6 +97,7 @@ class Engine:
         self.orders = ChatOrders(self)             # orders typed in the chat bar, sent only after you confirm
         self.stance = Stance(self)                 # your course for a while: Mutig, Bunkern, Pause or Normal
         self.ghosts = Ghosts(self)                 # trades an agent stopped, followed as if they had happened
+        self.bank = Bank(self)                     # shadow depots, the examiner and the money split (phase 2)
         self._why: dict[tuple, list] = {}          # (book, symbol, side) -> the facts behind the next order
         self.fusion_prices: dict[str, float] = {}  # Fusion's prices in your currency, from the last account read
 
@@ -453,9 +455,25 @@ class Engine:
                       + f". Holding Bitcoin: {btc['full'].get('cagr_pct')}%/yr, worst drop {btc['full'].get('max_dd_pct')}%.")
             await self._hunt_patterns(cd)
             self._heal_brain(res)
+            await self.bank_refresh(cd, res)
             return res
         finally:
             self._research_busy = False
+
+    async def bank_refresh(self, cd=None, res=None) -> dict | None:
+        """The bank's daily round: shadow depots forward, the examiner's verdicts, the money split."""
+        try:
+            cd = cd or await self._daily_candles()
+            rep = await asyncio.to_thread(self.bank.refresh, cd, res or self.db.get("research"))
+        except Exception as ex:
+            self._log("Bank", "warn", f"Bank round failed: {str(ex)[:120] or type(ex).__name__}")
+            return None
+        top = ", ".join(f"{k.split(':')[0][:28]} {v * 100:.0f}%" for k, v in sorted(rep["split"].items(), key=lambda kv: -kv[1]))
+        passed = [r["name"] for r in rep["rows"] if r["stage"] == "passed"]
+        self._log("Bank", "info", f"Bank round: {len(rep['rows'])} candidates in the shadow, {len(passed)} passed the "
+                                  f"examiner. Split for real money: {top}"
+                                  + (" (LIVE)" if self.bank.cfg()["live"] else " (shadow only: the bank isn't live)."))
+        return rep
 
     async def _hunt_patterns(self, cd: "research.Candles") -> None:
         """The Pattern Hunter: which signals really said something about the next week, on all history."""
@@ -1302,9 +1320,15 @@ class Engine:
             strat = research.by_name(b["strategy"])
             if not strat:
                 raise ValueError(f"strategy {b['strategy']} no longer exists")
-            target = research.current_target(cd, strat)
+            bank_steps, name, owners = [], strat.name, None
+            if self.bank.cfg()["live"] and (self.bank.cfg().get("report") or {}).get("split"):
+                target, bank_steps, owners = self.bank.target(cd)
+                name = "bank blend"
+            else:
+                target = research.current_target(cd, strat)
             regime = getattr(strat, "regime", None)
-            note, steps = await self._brain_rebalance(target, strat.name, cd, strat)
+            note, steps = await self._brain_rebalance(target, name, cd, strat, owners)
+            steps = bank_steps + steps
             b = {**self.brain(), "day": cd.days[-1], "ts": time.time(), "target": target, "note": note, "steps": steps,
                  "regime_days": regime, "btc_ok": research.btc_uptrend(cd, len(cd.days) - 1, regime) if regime else None,
                  "explain": strat.explain}
@@ -1315,7 +1339,8 @@ class Engine:
             self._brain_busy = False
             self._brain_target = {}
 
-    async def _brain_rebalance(self, target: dict[str, float], name: str, cd=None, strat=None) -> tuple[str, list[str]]:
+    async def _brain_rebalance(self, target: dict[str, float], name: str, cd=None, strat=None,
+                               owners: dict | None = None) -> tuple[str, list[str]]:
         """Sell the bot's coins the strategy no longer wants, then buy the ones it wants up to its share of your cap."""
         cfg, cur = self.settings["live"], self.live.currency
         pairs = getattr(self.live, "pairs", None) or {}
@@ -1345,7 +1370,8 @@ class Engine:
                 continue
             errors = self.live_errors
             if cd and strat:
-                self.why("brain", sym, "SELL", scoreboard.brain_why(cd, strat, sym, "SELL"))
+                self.why("brain", sym, "SELL", ([["info", "Die Bank hält den Coin nicht mehr in ihrem Mix"]] if owners is not None
+                                                 else []) + scoreboard.brain_why(cd, strat, sym, "SELL"))
             await self._live_sell(sym, reason=f"daily brain: {name} no longer holds it")
             if sym in self.db.get("live_qty", {}):
                 self.live_errors = errors  # one coin Fusion won't sell must not stop live trading
@@ -1403,7 +1429,8 @@ class Engine:
                     continue
             for _ in range(parts):
                 if cd and strat:
-                    self.why("brain", sym, "BUY", scoreboard.brain_why(cd, strat, sym, "BUY")
+                    self.why("brain", sym, "BUY", ([["info", f"Bank-Mix: {w * 100:.0f}% des Budgets"]] if owners else [])
+                             + scoreboard.brain_why(cd, (owners or {}).get(sym) or strat, sym, "BUY")
                              + [["info", f"Grösse: {w * 100:.0f}% vom Budget {budget:.2f} {cur}"
                                  + (f" × Kurs {course['size']:g}" if course["size"] != 1 and sym not in owned else "")]])
                 try:
@@ -1801,6 +1828,10 @@ class Engine:
             sb = self.scoreboard()
             ctx["scoreboard"] = {"rows": [f"{r['name']}: {r['score']:+.2f} ({cut(r['detail'], 80)})" for r in sb["rows"][:8]],
                                  "loss_check": cut(sb["losses"].get("verdict"), 220)}
+            bk = self.bank.info()
+            if bk.get("report"):
+                ctx["bank"] = {"live": bk["live"], "split": bk["report"]["split"],
+                               "examiner": {r["name"][:50]: f"{r['stage']}: {cut(r['why'], 90)}" for r in bk["report"]["rows"]}}
         except Exception:
             pass
         logs = self.db.query("SELECT ts,agent,level,message FROM agent_log ORDER BY id DESC LIMIT 25")[::-1]
