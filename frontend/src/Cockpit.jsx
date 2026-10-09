@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
 import BankPanel from "./BankPanel.jsx";
+import SysCheck from "./SysCheck.jsx";
+import StrategistPanel from "./StrategistPanel.jsx";
 import Scoreboard, { WhyLines } from "./Scoreboard.jsx";
 import StanceChip from "./StanceChip.jsx";
 import { DailyChart, LineChart } from "./charts.jsx";
@@ -83,6 +85,7 @@ function DeskCockpit({ state, pulse, focus, setFocus, openAgent }) {
       {state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />}
       <BrainBar state={state} openAgent={openAgent} />
       <FastPotCard state={state} openAgent={openAgent} />
+      <section className="panel syscheck"><SysCheck /></section>
       <StatStrip state={state} openAgent={openAgent} />
 
       <section className="panel core">
@@ -136,6 +139,10 @@ function DeskCockpit({ state, pulse, focus, setFocus, openAgent }) {
         <Scoreboard state={state} />
       </section>
 
+      <section className="panel strategist">
+        <StrategistPanel />
+      </section>
+
       <section className="panel bankpanel">
         <BankPanel />
       </section>
@@ -156,6 +163,7 @@ function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
   const edge = w?.bot_edge;
   const pages = [
     ["Konto", state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />],
+    ["Check", <section className="panel syscheck"><SysCheck /></section>],
     ["Brain", <><BrainBar state={state} openAgent={openAgent} /><section className="panel"><Professor p={state.professor || {}} on={state.ai} openAgent={openAgent} /></section></>],
     ["⚡ Fast", <FastPotCard state={state} openAgent={openAgent} />],
     ["Watchlist", <section className="panel watch"><TrendWatch t={state.trend} brain={state.brain} guard={state.guard || {}} symbol={symbol} setFocus={setFocus} openAgent={openAgent} /></section>],
@@ -166,6 +174,7 @@ function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
     ["Trades", <section className="panel positions"><LiveTrades trades={state.trades || []} cur={cur} setFocus={setFocus} /></section>],
     ["Tagebuch", <section className="panel diary"><TradeDiary state={state} setFocus={setFocus} /></section>],
     ["Punkte", <section className="panel scoreboard"><Scoreboard state={state} /></section>],
+    ["Stratege", <section className="panel strategist"><StrategistPanel /></section>],
     ["Bank", <section className="panel bankpanel"><BankPanel /></section>],
     ["Feed", <><section className="panel log"><Feed log={state.log || []} /></section><StatStrip state={state} openAgent={openAgent} /></>],
     ["News", <section className="panel newsfeed"><News news={state.news || []} setFocus={setFocus} /></section>],
@@ -565,7 +574,7 @@ function DiaryCard({ e, cur, setFocus }) {
       <button className="diary-head" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className={`side-badge ${e.side === "BUY" ? "buy" : "sell"}`}>{e.side}</span>
         <b className="diary-sym">{e.symbol}</b>
-        <span className="dim small" title={e.book === "fast" ? "fast pot" : "Daily Brain"}>{e.book === "fast" ? "⚡" : "🧠"}</span>
+        <span className="dim small" title={e.book === "fast" ? "fast pot" : e.book === "test" ? "Systemcheck-Testtrade" : "Daily Brain"}>{e.book === "fast" ? "⚡" : e.book === "test" ? "🧪" : "🧠"}</span>
         <span className="small diary-amt">{Number(e.amount || 0).toFixed(2)}</span>
         <span className="dim small diary-gist">{gist(e.reason)}</span>
         {e.closed

@@ -644,7 +644,7 @@ pre.report { font-size: 11px; white-space: pre-wrap; background: var(--sunk); pa
 
 /* ===== cockpit v0.6: the core as the centerpiece, fast pot ===== */
 .cockpit3 { grid-template-columns: minmax(280px, 1fr) minmax(420px, 1.6fr) minmax(280px, 1fr);
-  grid-template-areas: "wallet wallet wallet" "brain brain brain" "fast fast fast" "watch core guard" "watch core equity" "stats stats stats" "focus focus focus" "pos log news" "diary diary diary" "score score score" "bank bank bank"; }
+  grid-template-areas: "wallet wallet wallet" "brain brain brain" "fast fast fast" "check check check" "watch core guard" "watch core equity" "stats stats stats" "focus focus focus" "pos log news" "diary diary diary" "score score score" "strat strat strat" "bank bank bank"; }
 .cockpit3 .fastbar { grid-area: fast; }
 .cockpit3 .core { min-height: 640px; position: relative; overflow: hidden;
   background: radial-gradient(ellipse at 50% 42%, rgba(0,240,255,0.10), rgba(255,43,214,0.05) 38%, transparent 70%), var(--panel);
@@ -653,10 +653,10 @@ pre.report { font-size: 11px; white-space: pre-wrap; background: var(--sunk); pa
   background: repeating-linear-gradient(0deg, var(--faint) 0 1px, transparent 1px 3px); }
 .cockpit3 .sphere { min-height: 480px; }
 @media (max-width: 1250px) {
-  .cockpit3 { grid-template-columns: 1fr 1fr; grid-template-areas: "wallet wallet" "brain brain" "fast fast" "core core" "watch guard" "watch equity" "stats stats" "focus focus" "pos news" "diary diary" "score score" "bank bank" "log log"; }
+  .cockpit3 { grid-template-columns: 1fr 1fr; grid-template-areas: "wallet wallet" "brain brain" "fast fast" "check check" "core core" "watch guard" "watch equity" "stats stats" "focus focus" "pos news" "diary diary" "score score" "strat strat" "bank bank" "log log"; }
 }
 @media (max-width: 820px) {
-  .cockpit3 { grid-template-columns: 1fr; grid-template-areas: "wallet" "brain" "fast" "core" "watch" "guard" "stats" "focus" "equity" "pos" "diary" "score" "bank" "news" "log"; }
+  .cockpit3 { grid-template-columns: 1fr; grid-template-areas: "wallet" "brain" "fast" "check" "core" "watch" "guard" "stats" "focus" "equity" "pos" "diary" "score" "strat" "bank" "news" "log"; }
   .cockpit3 .core { min-height: 520px; }
   .cockpit3 .sphere { min-height: 400px; }
   .core-hud { display: none; }
@@ -1178,3 +1178,28 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 .roster-sum { display: inline-flex; align-items: center; }
 .flow-3d .roster-sum { flex-basis: auto; margin-right: 6px; }
 @media (max-width: 640px) { .flow-3d .roster button.roster-toggle { display: none; } }
+
+/* ===== system check and strategist (Bauplan 2, phase 4) ===== */
+.cockpit3 .syscheck { grid-area: check; padding-block: 8px; }
+.cockpit3 .strategist { grid-area: strat; }
+.syscheck-head { flex-wrap: wrap; gap: 8px; margin: 0; }
+.syscheck-sum { display: inline-flex; align-items: baseline; gap: 8px; text-align: left; flex-wrap: wrap; font-size: 12px; }
+.syscheck-sum b { letter-spacing: .14em; font-size: 11px; }
+.syscheck-sum > span:first-child { font-weight: 700; font-size: 14px; }
+.syscheck-test { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-left: auto; }
+.syscheck-note { margin: 6px 0 0; }
+.syscheck-rows { display: grid; gap: 4px; margin-top: 8px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.syscheck-row { display: grid; grid-template-columns: 14px 120px minmax(0, 1fr); gap: 6px; font-size: 12px; align-items: baseline;
+  padding: 4px 8px; border-radius: 8px; background: var(--sunk); border-left: 2px solid transparent; }
+.syscheck-row.st-fail { border-left-color: var(--red); }
+.syscheck-row.st-warn { border-left-color: var(--amber); }
+.syscheck-row > span:last-child { overflow-wrap: anywhere; }
+.warn { color: var(--amber); }
+.strat { display: grid; gap: 8px; }
+.strat-diag { margin: 0; font-size: 14px; line-height: 1.55; color: var(--hi); max-width: 90ch; }
+.strat-actions { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.strat-action { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--sunk); }
+.strat-action button { flex: none; }
+.strat-grid { display: grid; gap: 4px; }
+.strat-old { border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 6px; }
+@media (max-width: 640px) { .syscheck-row { grid-template-columns: 14px minmax(0, 1fr); } .syscheck-row > span:last-child { grid-column: 2; } }

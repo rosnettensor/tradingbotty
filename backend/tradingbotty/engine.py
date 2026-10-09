@@ -23,6 +23,7 @@ from .bank import Bank
 from . import bank as bank_mod
 from .fasttrader import FastTrader as FastPot
 from .agents.base import Blackboard, Source
+from .agents.strategist import ACTIONS as STRATEGIST_ACTIONS, Strategist
 from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Guardian, LiveDesk, NewsHunter,
                           PatternHunter, Professor, RegimeRadar, Researcher, RiskOfficer, ThinkTank, TrendWatch,
                           AIManager)
@@ -125,7 +126,7 @@ class Engine:
         ]
         self.team = [FusionScout(self), TrendWatch(self), DataCollector(self), NewsHunter(self), RegimeRadar(self),
                      PatternHunter(self), Researcher(self), ThinkTank(self), AIManager(self), Guardian(self),
-                     Professor(self), DailyBrain(self), FastTrader(self),
+                     Professor(self), Strategist(self), DailyBrain(self), FastTrader(self),
                      RiskOfficer(self), LiveDesk(self)]
         self._by_id = {a.id: a for a in self.sources + self.team}
         # remember news across restarts so headlines aren't re-read (and re-paid for) after every restart
@@ -873,7 +874,7 @@ class Engine:
         self._add_why(entry, checks)
         self.db.execute(
             "INSERT INTO trades(ts,variant_id,mode,symbol,side,qty,price,notional,fee,pnl,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (time.time(), BRAIN_ID if book == "brain" else "fast", "live", sym, side, float(ex.get("quantity", 0) or 0), float(ex.get("price", 0) or 0),
+            (time.time(), BRAIN_ID if book == "brain" else book, "live", sym, side, float(ex.get("quantity", 0) or 0), float(ex.get("price", 0) or 0),
              notional, float(ex.get("fee", 0) or 0), entry.get("pnl") if entry.get("closed") else None, reason))
         self.bus.publish("trade", {"mode": "live", "symbol": sym, "side": side, "notional": round(notional, 2),
                                    "reason": reason, "ts": time.time(), "book": book,
@@ -890,6 +891,8 @@ class Engine:
     def _book_keys(book: str) -> tuple[str, str]:
         """Where each trader keeps its own coins: the daily brain in live_qty/live_cost, the fast pot in fast_qty/fast_cost.
         Each only ever sells what it bought itself; your own coins are in neither."""
+        if book == "test":
+            return "test_qty", "test_cost"   # the system check's round trip: bought and sold again at once
         return ("live_qty", "live_cost") if book == "brain" else ("fast_qty", "fast_cost")
 
     # ------------------------------------------------------------------ trade diary
@@ -905,7 +908,7 @@ class Engine:
 
     def _open_buys(self, book: str, sym: str) -> list[dict]:
         """The buys of the position a book is closing: every buy of this coin by this book since its last sell."""
-        vid = BRAIN_ID if book == "brain" else "fast"
+        vid = BRAIN_ID if book == "brain" else book
         last = self.db.query("SELECT MAX(ts) t FROM trades WHERE mode='live' AND variant_id=? AND symbol=? AND side='SELL'",
                              (vid, sym))[0]["t"] or 0
         return self.db.query("SELECT ts,qty,price,notional,fee,reason FROM trades WHERE mode='live' AND variant_id=? "
@@ -1013,29 +1016,73 @@ class Engine:
     def scoreboard(self) -> dict:
         return scoreboard.board(self)
 
+    def strategist(self) -> dict:
+        st = self.db.get("strategist") or {}
+        a = self.agent("strategist")
+        return {**{k: st.get(k) for k in ("memo", "history", "cost", "note", "pending")}, "enabled": a.enabled,
+                "busy": a.__dict__.get("_busy", False), "ai": self.llm.available, "actions": STRATEGIST_ACTIONS}
+
+    def set_bank_mode(self, mode: str) -> dict:
+        """Switch the bank and let the daily brain decide again within minutes, not only after the next daily candle."""
+        before = self.bank.mode()
+        info = self.bank.set_mode(mode)
+        if mode != before:
+            b = self.brain()
+            if b.get("day"):
+                self.db.set("brain", {**b, "day": None})
+        return info
+
+    async def strategist_act(self, kind: str) -> dict:
+        """Take one of the strategist's proposals: only ever on your tap, through the same switches you'd use."""
+        if kind not in STRATEGIST_ACTIONS or kind == "keep":
+            raise ValueError("unknown proposal")
+        if kind == "bank_probe":
+            if not (self.bank.cfg().get("report") or {}).get("probe"):
+                raise ValueError("die Bank hat gerade keinen Probe-Kandidaten")
+            self.set_bank_mode("probe")
+        elif kind == "bank_shadow":
+            self.set_bank_mode("shadow")
+        elif kind.startswith("course_"):
+            self.stance.set(kind.split("_", 1)[1], by="Stratege (dein Tipp)")
+        else:
+            await self.fast.set(on=kind == "fast_on")
+        self._log("Stratege", "info", f"Vorschlag übernommen (dein Tipp): {STRATEGIST_ACTIONS[kind]}")
+        return self.strategist()
+
     def diary(self, limit: int = DIARY_MAX) -> list[dict]:
         return (self.db.get("diary") or [])[:limit]
 
-    async def _live_sell(self, symbol: str, reason: str, book: str = "brain") -> dict | None:
-        """Sell all of a coin the bot bought itself. Coins you owned before stay untouched. Returns the fill."""
+    async def _live_sell(self, symbol: str, reason: str, book: str = "brain", fraction: float = 1.0) -> dict | None:
+        """Sell all of a coin the bot bought itself (or a `fraction` of it). Coins you owned before stay untouched.
+        Returns the fill."""
         kq, kc = self._book_keys(book)
         try:
             owned = self.db.get(kq, {})
             mine = owned.get(symbol, 0.0)
             if mine <= 0:
                 return None
-            res = await self.live.sell_fraction(symbol, 1.0, owned=mine)
+            part = fraction < 0.999
+            res = await self.live.sell_fraction(symbol, fraction if part else 1.0, owned=mine)
+            if part and not res:
+                return None
             cost = self.db.get(kc, {})
-            basis = {"cost": float(cost.get(symbol, 0.0) or 0.0), "qty": mine}  # for the diary, before it's cleared
-            owned.pop(symbol, None)
-            cost.pop(symbol, None)
+            paid = float(cost.get(symbol, 0.0) or 0.0)
+            sold = mine
+            if part:
+                sold = min(mine, float(((res or {}).get("execution") or {}).get("quantity", 0) or 0) or mine * fraction)
+            basis = {"cost": paid * sold / mine, "qty": sold}  # for the diary, before it's cleared
+            if part and mine - sold > 1e-12:
+                owned[symbol], cost[symbol] = mine - sold, paid - basis["cost"]
+            else:
+                owned.pop(symbol, None)
+                cost.pop(symbol, None)
             self.db.set(kq, owned)
             self.db.set(kc, cost)
             ex = None
             if res:
                 ex = res.get("execution", {}) or {}
                 if not float(ex.get("quantity", 0) or 0):
-                    ex = {**ex, "quantity": mine}
+                    ex = {**ex, "quantity": sold}
                 self._record(symbol, "SELL", ex, float(ex.get("notional", 0) or 0), reason, book, basis)
                 self._log("Live Desk", "live", f"LIVE SELL {symbol}: {ex.get('notional', '?')} {self.live.currency} "
                                                f"filled ({reason}).")
@@ -1088,6 +1135,9 @@ class Engine:
         if book == "fast":
             amount = want
             checks.append(["fast pot", "ok", f"{want:.2f} {cur} from the fast pot (its own limit, set in the Fast Trader Lab)"])
+        elif book == "test":
+            amount = want
+            checks.append(["system check", "ok", f"{want:.2f} {cur} test round trip, sold again right away"])
         else:
             invested = sum(self.db.get("live_cost", {}).values())
             amount = min(want, cfg["max_invest"] - invested)
@@ -1112,7 +1162,7 @@ class Engine:
                     raise stop(f"spread {spread:.2f}% is above your {cfg['max_spread_pct']}% limit")
                 checks.append(["spread", "ok", f"{spread:.2f}% ≤ {cfg['max_spread_pct']}%"])
         bal = await self.live.balances()
-        reserve = self.fast.cash_reserve() if book == "brain" else 0.0  # the fast pot's cash stays for the fast pot
+        reserve = self.fast.cash_reserve() if book != "fast" else 0.0  # the fast pot's cash stays for the fast pot
         room = max(0.0, bal.get("FIAT", 0.0) - reserve) * 0.995  # Fusion adds its fee on top: all your cash is "too big"
         if reserve:
             checks.append(["fast pot cash", "kept", f"{reserve:.2f} {cur} stays free for the fast pot"])
@@ -1434,6 +1484,8 @@ class Engine:
                 if chunk < min_amt or cfg["max_order"] < min_amt:
                     done.append(f"{sym}: raise 'Biggest single live order' above {min_amt:g} {cur}")
                     continue
+            if sym not in owned:  # a new coin and too little cash: first the brain's own coins above their share
+                done += await self._brain_trim(sym, want, target, budget, prices, pairs, min_amt)
             for _ in range(parts):
                 if cd and strat:
                     self.why("brain", sym, "BUY", ([["info", f"Bank-Mix: {w * 100:.0f}% des Budgets"]] if owners else [])
@@ -1456,6 +1508,34 @@ class Engine:
         note = f"holds {holds}" + (f"; {'; '.join(trades)}" if trades else "; no trades needed")
         self._log("Daily Brain", "live", f"Daily decision ({name}): {note}.")
         return note, steps + (done or ["No trades needed: the bot already holds what the strategy wants"])
+
+    async def _brain_trim(self, sym: str, want: float, target: dict, budget: float, prices: dict, pairs: dict,
+                          min_amt: float) -> list[str]:
+        """Cash for a new coin from the brain's coins that grew past their share (e.g. a probation share that takes
+        a slice of the mix): only the part above the share, biggest first, each sell at least Fusion's minimum.
+        Without it a fully invested brain could never start a new coin, and would sell your coins instead."""
+        bal = await self.live.balances()
+        room = max(0.0, bal.get("FIAT", 0.0) - self.fast.cash_reserve()) * 0.995
+        short = want - room
+        if short < 1:
+            return []
+        owned, done, cur = self.db.get("live_qty", {}), [], self.live.currency
+        over = sorted(((s, q * prices.get(s, 0.0) - target[s] * budget, q * prices.get(s, 0.0))
+                       for s, q in owned.items() if s != sym and s in target), key=lambda x: -x[1])
+        for s, extra, value in over:
+            floor = max(self._min_order(s, pairs), self.settings["risk"]["min_order_usd"])
+            if short < 1 or extra < floor or value <= 0:
+                continue
+            sell = min(extra, max(short * 1.03, floor))  # the sell fee and the 0.5% buy room come off it
+            self.why("brain", s, "SELL", [["info", f"Teilverkauf: {s} liegt {extra:.2f} {cur} über seinem Anteil, "
+                                                   f"das Geld geht an {sym}"]])
+            ex = await self._live_sell(s, f"daily brain: trims {s} above its share to make room for {sym}",
+                                       fraction=sell / value)
+            if ex:
+                got = float(ex.get("notional", 0) or 0) or sell
+                short -= got
+                done.append(f"trimmed {s} by {got:.2f} {cur} for {sym}")
+        return done
 
     # ------------------------------------------------------------------ the real account
     async def _poll_wallet(self) -> None:
@@ -1686,6 +1766,8 @@ class Engine:
                 await fn()
             except Exception as ex:
                 self._log("Engine", "error", f"{getattr(fn, '__name__', fn)} failed: {ex}")
+            # heartbeat for the system check: every loop says when it last ran (and how often it should)
+            self.__dict__.setdefault("beats", {})[getattr(fn, "__qualname__", str(fn))] = (time.time(), seconds())
             # sleep in short slices so a shorter interval set in the dashboard takes effect quickly
             while time.time() - started < seconds():
                 await asyncio.sleep(min(1.0, max(0.05, seconds() - (time.time() - started))))
@@ -1836,6 +1918,10 @@ class Engine:
             sb = self.scoreboard()
             ctx["scoreboard"] = {"rows": [f"{r['name']}: {r['score']:+.2f} ({cut(r['detail'], 80)})" for r in sb["rows"][:8]],
                                  "loss_check": cut(sb["losses"].get("verdict"), 220)}
+            memo = (self.db.get("strategist") or {}).get("memo")
+            if memo:
+                ctx["strategist"] = {"when": when(memo["ts"]), "diagnosis": cut(memo["diagnosis"], 400),
+                                     "proposals": [a["label"] for a in memo.get("actions") or []], "watch": cut(memo.get("watch"), 160)}
             bk = self.bank.info()
             if bk.get("report"):
                 ctx["bank"] = {"live": bk["live"], "split": bk["report"]["split"],

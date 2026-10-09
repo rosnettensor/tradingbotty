@@ -114,3 +114,16 @@ def test_probation_gives_the_best_shadow_candidate_a_small_real_share(tmp_path, 
     import pytest
     with pytest.raises(ValueError):
         e.bank.set_mode("yolo")
+
+
+def test_probation_never_sells_everything_when_the_court_fails_the_brains_strategy(tmp_path, monkeypatch):
+    from fakes import FakeFusion, _engine
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    cd = _cd()
+    strat = "Breakout 20/10 days, 3 slots, BTC filter 50d"
+    e.db.set("brain", {"on": True, "strategy": strat})
+    rows = [{"name": n, "robust": n != strat, "fees2x": {"return_pct": 10}, "full": {"sharpe": 1.0},
+             "years_won": 6, "years_total": 9, "skill_prob": 0.9, "group": "x"} for n in [strat, *bank.NEW]]
+    rep = e.bank.refresh(cd, {"rows": rows})
+    assert next(r for r in rep["rows"] if r["name"] == strat)["stage"] == "failed"
+    assert rep["probe_split"].get(strat) == 1 - bank.PROBE_SHARE and bank.CASH not in rep["probe_split"]

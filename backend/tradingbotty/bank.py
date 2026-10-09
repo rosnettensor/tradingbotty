@@ -206,7 +206,10 @@ class Bank:
         # probation: the incumbent keeps its money, the best candidate the examiner still watches gets a small share
         waiting = [r["name"] for r in report if r["stage"] == "shadow"]
         probe = max(waiting, key=lambda n: prob.get(n, 0), default=None)
-        inc = [r["name"] for r in report if r["stage"] == "incumbent"] or [r["name"] for r in report if r["stage"] == "passed"]
+        # the brain's own strategy keeps its money in probation even when the court fails it: probation adds a small
+        # test, it never empties the account (a failed incumbent is the live bank's business, not the probe's)
+        inc = ([live_name] if any(r["name"] == live_name for r in report) else []) \
+            or [r["name"] for r in report if r["stage"] == "passed"]
         probe_split = {CASH: 1.0}
         if inc:
             probe_split = {inc[0]: 1.0 - (PROBE_SHARE if probe else 0.0)}

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from .config import ROOT, load_settings
 from .engine import Engine
 from .llm import PRICES
+from . import syscheck
 
 DIST = ROOT / "frontend" / "dist"
 MEDIA = ROOT / "media"
@@ -275,9 +276,55 @@ def bank_live(body: BankIn):
     if mode == "probe" and body.confirm.strip().upper() != "PROBE":
         raise HTTPException(400, "confirm the probation with PROBE")
     try:
-        return engine.bank.set_mode(mode)
+        return engine.set_bank_mode(mode)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@app.get("/api/strategist")
+def strategist():
+    return engine.strategist()
+
+
+@app.post("/api/strategist/ask")
+def strategist_ask():
+    """Ask the strategist now (it answers within a minute or two)."""
+    engine.agent("strategist").run_now()
+    return engine.strategist()
+
+
+class ActIn(BaseModel):
+    kind: str
+
+
+@app.post("/api/strategist/act")
+async def strategist_act(body: ActIn):
+    try:
+        return await engine.strategist_act(body.kind)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/syscheck")
+def system_check():
+    """Every link of the real-money chain, checked now."""
+    return syscheck.checks(engine)
+
+
+class TestIn(BaseModel):
+    confirm: str = ""
+
+
+@app.post("/api/syscheck/test")
+async def system_test(body: TestIn):
+    """A real round trip: buy a little Bitcoin and sell it again at once (needs the word TEST)."""
+    if body.confirm.strip().upper() != "TEST":
+        raise HTTPException(400, "confirm the test trade with TEST")
+    try:
+        out = await syscheck.roundtrip(engine)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {**syscheck.checks(engine), "test": out}
 
 
 @app.post("/api/bank/refresh")

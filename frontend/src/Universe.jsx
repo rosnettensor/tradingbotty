@@ -16,7 +16,7 @@ const LAYERS = [
   ["src_fusion", "src_kraken", "src_binance", "src_free", "src_news"],
   ["radar", "trend", "collector", "news", "regime"],
   ["patterns", "researcher", "thinktank"],
-  ["guardian", "professor", "aimanager", "bank"],
+  ["guardian", "professor", "aimanager", "bank", "strategist"],
   ["brain", "fast", "you"],
   ["risk"],
   ["livedesk"],
@@ -353,14 +353,14 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
         const isSel = L.selected === n.id;
         const conn = L.selected && (isSel || n.inputs?.includes(L.selected) || byId.get(L.selected)?.inputs?.includes(n.id)
           || (EXTRA_INPUTS[n.id] || []).includes(L.selected) || (EXTRA_INPUTS[L.selected] || []).includes(n.id));
-        b.mat.uniforms.uAlpha.value = !L.selected || conn ? (off ? 0.45 : 1) : 0.28;
+        b.mat.uniforms.uAlpha.value = !L.selected || conn ? (off ? 0.45 : 1) : (off ? 0.3 : 0.62);
         const s = b.r * (1 + (busy ? 0.07 : 0.025) * Math.sin(t * (busy ? 5.2 : 1.3) + b.seed));
         b.shell.scale.setScalar(s);
         b.core.scale.setScalar(s * (0.8 + beat * 0.5));
         b.coreMat.color.copy(col).lerp(pal.hi, 0.55);
-        b.coreMat.opacity = off ? 0.2 : (0.45 + beat * 0.45) * (!L.selected || conn ? 1 : 0.3);
+        b.coreMat.opacity = off ? 0.2 : (0.45 + beat * 0.45) * (!L.selected || conn ? 1 : 0.65);
         b.haloMat.color.copy(col);
-        b.haloMat.opacity = off ? 0.08 : (busy ? 0.55 : 0.28) * (!L.selected || conn ? 1 : 0.35);
+        b.haloMat.opacity = off ? 0.08 : (busy ? 0.55 : 0.28) * (!L.selected || conn ? 1 : 0.7);
         b.halo.scale.setScalar(s * (busy ? 6.5 + beat * 1.5 : 5));
         // score ring: arc = share of the biggest score, green gain / red loss
         const arc = score ? Math.max(0.15, (Math.abs(score) / top) * Math.PI * 2) : 0;
@@ -373,7 +373,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
         b.ringMat.color.copy(score >= 0 ? pal.green : pal.red);
         b.ring.scale.setScalar(s);
         b.ring.rotation.z = t * 0.25 + b.seed;
-        b.ringMat.opacity = !L.selected || conn ? 0.75 : 0.22;
+        b.ringMat.opacity = !L.selected || conn ? 0.75 : 0.45;
         b.sel.scale.setScalar(s);
         b.sel.lookAt(camera.position);
         b.selMat.opacity = isSel ? 0.55 + 0.3 * Math.sin(t * 3) : 0;
@@ -387,7 +387,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
         b.moons.forEach((m, i) => {
           const a = t * (busy ? 2.4 : 0.9) + i * Math.PI + b.seed;
           m.position.set(Math.cos(a) * s * 1.7, Math.sin(a * 0.7) * s * 0.5, Math.sin(a) * s * 1.7);
-          m.material.opacity = !L.selected || conn ? 0.9 : 0.25;
+          m.material.opacity = !L.selected || conn ? 0.9 : 0.6;
         });
         // float
         b.g.position.set(b.home.x + Math.sin(t * 0.31 + b.seed) * 0.12, b.home.y + Math.sin(t * 0.47 + b.seed * 2) * 0.18,
@@ -401,7 +401,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
           const w = el.clientWidth, h = el.clientHeight;
           const behind = tmp.z > 1;
           d.style.transform = `translate(-50%, 0) translate(${((tmp.x + 1) / 2) * w}px, ${((1 - tmp.y) / 2) * h}px)`;
-          d.style.opacity = behind ? 0 : !L.selected || conn ? 1 : 0.35;
+          d.style.opacity = behind ? 0 : !L.selected || conn ? 1 : 0.7;
           const txt = `${n.name}${score != null && Math.abs(score) >= 0.005 ? `|${fmtScore(score)}` : ""}`;
           if (d.dataset.t !== txt) {
             d.dataset.t = txt;
@@ -455,9 +455,9 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
           s.mat.color.copy(col);
           const conn = L.selected && (src === L.selected || n.id === L.selected);
           const off = from.status === "off" || n.status === "off";
-          s.mat.opacity = L.selected ? (conn ? 0.85 : 0.06) : off ? 0.07 : a.busy ? 0.55 : 0.2;
+          s.mat.opacity = off ? 0.08 : conn ? 0.95 : (a.busy ? 0.5 : 0.26) * (L.selected ? 0.8 : 1);  // every string stays visible, the chosen sphere's shine
           if (a.busy && !off && now > s.next) {
-            spark(s, 0.42 + Math.random() * 0.15, 0.42, conn || !L.selected ? 1 : 0.3);
+            spark(s, 0.42 + Math.random() * 0.15, conn ? 0.55 : 0.42, conn || !L.selected ? 1 : 0.75);
             s.next = now + (a.n.kind === "source" ? 2.6 : 1.4) + Math.random();
           }
         }

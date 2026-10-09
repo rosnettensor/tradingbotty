@@ -271,7 +271,7 @@ def test_every_agent_works_for_the_real_money_and_explains_itself(tmp_path, monk
     asyncio.run(e.agent("radar").scan())
     asyncio.run(e.tick())
     ids = [a.id for a in e.team]
-    assert ids == ["radar", "trend", "collector", "news", "regime", "patterns", "researcher", "thinktank", "aimanager", "guardian", "professor", "brain",
+    assert ids == ["radar", "trend", "collector", "news", "regime", "patterns", "researcher", "thinktank", "aimanager", "guardian", "professor", "strategist", "brain",
                    "fast", "risk", "livedesk"]
     for a in e.team:
         assert a.status in ("ok", "warn", "idle") or (a.id == "fast" and a.status == "off"), (a.name, a.summary)

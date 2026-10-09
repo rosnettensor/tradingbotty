@@ -310,7 +310,7 @@ def board(e) -> dict:
     """One row per agent with its score in your currency, newest facts first."""
     w = e.wallet or {}
     cur = w.get("currency") or (e.live.currency if e.live else "CHF")
-    closed = [d for d in (e.db.get("diary") or []) if d.get("closed")]
+    closed = [d for d in (e.db.get("diary") or []) if d.get("closed") and d.get("book") != "test"]  # test trades prove the chain, they aren't strategy
     ghosts = Ghosts(e).all()
     fx = usd_to(e)
     costs = ai_costs(e)
@@ -371,7 +371,7 @@ def board(e) -> dict:
     for agent, usd in sorted(costs.items(), key=lambda kv: -kv[1]):
         if agent in taken or usd <= 0:
             continue
-        thinker = "think" in agent.lower() or "research" in agent.lower()
+        thinker = any(w in agent.lower() for w in ("think", "research", "strateg"))
         rows.append({"id": f"ai:{agent}", "icon": "💡" if thinker else "🤖", "name": agent,
                      "role": "Parlament" if thinker else "Dienste",
                      "what": ("Erfindet Ideen; Punkte gibt es erst, wenn eine Idee echtes Geld verdient (Phase 2)."
