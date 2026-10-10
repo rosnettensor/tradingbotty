@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useMotion } from "./motion.js";
 import * as THREE from "three";
 
 // The live core: every layer is real data.
@@ -31,6 +32,7 @@ export const LAYERS = [
   ["var(--magenta)", "Outer ring", "your account: cash (cyan) vs coins (magenta)"],
   ["var(--red)", "Red sparks", "Guardian blocks after hack or delisting news"],
   ["var(--text)", "Shockwave", "a real trade: green buy, red sell"],
+  ["var(--cyan)", "Instrument orbits", "markers show reported data, decision or order activity; a marker is not a confirmed fill"],
 ];
 
 function fib(n) {
@@ -56,6 +58,9 @@ function glowTexture() {
 }
 
 export default function Sphere({ data = {}, pulse = 0, label }) {
+  const { reduced } = useMotion();
+  const [unavailable, setUnavailable] = useState(false);
+  const previousPulse = useRef(pulse);
   const wrap = useRef(null);
   const mount = useRef(null);
   const tags = useRef(null);
@@ -63,12 +68,16 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
   const [legend, setLegend] = useState(false);
 
   useEffect(() => { live.current.data = data; }, [data]);
-  useEffect(() => { live.current.kick = 1; }, [pulse]);
+  live.current.reduced = reduced;
+  useEffect(() => { if (pulse !== previousPulse.current) live.current.kick = 1; previousPulse.current = pulse; }, [pulse]);
 
   useEffect(() => {
     const el = mount.current;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    let renderer;
+    try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); }
+    catch { setUnavailable(true); return; }
+    const mobile = matchMedia("(max-width: 760px)").matches;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
     el.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
@@ -81,7 +90,7 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
     const mark = (m) => { m.blending = blend; glowing.push(m); return m; };
 
     // surface
-    const geo = new THREE.IcosahedronGeometry(1, 24);
+    const geo = new THREE.IcosahedronGeometry(1, mobile ? 14 : 20);
     const base = geo.attributes.position.array.slice();
     const pointsMat = new THREE.PointsMaterial({ size: 0.02, color: CYAN, transparent: true, opacity: 0.85, depthWrite: false });
     world.add(new THREE.Points(geo, pointsMat));
@@ -158,6 +167,18 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
     const sparkMat = mark(new THREE.PointsMaterial({ size: 0.05, color: RED, map: glow, transparent: true, opacity: 0, depthWrite: false }));
     world.add(new THREE.Points(sparkGeo, sparkMat));
 
+    // Three instrument orbits: markers travel only for reported activity, never decorative trades.
+    const telemetry = [0, 1, 2].map(i => {
+      const group = new THREE.Group();
+      group.rotation.set(.35 + i * .72, i * .8, i * .9);
+      const radius = 1.78 + i * .07;
+      const material = mark(new THREE.MeshBasicMaterial({ color: CYAN, transparent: true, opacity: .12, depthWrite: false }));
+      group.add(new THREE.Mesh(new THREE.TorusGeometry(radius, .003, 4, 128), material));
+      const dot = new THREE.Sprite(mark(new THREE.SpriteMaterial({ color: CYAN, map: glow, transparent: true, depthWrite: false })));
+      dot.scale.setScalar(.14); group.add(dot); scene.add(group);
+      return { group, dot, material, radius, angle: i * 2 };
+    });
+
     // shockwave
     const shockMat = new THREE.MeshBasicMaterial({ color: INK, side: THREE.DoubleSide, transparent: true, opacity: 0 });
     const shock = new THREE.Mesh(new THREE.RingGeometry(0.98, 1.0, 128), shockMat);
@@ -187,12 +208,22 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
     el.addEventListener("pointerdown", down);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
 
-    let raf, t = 0, shockT = 1;
+    let raf, t = 0, shockT = 1, previousFrame = 0, visible = true;
+    const io = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; });
+    io.observe(el);
     const pos = geo.attributes.position;
     const v = new THREE.Vector3();
-    const loop = () => {
-      t += 0.016;
+    const loop = (ms = performance.now()) => {
+      raf = requestAnimationFrame(loop);
+      if (!visible || document.hidden) { previousFrame = ms; return; }
+      const calm = live.current.reduced;
+      if (ms - previousFrame < (calm && !drag ? 250 : mobile ? 32 : 16)) return;
+      const dt = Math.min(.05, (ms - previousFrame) / 1000);
+      previousFrame = ms;
+      const speed = calm ? 0 : dt * 60;
+      t += calm ? 0 : dt;
       const d = live.current.data || {};
       const mood = Math.max(-1, Math.min(1, (d.mood ?? 0) / 4));
       const energy = Math.min(1, Math.abs(d.market ?? 0) / 5 + (d.energy ?? 0.2));
@@ -201,7 +232,18 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
         live.current.kick = 0;
         shockMat.color.copy(d.lastSide === "SELL" ? RED : d.lastSide === "BUY" ? GREEN : CYAN);
       }
-      shockT = Math.min(1, shockT + 0.015);
+      shockT = calm ? 1 : Math.min(1, shockT + 0.015 * speed);
+      const mission = d.mission || {};
+      telemetry.forEach((o, i) => {
+        const active = !!mission.channels?.[i];
+        const col = !mission.fresh ? DIM : ["blocked", "paused"].includes(mission.phase) ? AMBER : i === 2 ? GREEN : CYAN;
+        o.material.color.copy(col); o.dot.material.color.copy(col);
+        o.material.opacity = active ? .45 : .12;
+        o.dot.visible = active;
+        o.angle += active ? .018 * speed * (i + 1) : 0;
+        o.dot.position.set(Math.cos(o.angle) * o.radius, Math.sin(o.angle) * o.radius, 0);
+        o.group.rotation.z += active ? .0008 * speed : 0;
+      });
 
       // surface: wobble = market movement, beat faster when things happen
       const amp = 0.03 + energy * 0.1 + (1 - shockT) * 0.18;
@@ -214,20 +256,20 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
       }
       pos.needsUpdate = true;
       const target = mood >= 0 ? CYAN.clone().lerp(GREEN, Math.min(1, mood * 1.5)) : CYAN.clone().lerp(RED, Math.min(1, -mood * 1.5));
-      pointsMat.color.lerp(target, 0.04);
+      pointsMat.color.lerp(target, calm ? 1 : 0.04);
       pointsMat.size = 0.016 + Math.abs(mood) * 0.008;
 
       // Bitcoin filter cage
       cageMat.color.lerp(d.btcOk == null ? DIM : d.btcOk ? GREEN : RED, 0.05);
-      cage.rotation.y -= 0.003 + Math.min(0.02, Math.abs(d.btcGap ?? 0) / 600);
-      cage.rotation.x += 0.0015;
+      cage.rotation.y -= (0.003 + Math.min(0.02, Math.abs(d.btcGap ?? 0) / 600)) * speed;
+      cage.rotation.x += 0.0015 * speed;
       cageMat.opacity = 0.25 + 0.15 * Math.sin(t * 2);
 
       // arcs
       if (d.breadth != null && Math.abs(d.breadth - lastBreadth) > 0.01) { setArc(haloUp, haloDown, d.breadth); lastBreadth = d.breadth; }
       if (d.cashShare != null && Math.abs(d.cashShare - lastCash) > 0.01) { setArc(cashArc, coinArc, d.cashShare); lastCash = d.cashShare; }
-      halo.rotation.z += 0.002 + energy * 0.004;
-      outer.rotation.z -= 0.0012;
+      halo.rotation.z += (0.002 + energy * 0.004) * speed;
+      outer.rotation.z -= 0.0012 * speed;
 
       // spikes
       for (const s of spikes.values()) s.seen = false;
@@ -253,7 +295,7 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
             continue;
           }
         }
-        s.len += (s.target - s.len) * 0.05;
+        s.len += (s.target - s.len) * (calm ? 1 : 0.05);
         const wob = 1 + Math.sin(t * 3 + s.dir.x * 9) * 0.04 * (1 + energy);
         const L = Math.max(0.001, s.len * wob);
         s.shaft.scale.set(1, L, 1);
@@ -267,10 +309,10 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
 
       // Guardian sparks
       const g = d.guard || 0;
-      sparkMat.opacity = g ? 0.5 + 0.5 * Math.random() : Math.max(0, sparkMat.opacity - 0.02);
+      sparkMat.opacity = g ? (calm ? .5 : 0.5 + 0.5 * Math.random()) : Math.max(0, sparkMat.opacity - 0.02);
       if (g) {
         for (let i = 0; i < 60; i++) {
-          if (Math.random() < 0.15) {
+          if (!calm && Math.random() < 0.15) {
             v.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(1.05 + Math.random() * 0.25);
             sparkPos[i * 3] = v.x; sparkPos[i * 3 + 1] = v.y; sparkPos[i * 3 + 2] = v.z;
           }
@@ -279,7 +321,7 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
       }
 
       // turn: slow auto spin plus your drag
-      world.rotation.y += 0.0025 + energy * 0.003 + spinY;
+      world.rotation.y += (0.0025 + energy * 0.003) * speed + spinY;
       world.rotation.x = Math.max(-1.2, Math.min(1.2, world.rotation.x + spinX));
       spinX *= 0.9; spinY *= 0.9;
 
@@ -298,15 +340,18 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
         s.tag.style.opacity = behind || s.len < 0.05 ? 0 : 1;
         s.tag.style.color = `#${s.mat.color.getHexString()}`;
       }
-      raf = requestAnimationFrame(loop);
     };
     loop();
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      io.disconnect();
+      scene.traverse(o => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
+      glow.dispose();
       el.removeEventListener("pointerdown", down);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
       window.removeEventListener("tb-skin", onSkin);
       for (const s of spikes.values()) s.tag.remove();
       renderer.dispose();
@@ -322,7 +367,8 @@ export default function Sphere({ data = {}, pulse = 0, label }) {
 
   return (
     <div className="sphere" ref={wrap}>
-      <div className="sphere-gl" ref={mount} />
+      <div className="sphere-gl" ref={mount} aria-hidden="true" />
+      {unavailable && <div className="sphere-fallback"><b>◎</b><span>3D ist auf diesem Gerät nicht verfügbar.<br />Alle Kontodaten bleiben zugänglich.</span></div>}
       <div className="core-tags" ref={tags} />
       <div className="core-vignette" />
       {label}

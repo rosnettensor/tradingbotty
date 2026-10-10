@@ -2,6 +2,7 @@
 import asyncio
 import math
 import time
+import json
 
 import pytest
 
@@ -102,3 +103,37 @@ def test_fast_settings_reject_nonfinite_values(tmp_path, monkeypatch):
         for value in (math.nan, math.inf):
             with pytest.raises(ValueError, match="finite"):
                 asyncio.run(e.fast.set(**{key: value}))
+
+
+def test_order_trace_reports_confirmed_fills_without_inventing_a_benchmark(tmp_path, monkeypatch):
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    asyncio.run(e._live_buy("BTC", 20, "manual decision"))
+    before = e.db.query("SELECT * FROM orders")
+    result = snapshot(e)["order_trace"][0]
+    assert result["state"] == "filled" and result["reason"] == "manual decision"
+    assert result["requested_amount"] == result["execution"]["notional"] == 20
+    assert result["reference_price"] is None
+    assert e.db.query("SELECT * FROM orders") == before
+    assert len(e.live.buys) == 1
+
+
+def test_order_trace_limits_history_and_does_not_expose_raw_broker_payload(tmp_path, monkeypatch):
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    for i in range(35):
+        e.db.execute("INSERT INTO orders VALUES(?,?,?,?,?,?,?,?,?)", (
+            str(i), i, i, "brain", "BTC", "BUY", "uncertain",
+            json.dumps({"reason": "x" * 600, "private": "secret"}),
+            json.dumps({"error": "private exchange payload", "execution": []})))
+    rows = snapshot(e)["order_trace"]
+    assert len(rows) == 30 and rows[0]["id"] == "34"
+    assert len(rows[0]["reason"]) == 500
+    assert rows[0]["execution"]["quantity"] is None
+    assert "private" not in json.dumps(rows)
+
+
+def test_damaged_journal_metadata_does_not_break_read_only_dashboard(tmp_path, monkeypatch):
+    e = _engine(tmp_path, monkeypatch, FakeFusion())
+    e.db.execute("INSERT INTO orders VALUES(?,?,?,?,?,?,?,?,?)",
+                 ("bad", 1, 1, "brain", "BTC", "BUY", "submitting", "not json", "[]"))
+    row = snapshot(e)["order_trace"][0]
+    assert row["state"] == "submitting" and row["execution"]["fee"] is None

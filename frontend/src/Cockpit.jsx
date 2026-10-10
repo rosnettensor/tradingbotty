@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TradingStatus, AccountStrip, Observation, PositionsBrief, SignalBrief } from "./TradingOverview.jsx";
+import { CoreTelemetry, DecisionConsole, OrderJourney } from "./MissionControl.jsx";
+import { missionState } from "./missionState.js";
+import { useNow, useMotion } from "./motion.js";
 import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
 import BankPanel from "./BankPanel.jsx";
@@ -36,7 +39,7 @@ function coreData(state, w, energy) {
     const close = Math.max(0, 1 - Math.max(0, gap) / 25);
     const hot = ["would buy", "breakout, no slot", "near breakout", "would sell"].includes(r.state);
     spikes.push({ symbol: r.symbol, kind: "watch", state: r.state, len: 0.08 + close * 0.55,
-      text: hot ? `${r.symbol} ${r.state === "would buy" ? "BUY TONIGHT" : gap <= 0 ? "at its high" : `${gap.toFixed(1)}% to buy`}` : "" });
+      text: hot ? `${r.symbol} ${r.state === "would buy" ? "SIGNAL PRÜFEN" : gap <= 0 ? "at its high" : `${gap.toFixed(1)}% to buy`}` : "" });
   }
   const edge = w ? w.bot_edge_pct ?? w.change_pct : 0;
   const cashShare = w && w.total ? (w.fiat || 0) / w.total : null;
@@ -59,31 +62,36 @@ function coreData(state, w, energy) {
 
 const WORKSPACES = [["overview", "Übersicht"], ["positions", "Positionen & Verlauf"], ["signals", "Markt & Signale"], ["operation", "Betrieb & Diagnose"], ["insights", "Auswertung & Lernen"]];
 
-export default function Cockpit({ state, pulse, focus, setFocus, openAgent }) {
+export default function Cockpit({ connected, state, pulse, focus, setFocus, openAgent }) {
   const [section, setSection] = useState("overview");
   const [ops, , poll] = usePoll("operations", 15000);
+  const now = useNow();
+  const mission = missionState(ops, state, connected, poll.error, now);
   const w = state.wallet && !state.wallet.error ? state.wallet : null;
   const rows = state.trend?.rows || [];
   const near = rows.filter(r => ["would buy", "breakout, no slot", "near breakout"].includes(r.state)).length;
   const energy = Math.min(1, .15 + near / 6 + Object.keys(state.guard || {}).length / 4);
   const symbol = focus && rows.some(r => r.symbol === focus) ? focus : rows[0]?.symbol || "BTC";
   const cur = w?.currency || "CHF";
-  return <div className="mission-cockpit">
+  return <div className={`mission-cockpit phase-${mission.phase}`}>
     <TradingStatus data={ops} error={poll.error} state={state} onDetails={() => setSection("operation")} />
     <AccountStrip state={state} data={ops} />
     <nav className="mission-nav" aria-label="Cockpit-Bereiche">{WORKSPACES.map(([key, label]) => <button key={key} aria-pressed={section === key} className={section === key ? "active" : ""} onClick={() => setSection(key)}>{label}</button>)}</nav>
     <div className={`mission-grid ${section !== "overview" ? "mission-detail" : ""}`}>
       <section className="panel core mission-core">
-        <Sphere data={coreData(state, w, energy)} pulse={pulse} label={w ? <div className="core-label"><div className="dim">KONTO · {state.mode === "live" ? "LIVE VERBUNDEN" : "STANDBY"}</div><div className="equity"><Ticking value={w.total} /> <small>{cur}</small></div><div className={pctColor(w.bot_edge)}>{w.bot_edge == null ? "Mehrwert wird erfasst" : `Bot ${w.bot_edge >= 0 ? "+" : ""}${w.bot_edge.toFixed(2)} ${cur}`}</div></div> : <div className="core-label"><div className="dim">KONTO WIRD VERBUNDEN</div></div>} />
+        <CoreTelemetry mission={mission} ops={ops} now={now} />
+        <Sphere data={{ ...coreData(state, w, energy), mission }} pulse={pulse} label={w ? <div className="core-label"><div className="dim">KONTO · {state.mode === "live" ? "LIVE VERBUNDEN" : "STANDBY"}</div><div className="equity"><Ticking value={w.total} /> <small>{cur}</small></div><div className={pctColor(w.bot_edge)}>{w.bot_edge == null ? "Mehrwert wird erfasst" : `Bot ${w.bot_edge >= 0 ? "+" : ""}${w.bot_edge.toFixed(2)} ${cur}`}</div></div> : <div className="core-label"><div className="dim">KONTO WIRD VERBUNDEN</div></div>} />
         <div className="mission-core-footer"><MoodChip regime={state.regime} onOpen={() => openAgent("regime")} compact /><StanceChip stance={state.stance} compact /></div>
       </section>
       {section === "overview" && <div className="mission-aside">
+        <DecisionConsole mission={mission} ops={ops} now={now} onDetails={() => setSection("operation")} openAgent={openAgent} />
         <Observation data={ops} error={poll.error} />
         <PositionsBrief state={state} setFocus={setFocus} onMore={() => setSection("positions")} />
         <SignalBrief state={state} setFocus={setFocus} onMore={() => setSection("signals")} />
       </div>}
       {section !== "overview" && <div className="mission-workspace" key={section}>
         {section === "positions" && <>
+          <OrderJourney ops={ops} error={poll.error} now={now} />
           {state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />}
           <section className="panel"><FocusDaily symbol={symbol} state={state} /></section>
           <section className="panel"><LiveTrades trades={state.trades || []} cur={cur} setFocus={setFocus} /></section>
@@ -125,6 +133,7 @@ function NoWallet() {
 
 /** A number that rolls to its new value and flashes green or red when it changes. */
 function Ticking({ value, digits = 2, signed = false }) {
+  const { reduced } = useMotion();
   const [shown, setShown] = useState(value ?? 0);
   const [flash, setFlash] = useState("");
   const prev = useRef(value ?? 0);
@@ -132,6 +141,7 @@ function Ticking({ value, digits = 2, signed = false }) {
     if (value == null) return;
     const from = prev.current, to = value;
     prev.current = value;
+    if (reduced) { setShown(to); setFlash(""); return; }
     if (from === to) return;
     setFlash(to > from ? "flash-up" : "flash-down");
     const t0 = performance.now(), dur = 900;
@@ -144,7 +154,7 @@ function Ticking({ value, digits = 2, signed = false }) {
     raf = requestAnimationFrame(step);
     const off = setTimeout(() => setFlash(""), 1400);
     return () => { cancelAnimationFrame(raf); clearTimeout(off); };
-  }, [value]);
+  }, [value, reduced]);
   const txt = `${signed && shown >= 0 ? "+" : ""}${Number(shown).toFixed(digits)}`;
   return <span className={`ticking ${flash}`}>{txt}</span>;
 }

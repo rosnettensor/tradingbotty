@@ -75,6 +75,33 @@ Press 1-5 to switch tabs.
   Volatility's virtual forward experiment and Think Tank's candidates do not automatically become live strategies.
 - **Controls:** money limits, AI switches, news feeds, and the Telegram briefing.
 
+## Observatory interface
+
+The existing Spheres now include instrument orbits for reported data, decision and pending-order
+activity. The decision console distinguishes waiting for a signal, missing evidence, standby,
+uncertain orders and stale connections; its timers are scheduled checks, not promised trade times.
+Research and market movement never masquerade as confirmed order execution.
+
+Under **Positionen & Verlauf**, the order trail shows the recorded decision reason, submission
+record and confirmed quantity, average price and fee. A pending submission is never displayed as a
+fill. Slippage is explicitly unmeasured because no comparable pre-submission reference quote was
+stored. Older trades stay available in the existing history.
+
+The agent view adds task navigation and a direct input/output inspector. Connections represent
+configured dependencies; pulses represent reported activity, not proof of a consumed message or a
+trade. Both 3D and 2D views and all existing agent controls remain available.
+
+The top-bar motion control cycles **Auto → Ruhig → Voll**, saved only in this browser. Auto follows
+OS reduced-motion settings. Quiet mode stops decorative motion in CSS and the WebGL scenes; data
+updates and direct interaction remain available. Mobile rendering has a lower pixel/frame budget;
+3D rendering pauses offscreen and in hidden tabs. If WebGL is unavailable, the account data remains
+usable and the agent view offers its 2D plan and list. These visuals are procedural Three.js/SVG/CSS,
+not Blender renders, and make no AI calls.
+
+Validation: `python -m pytest tests -q` and `node --test frontend/tests/mission-state.test.mjs`.
+Browser verification uses fake APIs: desktop/mobile, navigation, motion preferences, stale/paused/
+pending states, journal display and WebGL fallback, with no write requests or real orders.
+
 ## Volatility scanner (Research → VOLATILITY)
 
 The scanner reads all Fusion spot pairs every two minutes. It ranks the **24-hour high–low range**, not realized

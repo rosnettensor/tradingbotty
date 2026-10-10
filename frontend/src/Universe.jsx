@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useMotion } from "./motion.js";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -91,7 +92,9 @@ const inkMode = () => getComputedStyle(document.documentElement).getPropertyValu
 
 const fmtScore = (x) => `${x >= 0 ? "+" : "−"}${Math.abs(x).toFixed(2)}`;
 
-export default function Universe({ nodes, log, scores, currency = "CHF", selected, onSelect }) {
+export default function Universe({ connected, nodes, log, scores, currency = "CHF", selected, onSelect }) {
+  const { reduced } = useMotion();
+  const [unavailable, setUnavailable] = useState(false);
   const wrap = useRef(null);
   const mount = useRef(null);
   const labels = useRef(null);
@@ -104,6 +107,8 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
     window.addEventListener("tb-skin", on);
     return () => window.removeEventListener("tb-skin", on);
   }, []);
+  live.current.reduced = reduced;
+  live.current.connected = connected;
   live.current.nodes = nodes;
   live.current.log = log;
   live.current.scores = scores;
@@ -113,8 +118,11 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
   useEffect(() => {
     const el = mount.current;
     const BLEND = ink ? THREE.NormalBlending : THREE.AdditiveBlending;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    let renderer;
+    try { renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); }
+    catch { setUnavailable(true); return; }
+    const mobile = matchMedia("(max-width: 760px)").matches;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
     renderer.setClearColor(0x000000, 0);
     el.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
@@ -126,7 +134,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
     controls.enablePan = false;
     controls.minDistance = 5;
     controls.maxDistance = 46;
-    const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    let calm = live.current.reduced;
     controls.autoRotate = !calm;
     controls.autoRotateSpeed = 0.35;
     let idleAt = 0;
@@ -283,7 +291,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
     const fit = () => {   // the whole universe fills the frame, whatever the screen
       const portrait = camera.aspect < 0.85;
       world.rotation.z = portrait ? -Math.PI / 2 : 0;
-      const halfW = portrait ? 3.6 : 8.3, halfH = portrait ? 9.8 : 3.8;
+      const halfW = portrait ? 3.9 : 9.6, halfH = portrait ? 10.2 : 4.2;
       const tv = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
       const dist = Math.max(halfH / tv, halfW / (tv * camera.aspect)) + 2.5;
       controls.target.set(0, 0, 0);
@@ -303,7 +311,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
     resize();
 
     let lastLog = Date.now() / 1000;
-    let raf = 0, prev = performance.now(), visible = true;
+    let raf = 0, prev = performance.now(), visible = true, visualTime = 0;
     const io = new IntersectionObserver(([e]) => { visible = e.isIntersecting; });
     io.observe(el);
     const tmp = new THREE.Vector3(), mid = new THREE.Vector3(), target = new THREE.Vector3();
@@ -311,9 +319,15 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
     const frame = (nowMs) => {
       raf = requestAnimationFrame(frame);
       if (!visible || document.hidden) { prev = nowMs; return; }
+      if (calm && !live.current.reduced) controls.autoRotate = true;
+      calm = live.current.reduced;
+      controls.enableDamping = !calm;
+      if (nowMs - prev < (calm ? 200 : mobile ? 32 : 16)) return;
+      if (calm) controls.autoRotate = false;
       const dt = Math.min(0.05, (nowMs - prev) / 1000);
       prev = nowMs;
-      const t = nowMs / 1000, now = Date.now() / 1000;
+      visualTime += calm ? 0 : dt;
+      const t = visualTime, now = Date.now() / 1000;
       const L = live.current;
       const all = [...(L.nodes || []), ...VIRTUAL.filter((v) => !(L.nodes || []).some((n) => n.id === v.id))];
       const byId = new Map(all.map((n) => [n.id, n]));
@@ -327,7 +341,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
         if (l.ts <= lastLog) continue;
         const n = all.find((x) => x.name === l.agent);
         const b = n && bodies.get(n.id);
-        if (b) {
+        if (b && L.connected && !calm) {
           b.busyAt = now;
           wave(b, l.level === "error" ? pal.red : l.level === "live" || l.level === "trade" ? pal.green : b.mat.uniforms.uColor.value);
           for (const s of strings.values()) if (s.from === n.id) { spark(s, 0.9, 0.7, 1); spark(s, 0.75, 0.5, 0.8); }
@@ -347,16 +361,15 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
         b.score = score;
         const off = n.status === "off" || n.enabled === false;
         const err = n.status === "error";
-        const busy = !off && (n.status === "running" || now - (logged[n.name] || 0) < 20 || now - b.busyAt < 20
-          || (n.kind === "source" && n.status === "ok" && now - (n.last_run || 0) < 20));
+        const busy = L.connected && !off && ((n.status === "running" && now - (n.last_run || 0) < 90) || now - (logged[n.name] || 0) < 20 || now - b.busyAt < 20);
         b.busy = busy;
         const base = n.kind === "source" ? 0.42 : n.kind === "gate" ? 0.6 : n.kind === "you" ? 0.55 : 0.52;
         const want = base * (1 + (score != null ? 0.75 * Math.tanh(Math.abs(score) / 12) : 0));
-        b.r += (want - b.r) * Math.min(1, dt * 3);
+        b.r += (want - b.r) * (calm ? 1 : Math.min(1, dt * 3));
         const col = err ? pal.red : off ? pal.dim : pal[n.kind] || pal.agent;
-        b.mat.uniforms.uColor.value.lerp(col, Math.min(1, dt * 4));
+        b.mat.uniforms.uColor.value.lerp(col, calm ? 1 : Math.min(1, dt * 4));
         const rim = score > 0.005 ? pal.green : score < -0.005 ? pal.red : col;
-        b.mat.uniforms.uRim.value.lerp(rim, Math.min(1, dt * 4));
+        b.mat.uniforms.uRim.value.lerp(rim, calm ? 1 : Math.min(1, dt * 4));
         b.mat.uniforms.uTime.value = t + b.seed;
         const beat = busy ? 0.5 + 0.5 * Math.sin(t * 5.2 + b.seed) : 0.5 + 0.5 * Math.sin(t * 1.3 + b.seed);
         b.mat.uniforms.uGlow.value = off ? 0.35 : (busy ? 1.25 : 0.85) + beat * (busy ? 0.45 : 0.15) + (err ? 0.4 * Math.sin(t * 14) : 0);
@@ -406,12 +419,12 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
         const d = label(n.id);
         if (d) {
           world.localToWorld(tmp.copy(b.g.position));
-          tmp.y -= s * 1.25 + 0.18;
+          tmp.y += n.virtual ? s * 1.5 + .15 : -(s * 1.25 + .18);
           tmp.project(camera);
           const w = el.clientWidth, h = el.clientHeight;
           const behind = tmp.z > 1;
           d.style.transform = `translate(-50%, 0) translate(${((tmp.x + 1) / 2) * w}px, ${((1 - tmp.y) / 2) * h}px)`;
-          d.style.opacity = behind ? 0 : !L.selected || conn ? 1 : 0.7;
+          d.style.opacity = behind || (L.selected && !conn) ? 0 : 1;
           const txt = `${n.name}${score != null && Math.abs(score) >= 0.005 ? `|${fmtScore(score)}` : ""}`;
           if (d.dataset.t !== txt) {
             d.dataset.t = txt;
@@ -466,7 +479,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
           const conn = L.selected && (src === L.selected || n.id === L.selected);
           const off = from.status === "off" || n.status === "off";
           s.mat.opacity = off ? 0.08 : conn ? 0.95 : (a.busy ? 0.5 : 0.26) * (L.selected ? 0.8 : 1);  // every string stays visible, the chosen sphere's shine
-          if (a.busy && !off && now > s.next) {
+          if (!calm && L.connected && !a.n.virtual && !n.virtual && a.busy && !off && now > s.next) {
             spark(s, 0.42 + Math.random() * 0.15, conn ? 0.55 : 0.42, conn || !L.selected ? 1 : 0.75);
             s.next = now + (a.n.kind === "source" ? 2.6 : 1.4) + Math.random();
           }
@@ -480,6 +493,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
       }
       for (let i = sparks.length - 1; i >= 0; i--) {
         const p = sparks[i];
+        if (calm || !L.connected) p.t = 1;
         p.t += dt * p.speed;
         if (p.t >= 1 || !strings.has(p.s.key)) {
           world.remove(p.sp);
@@ -495,6 +509,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
       }
       for (let i = waves.length - 1; i >= 0; i--) {
         const wv = waves[i];
+        if (calm || !L.connected) wv.t = 1;
         wv.t += dt * 0.8;
         wv.w.scale.setScalar(wv.r * (1 + wv.t * 3.2));
         wv.w.lookAt(camera.position);
@@ -507,7 +522,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
         const fb = focus !== "home" && bodies.get(focus);
         if (fb) world.localToWorld(target.copy(fb.g.position));
         else target.set(0, 0, 0);
-        controls.target.lerp(target, Math.min(1, dt * 2.5));
+        controls.target.lerp(target, calm ? 1 : Math.min(1, dt * 2.5));
         if (controls.target.distanceTo(target) < 0.02) focus = null;
       }
       if (!calm && idleAt && nowMs - idleAt > 9000) { controls.autoRotate = true; idleAt = 0; }
@@ -540,6 +555,7 @@ export default function Universe({ nodes, log, scores, currency = "CHF", selecte
   return (
     <div className="universe" ref={wrap}>
       <div className="uv-canvas" ref={mount} />
+      {unavailable && <div className="sphere-fallback"><b>◎</b><span>3D nicht verfügbar. Nutze „Plan 2D“ oder die Agentenliste.</span></div>}
       <div className="uv-labels" ref={labels} aria-hidden="true" />
       <div className="uv-tip" ref={tip} style={{ opacity: h ? 1 : 0 }}>
         {h && <>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Background, BaseEdge, Controls, Handle, MiniMap, Position, ReactFlow, applyNodeChanges, getBezierPath } from "@xyflow/react";
+import { useMotion } from "./motion.js";
 import Universe from "./Universe.jsx";
 import "@xyflow/react/dist/style.css";
 import { Toggle } from "./components.jsx";
@@ -83,7 +84,8 @@ function PulseEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, tar
 
 const edgeTypes = { pulse: PulseEdge };
 
-export default function Agents({ state, avatars = {}, want }) {
+export default function Agents({ connected, state, avatars = {}, want }) {
+  const { reduced } = useMotion();
   const [view, setView] = useState(() => { try { return localStorage.getItem("tb-agents-view") || "3d"; } catch { return "3d"; } });
   useEffect(() => { try { localStorage.setItem("tb-agents-view", view); } catch { /* ignore */ } }, [view]);
   const [board] = usePoll("scoreboard", 60000);
@@ -128,17 +130,16 @@ export default function Agents({ state, avatars = {}, want }) {
       const from = agentNodes.find((x) => x.id === src);
       const age = t - (from?.last_run || 0);
       const active = from && from.status !== "off" && from.status !== "idle" && age < 90;
-      const busy = from?.status === "running" || t - (logged[from?.name] || 0) < 20 || t - (changed.current[src]?.at || 0) < 20;
-      const live = from?.kind === "source" && from.status === "ok" && age < 20;  // a live data feed: a slow, steady trickle
-      const hot = from && from.status !== "off" && from.status !== "error" && (busy || live);
+      const busy = (from?.status === "running" && age < 90) || t - (logged[from?.name] || 0) < 20 || t - (changed.current[src]?.at || 0) < 20;
+      const hot = connected && !reduced && from && from.status !== "off" && from.status !== "error" && busy;
       const color = from?.status === "error" ? "var(--red)" : from?.kind === "source" ? "var(--violet)" : from?.kind === "gate" ? "var(--amber)" : "var(--cyan)";
       return {
-        id: `${src}-${n.id}`, source: src, target: n.id, type: "pulse", animated: active && !hot,
+        id: `${src}-${n.id}`, source: src, target: n.id, type: "pulse", animated: false,
         data: { pulse: hot, color, dur: busy ? 1.9 : 3.4, dots: busy ? 2 : 1 },
         style: { stroke: color, strokeWidth: busy ? 2.5 : 2, opacity: busy ? 1 : active ? 0.9 : 0.25 },
       };
     }));
-  }, [agentNodes, log, now]);
+  }, [agentNodes, log, now, connected, reduced]);
 
   const onNodesChange = useCallback((changes) => {
     setRfNodes((nds) => {
@@ -154,10 +155,15 @@ export default function Agents({ state, avatars = {}, want }) {
   const byId = Object.fromEntries(agentNodes.map((x) => [x.id, x]));
   const counts = agentNodes.filter((n) => n.kind !== "source").reduce((m, n) => ({ ...m, [n.status]: (m[n.status] || 0) + 1 }), {});
   return (
+    <div className="agent-workspace">
+      <div className="agent-command"><div><span className="vol-eyebrow">INTELLIGENCE / NETWORK</span><h2>Ein Team. Ein gemeinsamer Auftrag.</h2><p>Verbindungen zeigen Abhängigkeiten. Lichtimpulse zeigen gemeldete Aktivität, keine bestätigten Trades.</p></div><span className={`badge ${connected ? "ok" : "warn"}`}>{connected ? "SERVER VERBUNDEN" : "VERBINDUNG UNTERBROCHEN"}</span></div>
+      <div className="agent-path" aria-label="Agenten nach Aufgabe">{[
+        ["01", "Daten", "src_fusion"], ["02", "Analyse", "researcher"], ["03", "Strategie", "brain"], ["04", "Risiko", "risk"], ["05", "Ausführung", "livedesk"]
+      ].filter(([, , id]) => byId[id]).map(([num, name, id]) => <button key={id} className={selected === id ? "active" : ""} onClick={() => setSelected(id)}><small>{num}</small><span>{name}</span><i className={`dot st-${byId[id].status}`} /></button>)}</div>
     <div className="nodes-view">
       <div className={`flow ${view === "3d" ? "flow-3d" : ""}`}>
         {view === "3d" ? (
-          <Universe nodes={agentNodes} log={state.log} scores={scores} currency={state.wallet?.currency || "CHF"}
+          <Universe connected={connected} nodes={agentNodes} log={state.log} scores={scores} currency={state.wallet?.currency || "CHF"}
             selected={selected} onSelect={setSelected} />
         ) : (
         <ReactFlow nodes={rfNodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={onNodesChange}
@@ -173,7 +179,7 @@ export default function Agents({ state, avatars = {}, want }) {
           <button className={view === "2d" ? "active" : ""} onClick={() => setView("2d")}>Plan 2D</button>
         </div>
         {view === "2d" && <button className="reset-layout" onClick={() => { try { localStorage.removeItem(POS_KEY); } catch { /* ignore */ } setPositions({}); setRfNodes((r) => r.map((n) => ({ ...n, position: defaultPosition(n.id) }))); }}>reset layout</button>}
-        <div className="roster">
+        <div className={`roster ${list ? "expanded" : ""}`}>
           <span className="roster-sum">{agentNodes.filter((n) => n.kind !== "source").length} agents · {counts.ok || 0} ok{counts.warn ? ` · ${counts.warn} warn` : ""}{counts.error ? ` · ${counts.error} error` : ""}</span>
           {view === "3d" && <button className="roster-toggle" onClick={() => setList(!list)}>{list ? "Liste zu" : "Liste"}</button>}
           {(view === "2d" || list) && agentNodes.map((n) => (
@@ -188,14 +194,14 @@ export default function Agents({ state, avatars = {}, want }) {
             <span><i style={{ background: "var(--cyan)" }} />Agent</span>
             <span><i style={{ background: "var(--amber)" }} />Tor zum echten Geld</span>
             <span><i style={{ background: "var(--magenta)" }} />Du</span>
-            <span className="dim">Grösse und Ring = Punktestand ({state.wallet?.currency || "CHF"}, grün Gewinn, rot Verlust) · schnelles Pulsieren = arbeitet gerade · Lichter auf den Fäden = Daten fliessen · Monde = denkt mit Claude · ziehen = drehen, Rad = Zoom</span>
+            <span className="dim">Namen = Auswahl und direkte Nachbarn · Grösse und Ring = Punktestand ({state.wallet?.currency || "CHF"}, grün Gewinn, rot Verlust) · schnelles Pulsieren = arbeitet gerade · Lichter auf den Fäden = gemeldete Aktivität · Monde = denkt mit Claude · ziehen = drehen, Rad = Zoom</span>
           </div>
         ) : (
           <div className="flow-legend">
             <span><i style={{ background: "var(--violet)" }} />data source</span>
             <span><i style={{ background: "var(--cyan)" }} />agent</span>
             <span><i style={{ background: "var(--amber)" }} />gate on real money</span>
-            <span className="dim">lights = an agent is working (last 20s) or a feed is live · moving lines = data flowed in the last 90s</span>
+            <span className="dim">Impulse = läuft, neuer Logeintrag oder geänderter Status in den letzten 20s · Linien = Abhängigkeiten</span>
           </div>
         )}
       </div>
@@ -205,11 +211,12 @@ export default function Agents({ state, avatars = {}, want }) {
           : <p className="dim">Click an agent to see exactly what it does and what it just did.</p>}
       </aside>
     </div>
+    </div>
   );
 }
 
 const VIRTUAL_INFO = {
-  bank: ["🏦 Bank & Prüfer", "Bauplan 2", "Das Parlament (History Lab, Think Tank) schlägt Strategien vor. Der Prüfer verlangt: robust im Labor, im Plus auch mit doppelten Gebühren, 14 Tage im Schatten. Die Bank verteilt dann das Geld des Daily Brain per Thompson Sampling (höchstens 50% pro Strategie, Cash konkurriert mit). Modus Probe: der beste Kandidat handelt sofort 15% echt. Alles dazu im Cockpit unter Bank.", []],
+  bank: ["🏦 Bank & Prüfer", "Bauplan 2", "Die Bank verteilt die Daily-Zuteilung auf geprüfte Strategien. Probe ist bei aktivem Daily und globalem Live-Modus bereits Echtgeld mit begrenztem Kandidaten-Anteil. Schatten ist nur das Modell. Die aktuelle Freigabe und Verteilung findest du unter Research → Handelsplan und Cockpit → Betrieb & Diagnose.", []],
   you: ["🙋 Du", "Chat und Kurs", "Deine Chat-Orders (kaufen, verkaufen) und dein Kurs (Mutig, Bunkern, Pause) gehen wie jede Order durch den Risk Officer. Dein Punktestand: was deine Chat-Trades gebracht haben und was deine Verkäufe gegenüber der Regel verpasst oder gespart haben (Geister-Trades).", ["you", "course"]],
 };
 
@@ -226,8 +233,11 @@ function VirtualInfo({ id, board }) {
 }
 
 function Avatar({ src, size }) {
+  const { reduced } = useMotion();
+  const video = useRef(null);
+  useEffect(() => { if (video.current) { if (reduced) video.current.pause(); else video.current.play().catch(() => {}); } }, [reduced, src]);
   return /\.(mp4|webm)$/i.test(src)
-    ? <video className="avatar" src={src} autoPlay loop muted playsInline style={{ width: size, height: size }} />
+    ? <video ref={video} className="avatar" src={src} autoPlay={!reduced} loop muted playsInline style={{ width: size, height: size }} />
     : <img className="avatar" src={src} alt="" style={{ width: size, height: size }} />;
 }
 
@@ -246,6 +256,10 @@ function Inspector({ n, byId, avatar, log, pick }) {
   const next = until(n.next_run);
   return (
     <>
+      <div className="agent-context-card">
+        <span className="vol-eyebrow">AUSGEWÄHLTER AGENT</span>
+        <div className="agent-context-grid"><div><small>EMPFÄNGT VON</small>{n.inputs.length ? n.inputs.map(id => <button key={id} onClick={() => pick(id)}>{byId[id]?.name || id} ↗</button>) : <span>Externe Quellen</span>}</div><div><small>LIEFERT AN</small>{feeds.length ? feeds.map(x => <button key={x.id} onClick={() => pick(x.id)}>{x.name} ↗</button>) : <span>Dashboard / Protokoll</span>}</div></div>
+      </div>
       <div className="insp-title">
         {avatar && <Avatar src={avatar} size={72} />}
         <div>

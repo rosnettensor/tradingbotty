@@ -1516,3 +1516,169 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
   .mission-aside .panel, .mission-workspace > .panel { padding: 16px; }
   .mission-observation .row-head { flex-wrap: wrap; }
 }
+
+/* Observatory — same palette, quieter hierarchy, motion attached to reported state. */
+:root { --ease-observe: cubic-bezier(.22, 1, .36, 1); }
+.motion-toggle { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 4px 8px; }
+.motion-toggle > span { font-size: 20px; line-height: 1; }
+.motion-toggle small { font-size: 9px; letter-spacing: 0; }
+.mission-cockpit { --phase-color: var(--cyan); }
+.phase-paused, .phase-blocked { --phase-color: var(--amber); }
+.phase-offline { --phase-color: var(--dim); }
+.phase-submitting { --phase-color: var(--green); }
+.mission-cockpit .panel { transition: border-color .5s, box-shadow .5s; }
+.mission-workspace { animation: workspace-arrive .55s var(--ease-observe) both; }
+.mission-nav button, .agent-path button { transition: background .25s, border-color .25s, transform .25s; }
+.mission-nav button.active { box-shadow: inset 0 -2px var(--cyan); }
+.core-telemetry { display: flex; justify-content: space-between; align-items: start; gap: 16px; padding: 22px 24px 12px; position: relative; z-index: 2; }
+.core-telemetry > div { display: grid; gap: 8px; }
+.core-telemetry .vol-eyebrow { font-size: 8px; letter-spacing: .18em; }
+.core-telemetry strong { font-size: 11px; font-weight: 500; display: flex; gap: 7px; align-items: center; }
+.telemetry-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--phase-color); box-shadow: 0 0 14px var(--phase-color); flex-shrink: 0; }
+.telemetry-clock { font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; white-space: nowrap; letter-spacing: -.04em; }
+.telemetry-clock small { display: block; font-size: 7px; letter-spacing: .12em; color: var(--dim); margin-top: 5px; }
+.core-signal-path { display: flex; justify-content: center; gap: 16px; color: var(--dim); font-size: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.core-signal-path span { display: flex; align-items: center; gap: 6px; position: relative; }
+.core-signal-path span > i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
+.core-signal-path span > b { margin-left: 10px; font-weight: 400; opacity: .4; }
+.core-signal-path .active { color: var(--cyan); }
+.core-signal-path .active > i { animation: signal-breathe 1.8s ease-in-out infinite; box-shadow: 0 0 8px currentColor; }
+.mission-grid .mission-core { border-color: color-mix(in srgb, var(--phase-color) 25%, var(--line)); }
+.mission-core .sphere { min-height: 510px; }
+.mission-core::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 55px color-mix(in srgb, var(--phase-color) 3%, transparent); }
+.sphere-fallback { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 10px; text-align: center; color: var(--dim); padding: 30px; pointer-events: none; }
+.sphere-fallback > b { font-size: 160px; line-height: 1; font-weight: 100; opacity: .2; }
+.sphere-fallback > span { font-size: 10px; max-width: 260px; }
+.sphere:has(.sphere-fallback) .core-label { top: 28%; }
+.decision-console { position: relative; overflow: hidden; border-top: 2px solid var(--phase-color); }
+.decision-console::before { content: ""; position: absolute; width: 250px; height: 250px; right: -180px; top: -170px; border-radius: 50%; border: 1px solid var(--phase-color); box-shadow: 0 0 0 20px var(--faint), 0 0 0 40px var(--faint); pointer-events: none; opacity: .45; }
+.decision-index { font-size: 8px; color: var(--dim); letter-spacing: .15em; }
+.decision-heading { display: flex; gap: 18px; align-items: center; margin: 22px 0 12px; }
+.decision-heading h2 { font-weight: 500; font-size: clamp(18px, 1.9vw, 26px); letter-spacing: -.045em; line-height: 1.25; margin: 0; max-width: 300px; animation: text-arrive .6s var(--ease-observe) both; }
+.decision-glyph { width: 42px; height: 42px; position: relative; flex-shrink: 0; color: var(--phase-color); }
+.decision-glyph i { position: absolute; inset: 0; border-radius: 50%; border: 1px solid currentColor; transform: rotate(-40deg) scaleX(.4); opacity: .7; }
+.decision-glyph i:nth-child(2) { transform: rotate(40deg) scaleX(.4); }
+.decision-glyph i:nth-child(3) { inset: 16px; background: currentColor; box-shadow: 0 0 12px currentColor; }
+:is(.phase-reading, .phase-checking, .phase-submitting) .decision-glyph { animation: orbit-precess 9s linear infinite; }
+.decision-reason { color: var(--dim); font-size: 11px; line-height: 1.85; min-height: 40px; margin: 0 0 20px; overflow-wrap: anywhere; animation: text-arrive .5s var(--ease-observe); }
+.activity-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 18px; }
+.activity-chips button { padding: 5px 8px; font-size: 9px; text-transform: none; letter-spacing: 0; border-radius: 30px; }
+.activity-chips i { display: inline-block; height: 4px; width: 4px; background: var(--cyan); border-radius: 50%; margin-right: 5px; }
+.decision-schedules { display: grid; gap: 0; border-top: 1px solid var(--line); }
+.decision-schedule { display: grid; grid-template-columns: 1fr auto; gap: 10px; text-align: left; padding: 16px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; text-transform: none; letter-spacing: 0; }
+.decision-schedule:hover { box-shadow: none; }
+.decision-schedule > span:first-child { display: grid; gap: 3px; }
+.decision-schedule b { font-size: 12px; font-weight: 500; }
+.decision-schedule small { font-size: 9px; color: var(--dim); }
+.decision-schedule strong { font-size: 17px; letter-spacing: -.04em; font-weight: 400; font-variant-numeric: tabular-nums; align-self: center; }
+.schedule-track { grid-column: 1 / -1; height: 2px; background: var(--track); overflow: hidden; }
+.schedule-track i { display: block; height: 100%; background: var(--phase-color); transition: width 1s linear; }
+.decision-schedule .schedule-note { grid-column: 1 / -1; line-height: 1.6; font-size: 9px; }
+.decision-bottom { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 15px; font-size: 9px; color: var(--dim); }
+.decision-bottom button { font-size: 9px; }
+.decision-bottom i { font-size: 6px; font-style: normal; }
+.order-journey .row-head { gap: 12px; align-items: start; }
+.order-journey h3 { margin: 8px 0 0; }
+.order-journey .badge { font-size: 8px; }
+.journey-selector { display: flex; gap: 8px; overflow-x: auto; margin: 24px -2px 20px; padding: 2px 2px 10px; scrollbar-width: thin; }
+.journey-selector button { flex-shrink: 0; display: grid; grid-template-columns: auto auto; gap: 3px 8px; padding: 10px 14px; border-radius: 8px; text-align: left; text-transform: none; letter-spacing: 0; transition: background .25s, border-color .25s; }
+.journey-selector button small { grid-column: 1 / -1; font-size: 9px; color: var(--dim); }
+.journey-selector button.active { border-color: var(--cyan); background: var(--faint); }
+.journey-detail { animation: workspace-arrive .5s var(--ease-observe) both; }
+.journey-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.journey-title h2 { font-size: 25px; font-weight: 400; letter-spacing: -.05em; margin: 7px 0; }
+.journey-title h2 span { font-weight: 600; }
+.order-state { font-size: 10px; text-align: right; }
+.journey-steps { list-style: none; margin: 20px 0; padding: 0; }
+.journey-steps li { display: grid; grid-template-columns: 26px 1fr; gap: 13px; position: relative; padding: 0 0 22px; }
+.journey-steps li:last-child { padding-bottom: 0; }
+.journey-steps li:not(:last-child)::after { content: ""; position: absolute; left: 12px; top: 27px; bottom: 2px; width: 1px; background: var(--line); }
+.journey-steps i { border: 1px solid var(--line); border-radius: 50%; height: 26px; display: grid; place-items: center; font-size: 8px; font-style: normal; }
+.journey-steps .done i { color: var(--cyan); border-color: color-mix(in srgb, var(--cyan) 45%, var(--line)); }
+.journey-steps .pending i { color: var(--amber); }
+.journey-steps b { font-size: 11px; font-weight: 500; }
+.journey-steps p { color: var(--dim); font-size: 10px; line-height: 1.8; margin: 4px 0 0; overflow-wrap: anywhere; }
+.fill-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; border-top: 1px solid var(--line); padding: 18px 0; }
+.fill-metrics > div { display: grid; gap: 7px; }
+.fill-metrics small { font-size: 9px; color: var(--dim); }
+.fill-metrics b { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.journey-meta { color: var(--dim); font-size: 9px; border-top: 1px solid var(--line); padding-top: 14px; }
+.journey-meta summary { cursor: pointer; }
+.journey-meta p { line-height: 1.8; }
+.journey-meta code { font-size: 9px; overflow-wrap: anywhere; }
+.journey-empty { display: flex; align-items: center; gap: 24px; min-height: 180px; padding: 25px 0; }
+.journey-empty p { font-size: 12px; }
+.journey-empty small { display: block; color: var(--dim); font-size: 10px; line-height: 1.8; margin-top: 8px; }
+.empty-orbits { width: 76px; height: 76px; flex-shrink: 0; position: relative; display: grid; place-items: center; color: var(--dim); }
+.empty-orbits i { position: absolute; inset: 0; border: 1px dashed var(--line); border-radius: 50%; transform: scaleY(.5) rotate(25deg); }
+.empty-orbits i:nth-child(2) { transform: scaleX(.5) rotate(-25deg); }
+.empty-orbits b { font-size: 30px; font-weight: 400; }
+.agent-workspace { display: grid; gap: 14px; min-width: 0; }
+.agent-command { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 5px 4px; }
+.agent-command h2 { font-size: clamp(18px, 2vw, 25px); font-weight: 500; letter-spacing: -.04em; margin: 8px 0; }
+.agent-command p { font-size: 10px; color: var(--dim); margin: 0; line-height: 1.7; }
+.agent-command .badge { font-size: 8px; flex-shrink: 0; }
+.agent-path { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.agent-path button { border: 0; border-radius: 0; border-right: 1px solid var(--line); display: flex; align-items: center; gap: 12px; padding: 14px 20px; text-transform: none; letter-spacing: 0; text-align: left; }
+.agent-path button:last-child { border-right: 0; }
+.agent-path small { font-size: 9px; color: var(--dim); }
+.agent-path button span { font-size: 11px; }
+.agent-path button .dot { margin-left: auto; }
+.agent-path button.active { background: var(--faint); box-shadow: inset 0 -2px var(--cyan); }
+.agent-context-card { padding: 16px; margin: -3px -3px 22px; background: var(--faint); border: 1px solid var(--line); border-radius: 9px; }
+.agent-context-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.agent-context-grid > div { display: flex; flex-direction: column; align-items: start; gap: 5px; }
+.agent-context-grid small { color: var(--dim); font-size: 8px; letter-spacing: .08em; margin-bottom: 4px; }
+.agent-context-grid button { text-align: left; font-size: 10px; text-transform: none; letter-spacing: 0; padding: 3px 0; border: 0; }
+.agent-context-grid span { font-size: 10px; }
+.agent-workspace .inspector { animation: text-arrive .45s var(--ease-observe); }
+:is(button, summary):focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+@keyframes workspace-arrive { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes text-arrive { from { opacity: .35; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes orbit-precess { to { transform: rotate(360deg); } }
+@keyframes signal-breathe { 50% { opacity: .35; transform: scale(.65); } }
+@media (max-width: 1100px) { .core-telemetry { padding: 18px 16px 8px; } .core-telemetry strong { font-size: 10px; } .telemetry-clock { font-size: 10px; } .agent-path button { padding: 12px; gap: 7px; } }
+@media (max-width: 760px) {
+  .core-telemetry { padding: 18px 16px 8px; }
+  .core-telemetry .vol-eyebrow { font-size: 7px; }
+  .core-telemetry strong { font-size: 10px; max-width: 240px; }
+  .core-signal-path { font-size: 8px; gap: 9px; }
+  .mission-aside .decision-console { padding: 20px 18px; }
+  .decision-heading h2 { font-size: 23px; }
+  .decision-reason { font-size: 11px; }
+  .agent-command { align-items: start; flex-direction: column; gap: 10px; }
+  .agent-path button { padding: 12px 4px; display: grid; gap: 6px; justify-items: center; }
+  .agent-path button span { font-size: 8px; }
+  .agent-path button .dot { margin: 0; width: 4px; height: 4px; }
+  .agent-path small { font-size: 8px; }
+  .order-journey > .row-head { flex-direction: column; }
+  .journey-title h2 { font-size: 23px; }
+  .order-state { font-size: 9px; }
+  .journey-empty { gap: 14px; }
+  .empty-orbits { width: 55px; height: 55px; }
+  .motion-toggle { padding: 3px 5px; }
+  .motion-toggle small { font-size: 8px; }
+  .mission-detail .core-telemetry { display: none; }
+}
+/* A real reduced-motion mode: CSS, SVG and both WebGL scenes obey the same preference. */
+html[data-motion="reduced"] *, html[data-motion="reduced"] *::before, html[data-motion="reduced"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+html[data-motion="reduced"] .edge-pulse, html[data-motion="reduced"] .tc-flash, html[data-motion="reduced"] .tc-rings { display: none !important; }
+html[data-motion="reduced"] .ticker-track { transform: none !important; }
+@media (prefers-reduced-motion: reduce) { html:not([data-motion="full"]) *, html:not([data-motion="full"]) *::before, html:not([data-motion="full"]) *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+@media (max-width: 640px) {
+  .agent-workspace .flow-3d .roster { max-width: calc(100% - 20px); }
+  .agent-workspace .flow-3d .roster .roster-toggle { display: inline-flex; }
+  .agent-workspace .flow-3d .roster.expanded { max-height: 160px; overflow: auto; background: var(--overlay); padding: 8px; border-radius: 8px; }
+  .agent-workspace .flow-3d .roster.expanded button { display: inline-flex; }
+}
+
+@media (min-width: 1180px) and (max-width: 1600px) {
+  .topbar { gap: 9px; padding-inline: 14px; }
+  .topbar .logo { font-size: 15px; letter-spacing: .1em; }
+  .topbar nav button { font-size: 10px; padding: 7px 8px; }
+  .topbar .budget { min-width: 140px; font-size: 9px; }
+  .topbar .pal-name { font-size: 9px; }
+}
+
+@media (min-width: 1001px) { .agent-workspace .nodes-view { height: calc(100dvh - 295px); min-height: 560px; } }

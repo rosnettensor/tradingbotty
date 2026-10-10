@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api, fmt, useBot, usePoll } from "./useBot.js";
+import { useMotion, setMotion } from "./motion.js";
 import Cockpit from "./Cockpit.jsx";
 const Agents = lazy(() => import("./Agents.jsx"));
 const Research = lazy(() => import("./Research.jsx"));
@@ -14,6 +15,7 @@ const TABS = ["cockpit", "pulse", "agents", "research", "controls"];
 
 export default function App() {
   const { state, connected, pulse } = useBot();
+  useMotion();
   const [media] = usePoll("media", 0);
   const [tab, setTab] = useState(() => {
     try { const t = localStorage.getItem("tb-tab"); return TABS.includes(t) ? t : "cockpit"; } catch { return "cockpit"; }
@@ -51,9 +53,9 @@ export default function App() {
       <Ticker items={state.ticker || []} onPick={(s) => { setFocus(s); setTab("pulse"); }} />
       <main>
         <Suspense fallback={<div className="empty" role="status">Arbeitsbereich wird geladen…</div>}>
-        {tab === "cockpit" && <Cockpit state={state} pulse={pulse} focus={focus} setFocus={setFocus} openAgent={openAgent} />}
+        {tab === "cockpit" && <Cockpit connected={connected} state={state} pulse={pulse} focus={focus} setFocus={setFocus} openAgent={openAgent} />}
         {tab === "pulse" && <Pulse state={state} focus={focus} setFocus={setFocus} />}
-        {tab === "agents" && <Agents state={state} avatars={media?.avatars || {}} want={agent} />}
+        {tab === "agents" && <Agents connected={connected} state={state} avatars={media?.avatars || {}} want={agent} />}
         {tab === "research" && <Research state={state} openAgent={openAgent} />}
         {tab === "controls" && <Controls state={state} />}
         </Suspense>
@@ -62,6 +64,16 @@ export default function App() {
       <TradeCinema trades={state.trades} currency={state.wallet?.currency || "CHF"} />
     </div>
   );
+}
+
+function MotionToggle() {
+  const { choice, reduced } = useMotion();
+  const choices = ["auto", "calm", "full"];
+  return <button className="motion-toggle" aria-label={`Bewegung: ${({ auto: "Automatisch", calm: "Ruhig", full: "Voll" })[choice] || "Automatisch"}. Klicken zum Wechseln.`}
+    title="Nur die Darstellung: Auto folgt dem Gerät, Ruhig reduziert Bewegung, Voll aktiviert Effekte."
+    onClick={() => setMotion(choices[(choices.indexOf(choice) + 1) % 3])}>
+    <span aria-hidden>{reduced ? "◌" : "◎"}</span><small>{({ auto: "Auto", calm: "Ruhig", full: "Voll" })[choice] || "Auto"}</small>
+  </button>;
 }
 
 // The Aurora design in another palette. Remembered in this browser.
@@ -114,10 +126,13 @@ function moodOf(w) {
 }
 
 function Backdrop({ src }) {
+  const { reduced } = useMotion();
+  const ref = useRef(null);
+  useEffect(() => { if (ref.current) { if (reduced) ref.current.pause(); else ref.current.play().catch(() => {}); } }, [reduced, src]);
   const video = /\.(mp4|webm)$/i.test(src);
   return (
     <div className="backdrop" aria-hidden>
-      {video ? <video src={src} autoPlay loop muted playsInline /> : <img src={src} alt="" />}
+      {video ? <video ref={ref} src={src} autoPlay={!reduced} loop muted playsInline /> : <img src={src} alt="" />}
     </div>
   );
 }
@@ -157,6 +172,7 @@ function TopBar({ state, connected, tab, setTab, logo }) {
       <div className="spacer" />
       {state.simulate && <span className="badge warn" title="Random-walk prices for testing">SIMULATED DATA</span>}
       <PalettePick />
+      <MotionToggle />
       <SoundToggle />
       <span className={`badge ${connected ? "ok" : "bad"}`}>{connected ? "● LINK" : "○ OFFLINE"}</span>
       <div className="budget" title="AI spend: last 24h vs daily allowance, and total vs your hard cap (grows with 10% of the bot's gains)">

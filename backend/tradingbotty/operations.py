@@ -2,9 +2,34 @@
 from __future__ import annotations
 
 import time
+import json
 
 
 WINDOW = 12 * 3600
+
+
+def order_trace(e):
+    """Read-only journal projection. Never invent signal times or pre-trade quotes."""
+    orders = []
+    for row in e.db.query("SELECT * FROM orders ORDER BY created_at DESC, id DESC LIMIT 30"):
+        def obj(raw):
+            try:
+                value = json.loads(raw or "{}")
+                return value if isinstance(value, dict) else {}
+            except (ValueError, TypeError):
+                return {}
+        request, result = obj(row["request_json"]), obj(row["result_json"])
+        execution = result.get("execution") or {}
+        if not isinstance(execution, dict): execution = {}
+        orders.append({k: row[k] for k in ("id", "created_at", "updated_at", "book", "symbol", "side", "state")} | {
+            "reason": str(request.get("reason") or "Kein Entscheidungsgrund gespeichert")[:500],
+            "automatic": request.get("automatic"),
+            "requested_amount": request.get("amount"),
+            "execution": {k: execution.get(k) for k in ("quantity", "notional", "price", "fee")},
+            "exchange_order_id": result.get("order_id"),
+            "reference_price": None,  # not recorded before POST; a chart quote is not a substitute
+        })
+    return orders
 
 
 def snapshot(e, now: float | None = None) -> dict:
@@ -79,6 +104,7 @@ def snapshot(e, now: float | None = None) -> dict:
     return {"ts": now, "currency": cur, "execution_allowed": trading_allowed, "global_reasons": global_reasons,
             "architecture": {"execution_engines": 1, "modules": e.strategies.catalogue(), "allocation": allocation,
                              "journal": e.db.query("SELECT state,COUNT(*) count FROM orders GROUP BY state")},
+            "order_trace": order_trace(e),
             "wallet_fresh": wallet_fresh, "wallet_ts": w.get("ts"), "lanes": lanes, "conflicts": conflicts,
             "bank": {"mode": mode, "used": bank_used, "probe": report.get("probe"),
                      "label": {"shadow": "Nur Modell · Daily Brain handelt seine eigene Strategie", "probe": "Echtgeld-Probe · begrenzte Beimischung",
