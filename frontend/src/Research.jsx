@@ -1,3 +1,4 @@
+import Speculation from "./Speculation.jsx";
 import { Fragment, useEffect, useState } from "react";
 import { LineChart } from "./charts.jsx";
 import { Tabs } from "./components.jsx";
@@ -7,7 +8,7 @@ const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)",
 const PERIODS = [["full", "all history"], ["last_2y", "2 years"], ["last_1y", "1 year"], ["last_6m", "6 months"], ["first_half", "1st half"], ["second_half", "2nd half"]];
 const dayFmt = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", year: "2-digit" });
 
-const LABS = [["daily", "DAILY BRAIN LAB · the real money"], ["fast", "FAST TRADER LAB · speculative, 4-hour"], ["think", "💡 THINK TANK · original ideas"]];
+const LABS = [["speculation", "VOLATILITY · paper experiment"], ["daily", "DAILY BRAIN LAB · the real money"], ["fast", "FAST TRADER LAB · speculative, 4-hour"], ["think", "💡 THINK TANK · original ideas"]];
 
 export default function Research({ state, openAgent }) {
   const [res, setRes] = useState(null);
@@ -18,7 +19,7 @@ export default function Research({ state, openAgent }) {
   return (
     <div className="research-tab">
       <div className="lab-switch"><Tabs value={lab} options={LABS} onChange={pickLab} /></div>
-      {lab === "think" ? <ThinkTank openAgent={openAgent} /> : lab === "fast" ? <FastLab state={state} openAgent={openAgent} /> : (
+      {lab === "speculation" ? <Speculation /> : lab === "think" ? <ThinkTank openAgent={openAgent} /> : lab === "fast" ? <FastLab state={state} openAgent={openAgent} /> : (
         <>
           <HistoryTest state={state} res={res} setRes={(r) => { setRes(r); reloadPat(); }} openAgent={openAgent} />
           {res && <RealityChecks res={res} live={state.brain?.strategy} />}

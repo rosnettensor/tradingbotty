@@ -126,9 +126,16 @@ class FastTrader:
     def booked_sell(self, sym: str, ex: dict) -> float:
         """Book a sale of a pot coin: its gain or loss goes into the pot."""
         c = self.cfg()
-        pos = c["pos"].pop(sym, None) or {}
+        pos = c["pos"].get(sym) or {}
+        sold = float(ex.get("quantity", 0) or 0)
+        fraction = min(1.0, sold / pos["qty"]) if pos.get("qty") else 1.0
+        sold_cost = pos.get("cost", 0) * fraction
+        if fraction < 1:
+            c["pos"][sym] = {**pos, "qty": pos["qty"] - sold, "cost": pos["cost"] - sold_cost}
+        else:
+            c["pos"].pop(sym, None)
         got = float(ex.get("notional", 0) or 0) - float(ex.get("fee", 0) or 0)
-        pnl = round(got - pos.get("cost", got), 2)
+        pnl = round(got - sold_cost, 2)
         c["realized"] = round(c["realized"] + pnl, 2)
         c["trades"] += 1
         c["wins"] += 1 if pnl > 0 else 0

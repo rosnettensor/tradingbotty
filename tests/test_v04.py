@@ -184,8 +184,8 @@ def test_brain_uses_the_whole_account_and_leaves_unsellable_dust(tmp_path, monke
     asyncio.run(e.brain_tick())
     assert not f.sells and e.live_errors == 0               # dust isn't sent to Fusion to be rejected
     assert "sell it in the Bitpanda app" in e.brain()["note"]
-    # half of the account each (minus 2% for fees) in orders under the 150 cap; the last one gets what cash is left
-    assert [(s, round(a, 2)) for s, a in f.buys] == [("SOL", 102.9), ("SOL", 102.9), ("BTC", 102.9), ("BTC", 90.84)]
+    # half of the account each (minus 2% for fees) in orders under the 100 cap; the last one gets what cash is left
+    assert [(s, round(a, 2)) for s, a in f.buys] == [("SOL", 68.6), ("SOL", 68.6), ("SOL", 68.6), ("BTC", 68.6), ("BTC", 68.6), ("BTC", 56.71)]
     e.set_controls({"live.max_order": 250})                 # changing a money limit re-decides now
     assert "day" not in e.brain()
     f.bal["AKT"] = 0.0                                      # you sold the dust in the app: the bot forgets it
@@ -202,7 +202,7 @@ def test_live_account_gets_tuned_once(tmp_path, monkeypatch):
     e.db.set("mode", "live")
     e.set_controls({"live.max_order": 35})
     e2 = Engine(load_settings())
-    assert e2.settings["live"]["max_invest"] == 2000 and e2.settings["live"]["max_order"] == 150
+    assert e2.settings["live"]["max_invest"] == 2000 and e2.settings["live"]["max_order"] == 100
     e2.set_controls({"live.max_order": 60})                 # your later change wins after the next start
     e3 = Engine(load_settings())
     assert e3.settings["live"]["max_order"] == 60

@@ -21,6 +21,9 @@ class FakeFusion:
     async def balances(self):
         return dict(self.bal)
 
+    async def total_balance(self, symbol):
+        return self.bal.get(symbol, 0)
+
     async def spread_pct(self, symbol):
         return self.spread
 

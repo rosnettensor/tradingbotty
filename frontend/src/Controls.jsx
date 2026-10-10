@@ -9,6 +9,7 @@ export default function Controls({ state }) {
     <div className="controls">
       <BotSettings />
       <div className="col">
+        <RiskLimits state={state} />
         <Moved state={state} />
         <HowItTrades state={state} />
         <Phone state={state} />
@@ -18,6 +19,16 @@ export default function Controls({ state }) {
       <Sources />
     </div>
   );
+}
+
+function RiskLimits({ state }) {
+  const r = state.risk_status || {};
+  const currency = state.wallet?.currency || r.currency || "CHF";
+  return <section className="panel">
+    <h3>CASH-ONLY RISK GATE</h3>
+    <p className="small">All purchase paths: ≤100 {currency} per order, gross daily loss budget 200 {currency}, shared position count, no margin or borrowing. Your smaller order setting wins. Missing prices or spreads block buys; exits remain possible.</p>
+    <p className="dim small">Last pre-order check: {r.daily_loss == null ? "waiting" : `${r.daily_loss.toFixed(2)} / 200 ${currency} losses · ${r.positions} positions`}. Loss accounting resets at 00:00 UTC; current unrealized downside is included. The budget stops new buys and cannot guarantee a maximum loss.</p>
+  </section>;
 }
 
 function groupBy(list, key) {

@@ -1,7 +1,6 @@
 # TradingBotty
 
-A playful multi-agent crypto bot with a cyber dashboard that trades real money on Bitpanda Fusion. There is no
-paper money: every agent either feeds the real trades or the history test that picks the strategy for them.
+A playful multi-agent crypto bot with a cyber dashboard that trades real money on Bitpanda Fusion. The existing Daily Brain and fast pot trade live only when enabled. A separate volatility scanner tests new speculative signals with virtual money first.
 
 **It can lose your stake. It can never put you in debt:** it only places spot buy and sell orders, only buys with
 cash it has, and only sells coins it holds. There is no code for margin, leverage, shorting, futures or CFDs.
@@ -60,13 +59,40 @@ Press 1-4 to switch tabs.
   review, a daily chart per coin with the brain's lines and real trades, real trades, the agent feed and rated news.
 - **Agents:** the node graph and an inspector that shows what each agent just did, step by step, its key facts and
   tables, its own log, and for the AI agents their model and instructions.
-- **Research:** two labs. The daily brain lab: the history test (pick which strategy trades live), reality checks,
+- **Research:** a Fusion volatility scanner with a forward paper depot, plus the existing labs. The daily brain lab: the history test (pick which strategy trades live), reality checks,
   the Pattern Hunt and the free data. The fast trader lab: speculative rules on 4-hour candles of the ~40 most
   traded coins Fusion lists (breakouts with profit-taking, pump riding, dip buying, volume checks), the same
   robustness checks, a signal test on the next 24 hours, and each coin's link to Bitcoin over time. Research only.
 - **Controls:** money limits, AI switches, news feeds, and the Telegram briefing.
 
+## Volatility scanner (Research → VOLATILITY)
+
+The scanner reads all Fusion spot pairs every two minutes. It ranks the **24-hour high–low range**, not realized
+volatility or a promised return. For the top ten it checks actual Fusion spread and displayed bid/ask depth within
+1%. Reported ticker volume is retained in the API; its unit is not assumed to be CHF. Newly observed pairs are
+flagged as observations, not verified listing announcements.
+
+The isolated forward experiment starts with 1,000 virtual units of your account currency. Entries require ≥8%
+range, ≥2% momentum since a fresh previous scan, price above the previous scan's 24h high, spread within your limit,
+at least 1,000 displayed depth and an exchange minimum ≤100. Three slots, ≤100 per entry, configured fees/slippage.
+Exits: −8%, +20%, or 24h, at the next observed price. Missing quotes preserve the last mark and never invent fills.
+A scan gap >10 minutes invalidates entry momentum. No key means no scanner data. A kill switch blocks paper buys.
+
+This is a forward test, not a backtest or a guarantee of 10×/100× returns. The existing historical labs remain
+available. **Scanner signals never submit live orders or automatically become a live strategy.** Options, futures,
+margin and leverage have no execution adapter in this update.
+
 ## Money rules
+
+- Every purchase path (Daily Brain, fast pot, chat and system check) shares an independent cash-only gate:
+  **100 maximum per order**, **200 gross daily losses** and the configured maximum open positions, across all bot
+  books. Amounts are in **account quote currency: CHF by default**, not an implicit FX conversion. Your smaller
+  single-order setting wins. Losses include negative realized P/L since 00:00 UTC plus current unrealized downside;
+  profits don't refill the loss budget. This stops buys; sells stay possible. Stops do not guarantee a loss ceiling.
+- Missing risk prices or missing/invalid spreads block new buys. Buys and sells are serialized to avoid cash races.
+- Only confirmed quantities are booked. Partial sells retain the unsold ownership and proportional cost. An ambiguous
+  order/POST timeout sets standby and the kill switch, stores `unresolved_order` in the database, and blocks buys
+  until the order and ownership have been reconciled by the operator. Never blindly retry an uncertain order.
 
 - **AI budget:** 20 USD in total, spread over 30 days, plus 10% of the bot's gains. When it runs out, the AI agents
   fall back to free rules and everything keeps running.

@@ -390,6 +390,11 @@ async def research_run():
         raise HTTPException(400, str(e))
 
 
+@app.get("/api/speculation")
+def speculation_get():
+    return engine.speculation.status()
+
+
 @app.get("/api/research")
 async def research_get():
     return engine.db.get("research", {}) or {}

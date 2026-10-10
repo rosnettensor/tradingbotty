@@ -132,7 +132,7 @@ def test_daily_brain_leaves_the_pots_cash_and_coins_alone(tmp_path, monkeypatch)
     m.bal["XRP"] = 2.0
     assert e.fast.cash_reserve() == 40.0
     spent, _ = asyncio.run(e._live_buy("SOL", 300.0, "daily brain: test"))
-    assert spent == pytest.approx((200.0 - 40.0) * 0.995)            # 40 of the pot's cash stays free
+    assert spent == pytest.approx(min(100.0, (200.0 - 40.0) * 0.995))            # 40 of the pot's cash stays free
     asyncio.run(e._brain_rebalance({}, "test"))                       # the brain wants nothing: sells only its own
     assert ("XRP", 2.0) not in m.sells and e.db.get("fast_qty") == {"XRP": 2.0}
     assert all(s != "BTC" for s, _ in m.sells)

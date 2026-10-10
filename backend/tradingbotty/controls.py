@@ -10,8 +10,8 @@ CONTROLS = [
     {"key": "live.max_invest", "label": "Most money in coins at once", "min": 2, "max": 2000, "step": 1,
      "group": "Live money", "help": "Hard cap, in your Bitpanda currency (CHF). The bot never has more than this in coins. "
      "Above your account total (e.g. 2000) = the whole account; the Daily Brain splits it into equal slots."},
-    {"key": "live.max_order", "label": "Biggest single order", "min": 1, "max": 500, "step": 1,
-     "group": "Live money", "help": "No real buy is bigger than this, in CHF. Bigger amounts are split into equal orders."},
+    {"key": "live.max_order", "label": "Biggest single order", "min": 1, "max": 100, "step": 1,
+     "group": "Live money", "help": "No real buy is bigger than this, in account currency (default CHF). All traders share this limit; the absolute code ceiling is 100 in account currency."},
     {"key": "live.max_spread_pct", "label": "Skip a buy when the spread is above (%)", "min": 0.1, "max": 5, "step": 0.1,
      "group": "Live money", "help": "Before every real buy the Risk Officer reads Fusion's order book. If the gap between "
      "buy and sell price is wider than this, the buy is skipped: you'd lose that gap the moment you buy."},
@@ -43,7 +43,7 @@ DEFAULTS = {
     "ai.news_ai": True,
     "ai.professor_on": True,
     "live.max_invest": 25.0,
-    "live.max_order": 10.0,
+    "live.max_order": 100.0,
     "live.max_spread_pct": 1.0,
     "live.use_my_coins": False,
     "phone.morning_hour": 7,
@@ -66,7 +66,10 @@ def coerce(key: str, value):
         raise ValueError(f"unknown setting {key}")
     if c.get("bool"):
         return bool(value)
+    import math
     v = float(value)
+    if not math.isfinite(v):
+        raise ValueError(f"{key} must be finite")
     v = max(c["min"], min(c["max"], v))
     return int(round(v)) if c.get("int") else round(v, 4)
 

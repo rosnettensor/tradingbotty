@@ -18,7 +18,7 @@ from fakes import FakeFusion, _engine  # noqa: E402
 
 
 def test_controls_are_clamped_and_never_unlock_debt():
-    assert controls.coerce("live.max_order", 9999) == 500
+    assert controls.coerce("live.max_order", 9999) == 100
     assert controls.coerce("live.max_invest", -5) == 2
     for key in ("risk.allow_margin", "risk.allow_short", "paper.fee_pct"):
         with pytest.raises(ValueError):
@@ -58,7 +58,7 @@ def test_caps_spread_and_cash_are_checked_on_every_buy(tmp_path, monkeypatch):
     e.set_controls({"live.max_invest": 30, "live.max_order": 50, "live.use_my_coins": False})
     amount, _ = asyncio.run(e._live_buy("BTC", 25, "t"))
     assert amount == 25 and e.risk_log[-1]["result"] == "sent"
-    assert [c[0] for c in e.risk_log[-1]["checks"]] == ["kill switch", "cap on money in coins", "Fusion minimum",
+    assert [c[0] for c in e.risk_log[-1]["checks"]] == ["kill switch", "cap on money in coins", "cash-only risk gate", "Fusion minimum",
                                                        "spread", "cash incl. fee room"]
     amount, _ = asyncio.run(e._live_buy("SOL", 25, "t"))           # only 5 left under the 30 cap
     assert amount == 5

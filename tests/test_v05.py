@@ -151,7 +151,7 @@ def test_guardian_blocks_buys_after_hack_news(tmp_path, monkeypatch):
     assert "SOL" in e.guard() and e.guard()["SOL"]["reason"] == "hack"
     asyncio.run(e.set_brain(True, STRAT))
     asyncio.run(e.brain_tick())
-    assert [s for s, _ in f.buys] == ["BTC"] and "Guardian blocks it" in e.brain()["note"]
+    assert {s for s, _ in f.buys} == {"BTC"} and all(a <= 100 for _, a in f.buys) and "Guardian blocks it" in e.brain()["note"]
     e.bb.news_events = [_hack("SOL", "CoinDesk", age=4 * DAY)]       # 3 days later the block is gone
     e.db.set("guard", {})
     asyncio.run(e.guard_tick())
@@ -186,7 +186,7 @@ def test_professor_can_block_a_buy_but_never_sells(tmp_path, monkeypatch):
     f.bal["ETH"] = 0.0
     asyncio.run(e.set_brain(True, STRAT))
     asyncio.run(e.brain_tick())
-    assert [s for s, _ in f.buys] == ["BTC"] and "ETH not bought" in e.brain()["note"]
+    assert {s for s, _ in f.buys} == {"BTC"} and all(a <= 100 for _, a in f.buys) and "ETH not bought" in e.brain()["note"]
 
 
 def test_professor_reviews_each_decision_once(tmp_path, monkeypatch):

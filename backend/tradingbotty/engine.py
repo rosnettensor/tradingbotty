@@ -14,7 +14,8 @@ import re
 import time
 from collections import deque
 
-from . import altdata, controls, fastlab, market, patterns, research, thinktank
+from . import altdata, controls, fastlab, market, patterns, research, thinktank, risk
+from .speculation import Speculation
 from .chatorders import ChatOrders
 from .stance import Stance, swiss
 from . import scoreboard
@@ -28,7 +29,7 @@ from .agents.crew import (DailyBrain, DataCollector, FastTrader, FusionScout, Gu
                           PatternHunter, Professor, RegimeRadar, Researcher, RiskOfficer, ThinkTank, TrendWatch,
                           AIManager)
 from .brokers.bitpanda import BitpandaBroker
-from .brokers.fusion import FusionBroker
+from .brokers.fusion import FusionBroker, FusionPendingOrder
 from .bus import Bus
 from .config import Settings
 from .data.prices import PriceFeed
@@ -90,6 +91,8 @@ class Engine:
         self.bb = Blackboard()
         self.live: FusionBroker | BitpandaBroker | None = None
         self.live_errors = 0
+        self._order_lock = asyncio.Lock()
+        self.speculation = Speculation(self)
         self.shocks: dict[str, dict] = {}          # Fusion Scout's crash alerts
         self.trend: dict = {}                      # Trend Watch's preview of tonight's decision
         self.risk_log: deque = deque(self.db.get("risk_log", []), maxlen=40)
@@ -152,7 +155,7 @@ class Engine:
         overrides = self.db.get("controls", {})
         overrides.update({
             "live.max_invest": 2000,             # = the whole account: the brain never uses more than the account holds
-            "live.max_order": 150,               # one order per coin (a third of the account is about 115 CHF)
+            "live.max_order": 100,               # one order per coin (a third of the account is about 115 CHF)
             "live.max_spread_pct": 1.0,
             "live.use_my_coins": True,
         })
@@ -164,7 +167,7 @@ class Engine:
             self.db.set("brain", b)
         self.db.set("tuned", "2026-10-05")
         self.db.log("Engine", "info", "Settings tuned for the daily brain: whole account, about a third per coin, "
-                                      "orders up to 150 CHF. Change anything in Controls.")
+                                      "orders up to 100 CHF. Change anything in Controls.")
 
     def _retire_paper(self) -> None:
         """v0.5: the pretend-money lane (minute strategies, champion contest, Optimizer) is gone. Its old records stay
@@ -1063,7 +1066,17 @@ class Engine:
     def diary(self, limit: int = DIARY_MAX) -> list[dict]:
         return (self.db.get("diary") or [])[:limit]
 
-    async def _live_sell(self, symbol: str, reason: str, book: str = "brain", fraction: float = 1.0) -> dict | None:
+    async def _live_sell(self, *args, **kwargs):
+        async with self._order_lock:
+            return await self._live_sell_locked(*args, **kwargs)
+
+    def _unresolved(self, ex):
+        self.db.set("unresolved_order", {"ts": time.time(), "order": ex.order})
+        self.db.set("mode", "paper")
+        self.set_kill_switch(True)
+        self._log("Risk Officer", "error", str(ex))
+
+    async def _live_sell_locked(self, symbol: str, reason: str, book: str = "brain", fraction: float = 1.0) -> dict | None:
         """Sell all of a coin the bot bought itself (or a `fraction` of it). Coins you owned before stay untouched.
         Returns the fill."""
         kq, kc = self._book_keys(book)
@@ -1074,15 +1087,21 @@ class Engine:
                 return None
             part = fraction < 0.999
             res = await self.live.sell_fraction(symbol, fraction if part else 1.0, owned=mine)
-            if part and not res:
-                return None
+            ex = (res or {}).get("execution") or {}
+            sold = min(mine, float(ex.get("quantity", 0) or 0))
+            if not math.isfinite(sold) or sold <= 0:
+                if hasattr(self.live, "total_balance") and await self.live.total_balance(symbol) == 0:
+                    # Confirmed absent, including locked coins: sold manually, not an unconfirmed fill.
+                    owned.pop(symbol, None)
+                    cost = self.db.get(kc, {})
+                    cost.pop(symbol, None)
+                    self.db.set(kq, owned)
+                    self.db.set(kc, cost)
+                return None  # no confirmed fill: retain ownership and cost
             cost = self.db.get(kc, {})
             paid = float(cost.get(symbol, 0.0) or 0.0)
-            sold = mine
-            if part:
-                sold = min(mine, float(((res or {}).get("execution") or {}).get("quantity", 0) or 0) or mine * fraction)
-            basis = {"cost": paid * sold / mine, "qty": sold}  # for the diary, before it's cleared
-            if part and mine - sold > 1e-12:
+            basis = {"cost": paid * sold / mine, "qty": sold}
+            if mine - sold > 1e-12:
                 owned[symbol], cost[symbol] = mine - sold, paid - basis["cost"]
             else:
                 owned.pop(symbol, None)
@@ -1100,6 +1119,8 @@ class Engine:
             self.live_errors = 0
             return ex
         except Exception as e:
+            if isinstance(e, FusionPendingOrder):
+                self._unresolved(e)
             self.live_errors += 1
             self._log("Live Desk", "error", f"LIVE SELL {symbol} failed: {e}")
             if self.live_errors >= 3:
@@ -1127,10 +1148,15 @@ class Engine:
                               "checks": checks, "result": result})
         self.db.set("risk_log", list(self.risk_log))
 
-    async def _live_buy(self, sym: str, want: float, reason: str, book: str = "brain") -> tuple[float, float]:
+    async def _live_buy(self, *args, **kwargs):
+        async with self._order_lock:
+            return await self._live_buy_locked(*args, **kwargs)
+
+    async def _live_buy_locked(self, sym: str, want: float, reason: str, book: str = "brain") -> tuple[float, float]:
         """One real buy of `want` in account currency, through the Risk Officer's checks, raising cash from your coins
         if allowed (daily brain only). Records it as that trader's coin. Returns (amount spent, quantity received)."""
         cfg = self.settings["live"]
+        risk.positive(want, "order amount")
         cur = self.live.currency
         checks: list[list[str]] = []
         order = f"BUY {sym} {want:.2f} {cur}"
@@ -1142,7 +1168,13 @@ class Engine:
 
         if self.kill_switch:
             raise stop("kill switch is on")
+        if self.db.get("unresolved_order"):
+            raise stop("unresolved Fusion order: reconcile it before resuming")
         checks.append(["kill switch", "ok", "off"])
+        try:
+            risk.spot_only((getattr(self.live, "pairs", {}) or {}).get(sym, {}))
+        except ValueError as ex:
+            raise stop(str(ex)) from ex
         if book == "fast":
             amount = want
             checks.append(["fast pot", "ok", f"{want:.2f} {cur} from the fast pot (its own limit, set in the Fast Trader Lab)"])
@@ -1158,6 +1190,37 @@ class Engine:
             self.agent("livedesk").say(f"{reason}: lowered {want:.2f} to {amount:.2f} {cur} for {sym} to stay inside your "
                                        f"cap of {cfg['max_invest']:.0f} {cur} in bot trades (raise it in Controls).", "warn")
         pairs = getattr(self.live, "pairs", None) or {}
+        if amount <= 0:
+            raise stop("investment cap is full")
+        try:
+            # Fresh account-currency marks for all books; stale dashboard values never authorize a buy.
+            bal = await self.live.balances()
+            prices = await self.live.prices() if hasattr(self.live, "prices") else {}
+            owned, costs = {}, {}
+            for prefix in ("live", "fast", "test"):
+                for s, q in self.db.get(prefix + "_qty", {}).items():
+                    owned[s] = owned.get(s, 0.0) + q
+                for s, c in self.db.get(prefix + "_cost", {}).items():
+                    costs[s] = costs.get(s, 0.0) + c
+            unrealized = 0.0
+            for s, q in owned.items():
+                if q > 0:
+                    px = risk.positive(prices.get(s), f"{s} risk price")
+                    unrealized += max(0.0, costs.get(s, 0.0) - q * px)
+            day = time.time() // 86400 * 86400
+            realized = self.db.query("SELECT COALESCE(SUM(-pnl),0) loss FROM trades "
+                                     "WHERE mode='live' AND side='SELL' AND pnl<0 AND ts>=?", (day,))[0]["loss"]
+            loss = realized + unrealized
+            positions = {s for s, q in owned.items() if q > 0}
+            amount = risk.approve(amount, cfg["max_order"], loss, positions, sym,
+                                  int(self.settings["risk"]["max_open_positions"]))
+            self.db.set("risk_status", {"ts": time.time(), "daily_loss": round(loss, 2),
+                                       "daily_limit": risk.MAX_DAILY_LOSS, "single_limit": risk.MAX_TRADE,
+                                       "currency": cur, "positions": len(positions)})
+            checks.append(["cash-only risk gate", "ok", f"order ≤ {min(cfg['max_order'], risk.MAX_TRADE):g} {cur}; "
+                           f"loss {loss:.2f}/{risk.MAX_DAILY_LOSS:g}; {len(positions)} positions"])
+        except Exception as ex:
+            raise stop(str(ex)) from ex
         min_amt = self._min_order(sym, pairs)
         if amount < max(min_amt, 1):
             raise stop(f"{amount:.2f} {cur} is below the minimum order ({max(min_amt, 1):g} {cur}) or your cap is full")
@@ -1165,9 +1228,11 @@ class Engine:
         if hasattr(self.live, "spread_pct"):
             try:
                 spread = await self.live.spread_pct(sym)
-            except Exception as ex:  # can't read the book: liquid coins only, so the order goes ahead
-                checks.append(["spread", "unknown", f"order book unreadable ({str(ex)[:60]})"])
+            except Exception as ex:
+                raise stop(f"spread unavailable: {str(ex)[:60]}") from ex
             else:
+                if not math.isfinite(spread) or spread < 0:
+                    raise stop("invalid spread")
                 if spread > cfg["max_spread_pct"]:
                     self.ghosts.add(book, sym, "risk", f"Spread {spread:.2f}% über deinem Limit", amount)
                     raise stop(f"spread {spread:.2f}% is above your {cfg['max_spread_pct']}% limit")
@@ -1188,16 +1253,26 @@ class Engine:
                            + (" (the fast pot never sells your coins)" if book == "fast"
                               else "" if cfg.get("use_my_coins") else " (the bot may not sell your coins)"))
         checks.append(["cash incl. fee room", "ok", f"{amount:.2f} ≤ 99.5% of {bal.get('FIAT', 0.0):.2f} {cur}"])
+        if self.kill_switch:
+            raise stop("kill switch is on")
         before = self._live_held(bal, sym)
         try:
             res = await self.live.buy(sym, amount)
         except Exception as e:
+            if isinstance(e, FusionPendingOrder):
+                self._unresolved(e)
             if self._learn_min(sym, e):
                 raise stop(f"Fusion wants more than {amount:.2f} {cur} for {sym}; noted for next time") from e
             self._risk_note(order, checks + [["Fusion", "refused", str(e)[:120]]], "refused by Fusion")
             raise
         ex = (res or {}).get("execution", {}) or {}
         got = float(ex.get("quantity", 0) or 0) or max(0.0, self._live_held(await self.live.balances(), sym) - before)
+        if not math.isfinite(got) or got <= 0:
+            pending = FusionPendingOrder({"id": (res or {}).get("order_id"), "status": "fill unconfirmed"})
+            self._unresolved(pending)
+            raise pending
+        # Cancelled/closed orders may fill only part of the requested amount.
+        amount = float(ex.get("notional") or amount)
         ex = {**ex, "quantity": got}  # the booked quantity is what really arrived
         kq, kc = self._book_keys(book)
         cost = self.db.get(kc, {})
@@ -1243,12 +1318,15 @@ class Engine:
             try:
                 res = await self.live.sell_fraction(sym, frac)
             except Exception as e:
+                if isinstance(e, FusionPendingOrder):
+                    self._unresolved(e)
+                    raise
                 self._learn_min(sym, e)
                 self.agent("livedesk").say(f"Couldn't sell your {sym} to fund a buy: {str(e)[:120]}", "warn")
                 continue
             ex = (res or {}).get("execution") or {}
             if not float(ex.get("quantity", 0) or 0):
-                ex = {**ex, "quantity": qty * frac}
+                continue  # never manufacture a fill from the requested quantity
             got = float(ex.get("notional", 0) or 0) - float(ex.get("fee", 0) or 0)
             self._record(sym, "SELL", ex, float(ex.get("notional", 0) or 0), "your coin, sold for cash (you allowed it)")
             self.agent("livedesk").say(f"Sold {frac * 100:.0f}% of your {sym} for {got:.2f} {self.live.currency} "
@@ -1759,6 +1837,7 @@ class Engine:
             self._every(lambda: 60, self.snapshot),
             self._every(lambda: 2, self.publish_prices),
             self._every(lambda: 600, self._scan),
+            self._every(lambda: 120, self.speculation.scan),
             self._every(lambda: 30, self._poll_wallet),
             self._every(lambda: 300, self.brain_tick),
             self._every(lambda: 60, self.fast.tick),
@@ -1847,6 +1926,7 @@ class Engine:
                      for e in self.bb.news_events[:25]],
             "live_trades": self.db.query("SELECT COUNT(*) n, MAX(ts) last FROM trades WHERE mode='live'")[0],
             "fast": self.fast.status(),
+            "risk_status": self.db.get("risk_status", {}),
             "live_caps": {k: self.settings["live"][k] for k in ("max_invest", "max_order", "max_spread_pct", "use_my_coins")},
         }
         if not light:

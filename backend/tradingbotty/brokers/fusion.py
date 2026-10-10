@@ -14,15 +14,26 @@ from __future__ import annotations
 
 import asyncio
 import math
+from decimal import Decimal
 
 import httpx
+from ..risk import positive, spot_only
 
 BASE = "https://api.fusion.bitpanda.com"
 DONE = {"filled", "cancelled", "canceled", "rejected", "expired", "closed"}
 
 
 class FusionError(RuntimeError):
-    pass
+    def __init__(self, message, http_status=None):
+        self.http_status = http_status
+        super().__init__(message)
+
+
+class FusionPendingOrder(FusionError):
+    """Execution is uncertain: stop trading and reconcile the order in Fusion."""
+    def __init__(self, order):
+        self.order = order
+        super().__init__(f"order {order.get('id')} is unresolved ({order.get('status')}); check Fusion before resuming")
 
 
 def _floor(x: float, step: float) -> float:
@@ -32,7 +43,7 @@ def _floor(x: float, step: float) -> float:
 
 
 def _fmt(x: float, step: float) -> str:
-    decimals = max(0, -int(math.floor(math.log10(step)))) if step and step < 1 else 0
+    decimals = max(0, -Decimal(str(step)).normalize().as_tuple().exponent) if step else 0
     return f"{x:.{decimals}f}"
 
 
@@ -48,7 +59,7 @@ class FusionBroker:
     async def _req(self, method: str, path: str, **kw):
         r = await self.client.request(method, path, **kw)
         if r.status_code >= 400:
-            raise FusionError(f"{method} {path} -> {r.status_code}: {r.text[:200]}")
+            raise FusionError(f"{method} {path} -> {r.status_code}: {r.text[:200]}", r.status_code)
         return r.json() if r.content else {}
 
     async def connect(self) -> dict:
@@ -74,14 +85,32 @@ class FusionBroker:
 
     async def prices(self) -> dict[str, float]:
         """Current price of every coin in our currency (one request)."""
-        body = await self._req("GET", "/v1/tickers")
-        items = body if isinstance(body, list) else body.get("data", [])
+        items = await self.tickers()
         out = {}
         for t in items:
             base, _, quote = str(t.get("pair", "")).upper().partition("-")
             if quote == self.currency and t.get("price"):
                 out[base] = float(t["price"])
         return out
+
+    async def tickers(self) -> list[dict]:
+        body = await self._req("GET", "/v1/tickers")
+        return body if isinstance(body, list) else body.get("data", [])
+
+    async def liquidity(self, symbol: str) -> dict:
+        """Displayed depth in quote currency, within 1% of the best bid/ask."""
+        book = await self._req("GET", f"/v1/orderbook/{self._pair(symbol)['pair']}", params={"depth": 10})
+        bids, asks = book.get("bids") or [], book.get("asks") or []
+        if not bids or not asks:
+            raise FusionError("empty order book")
+        bid, ask = positive(bids[0]["price"], "bid"), positive(asks[0]["price"], "ask")
+        if ask < bid:
+            raise FusionError("crossed order book")
+        def depth(rows, best):
+            return sum(positive(r["price"], "price") * positive(r["quantity"], "quantity")
+                       for r in rows if abs(float(r["price"]) / best - 1) <= 0.01)
+        return {"spread_pct": (ask - bid) / ((ask + bid) / 2) * 100,
+                "depth_quote": min(depth(bids, bid), depth(asks, ask))}
 
     async def balances(self) -> dict[str, float]:
         """Available amount per symbol, plus fiat under 'FIAT'."""
@@ -91,31 +120,63 @@ class FusionBroker:
         out["FIAT"] = out.get(self.currency, 0.0)
         return out
 
+    async def total_balance(self, symbol: str) -> float:
+        """Available plus locked: a user limit order is not proof that coins were sold."""
+        body = await self._req("GET", "/v1/account/balances")
+        items = body if isinstance(body, list) else body.get("data", [])
+        for b in items:
+            if str(b.get("symbol", "")).upper() == symbol.upper():
+                total = float(b.get("available") or 0) + float(b.get("locked") or 0)
+                if not math.isfinite(total) or total < 0:
+                    raise FusionError("invalid total balance")
+                return total
+        return 0.0
+
     def _pair(self, symbol: str) -> dict:
         p = self.pairs.get(symbol.upper())
         if not p:
             raise FusionError(f"{symbol}-{self.currency} is not tradable on Fusion")
+        spot_only(p)
         return p
 
     async def _order(self, body: dict) -> dict:
-        order = await self._req("POST", "/v1/account/orders", json=body)
+        try:
+            order = await self._req("POST", "/v1/account/orders", json=body)
+        except (httpx.TransportError, ValueError) as ex:
+            # A timed-out POST may already have reached the exchange. Never retry automatically.
+            raise FusionPendingOrder({"id": None, "status": "unknown", "request": body}) from ex
+        except FusionError as ex:
+            if ex.http_status and ex.http_status >= 500:
+                raise FusionPendingOrder({"id": None, "status": "unknown", "request": body}) from ex
+            raise
         oid = order.get("id")
         for _ in range(20):  # market orders fill fast; wait up to ~10 seconds for the final state
             if str(order.get("status", "")).lower() in DONE or not oid:
                 break
             await asyncio.sleep(0.5)
-            order = await self._req("GET", f"/v1/account/orders/{oid}")
+            try:
+                order = await self._req("GET", f"/v1/account/orders/{oid}")
+            except Exception as ex:
+                raise FusionPendingOrder(order) from ex
         status = str(order.get("status", "")).lower()
+        if status not in DONE or not oid:
+            raise FusionPendingOrder(order)
         if status in ("rejected", "cancelled", "canceled", "expired") and not float(order.get("filledQuantity") or 0):
             raise FusionError(f"order {status}: {str(order)[:200]}")
         qty = float(order.get("filledQuantity") or 0)
         price = float(order.get("filledAveragePrice") or 0)
+        try:
+            positive(qty, "filled quantity")
+            positive(price, "fill price")
+        except ValueError as ex:
+            raise FusionPendingOrder(order) from ex
         fee = order.get("fee") or {}
         return {"order_id": oid, "status": status,
                 "execution": {"quantity": qty, "price": price, "notional": round(qty * price, 2),
                               "fee": float(fee.get("amount", 0) or 0) if isinstance(fee, dict) else 0.0}}
 
     async def buy(self, symbol: str, fiat_amount: float) -> dict:
+        positive(fiat_amount, "order amount")
         p = self._pair(symbol)
         bal = await self.balances()
         if fiat_amount > bal["FIAT"] + 1e-9:
@@ -124,6 +185,8 @@ class FusionBroker:
         if amount < float(p.get("minOrderAmount") or 0):
             raise FusionError(f"{amount} {self.currency} is below Fusion's minimum for {symbol}")
         step = float(p.get("amountIncrement") or 0.01)
+        if amount > float(p.get("maxOrderAmount") or float("inf")):
+            raise FusionError("buy exceeds Fusion's maximum order amount")
         return await self._order({"pair": p["pair"], "side": "Buy", "type": "Market", "amount": _fmt(amount, step)})
 
     async def sell_fraction(self, symbol: str, fraction: float, owned: float | None = None) -> dict | None:
