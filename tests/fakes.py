@@ -1,5 +1,6 @@
 """A fake Bitpanda Fusion account and a simulated engine for tests (no real money, no network)."""
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,4 +55,8 @@ def _engine(tmp_path, monkeypatch, live):
     e = Engine(load_settings())
     e.live = live
     e.db.set("mode", "live")
+    from tradingbotty import bank
+    e.db.set("research", {"ts": time.time(), "simulated": False,
+                         "rows": [{"name": name, "robust": True, "full": {}, "skill_prob": 0.9} for name in
+                                  ["Breakout 20/10 days, 3 slots, BTC filter 50d", *bank.NEW]]})
     return e

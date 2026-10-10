@@ -9,6 +9,7 @@ import asyncio
 import time
 
 from . import bank as bank_mod
+from .readiness import evidence
 
 TEST_COIN = "BTC"
 TEST_MIN = 26.0           # Fusion's minimum is 25 (30 for some coins): a little above, so the sell clears it too
@@ -167,6 +168,19 @@ def checks(e) -> dict:
     ch = e.phone_channels()
     rows.append(_row("phone", "ok" if ch else "info", "Handy-Push", ", ".join(ch) if ch else "kein Kanal eingerichtet"))
 
+    entry_checks = {
+        "daily": evidence(e.db.get("research"), b.get("strategy", "")),
+        "fast": evidence(e.db.get("fastlab"), e.fast.cfg().get("strategy", "")),
+    }
+    for key, label, enabled in (("daily", "Daily Brain", b.get("on")), ("fast", "Fast Pot", f["on"])):
+        proof = entry_checks[key]
+        rows.append(_row(key + "_evidence", "ok" if proof["ready"] else "warn" if enabled else "info",
+                         label + " · Kaufprüfung", proof["reason"],
+                         None if proof["ready"] else "Research: Labor mit Marktdaten ausführen und robuste Strategie wählen"))
+    if e.db.get("unresolved_order"):
+        rows.append(_row("unresolved", "fail", "Ungeklärte Order", "Eine Order hat noch keinen sicher verbuchten Abschluss",
+                         "Order und Kontobestand in Fusion abgleichen; keinen weiteren Kauf starten"))
+
     # proof: the last real order, the last test
     last = e.db.query("SELECT MAX(ts) t FROM trades WHERE mode='live'")[0]["t"]
     rows.append(_row("last_trade", "info", "Letzte echte Order", _ago(last)))
@@ -176,7 +190,9 @@ def checks(e) -> dict:
                          f"{_ago(t['ts'])}: {t.get('summary', '')}", None if t.get("ok") else "Unten nochmals testen"))
     blocking = [r for r in rows if r["state"] == "fail"]
     return {"ts": now, "rows": rows, "overall": "fail" if blocking else "warn" if any(r["state"] == "warn" for r in rows) else "ok",
-            "trade_ready": not blocking and free >= TEST_MIN, "test": t, "test_amount": test_amount(e), "currency": cur}
+            "entry_checks": entry_checks,
+            "trade_ready": not blocking and not e.settings.simulate and free >= test_amount(e) * 1.005
+                           and e.settings["live"]["max_order"] >= test_amount(e), "test": t, "test_amount": test_amount(e), "currency": cur}
 
 
 def test_amount(e) -> float:

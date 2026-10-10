@@ -1392,11 +1392,14 @@ class Engine:
         last = (self.db.get("research") or {}).get("ts", 0)
         names = {r["name"] for r in (self.db.get("research") or {}).get("rows") or []}
         new = names and any(n not in names for n in bank_mod.NEW)  # new proposals: test them now, not tomorrow
-        if ((now // 86400 > last // 86400 and now % 86400 > 900) or new) and now - tried.get("research", 0) > 3600:
-            tried["research"] = now  # a failed run (no data reachable) is tried again in an hour, not every tick
-            await self.run_research()
+        if ((now // 86400 > last // 86400 and now % 86400 > 900) or new) and now - tried.get("research", 0) > 300:
+            tried["research"] = now  # a failed data read is retried in five minutes
+            try:
+                await self.run_research()
+            except Exception as ex:
+                self._log("Researcher", "warn", f"Daily lab failed; fast lab still runs: {str(ex)[:120]}")
         last = (self.db.get("fastlab") or {}).get("ts", 0)
-        if now // 86400 > last // 86400 and now % 86400 > 1800 and now - tried.get("fast", 0) > 3600:
+        if now // 86400 > last // 86400 and now % 86400 > 1800 and now - tried.get("fast", 0) > 300:
             tried["fast"] = now
             try:
                 await self.run_fastlab()
@@ -1458,7 +1461,8 @@ class Engine:
         self._brain_busy = True
         try:
             cd = await self._daily_candles()
-            if b.get("day") == cd.days[-1]:
+            lab_ts = (self.db.get("research") or {}).get("ts")
+            if b.get("day") == cd.days[-1] and not (b.get("entry_blocked") and b.get("lab_ts") != lab_ts):
                 return
             strat = research.by_name(b["strategy"])
             if not strat:
@@ -1473,11 +1477,12 @@ class Engine:
             else:
                 target = research.current_target(cd, strat)
             regime = getattr(strat, "regime", None)
+            self._brain_entry_blocked = False
             note, steps = await self._brain_rebalance(target, name, cd, strat, owners)
             steps = bank_steps + steps
             b = {**self.brain(), "day": cd.days[-1], "ts": time.time(), "target": target, "note": note, "steps": steps,
                  "regime_days": regime, "btc_ok": research.btc_uptrend(cd, len(cd.days) - 1, regime) if regime else None,
-                 "explain": strat.explain,
+                 "explain": strat.explain, "entry_blocked": self._brain_entry_blocked, "lab_ts": lab_ts,
                  "owners": {k: getattr(v, "name", str(v)) for k, v in (owners or {}).items() if v},
                  "probe": (self.bank.cfg().get("report") or {}).get("probe") if self.bank.mode() == "probe" else None}
             self.db.set("brain", b)
@@ -1531,6 +1536,23 @@ class Engine:
         if course["key"] != "normal":
             steps.append(f"Your course: {course['name']}: {course['what']}")
         for sym, w in sorted(target.items(), key=lambda kv: -kv[1]):
+            if strat is not None:
+                from .readiness import evidence
+                selected = (owners or {}).get(sym) or strat
+                proof = evidence(self.db.get("research"), selected.name)
+                if owners is not None:
+                    report = self.bank.cfg().get("report") or {}
+                    split = report.get("probe_split" if self.bank.mode() == "probe" else "split") or {}
+                    for contributor, share in split.items():
+                        if share > 0 and research.by_name(contributor):
+                            check = evidence(self.db.get("research"), contributor)
+                            if not check["ready"]:
+                                proof = check
+                                break
+                if not proof["ready"]:
+                    self._brain_entry_blocked = True
+                    done.append(f"{sym}: neue Käufe gesperrt: {proof['reason']}")
+                    continue
             if pairs and sym not in pairs:
                 done.append(f"{sym} isn't on Fusion")
                 continue
@@ -1839,7 +1861,7 @@ class Engine:
             self._every(lambda: 600, self._scan),
             self._every(lambda: 120, self.speculation.scan),
             self._every(lambda: 30, self._poll_wallet),
-            self._every(lambda: 300, self.brain_tick),
+            self._every(lambda: 60, self.brain_tick),
             self._every(lambda: 60, self.fast.tick),
             self._every(lambda: 60, self.fast.watch),
             self._every(lambda: 60, self.stance.tick),
@@ -1847,7 +1869,7 @@ class Engine:
             self._every(lambda: 60, self.guard_tick),
             self._every(lambda: 60, self.morning_tick),
             self._every(lambda: 60, self.weekly_tick),
-            self._every(lambda: 1800, self.research_tick),
+            self._every(lambda: 300, self.research_tick),
             self._every(lambda: 240, self.thinktank_tick),
         )
 

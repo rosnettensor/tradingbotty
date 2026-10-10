@@ -5,6 +5,7 @@ volatility; momentum is between observed scans, not a claimed 24-hour return.
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 
@@ -46,14 +47,26 @@ def paper_step(portfolio: dict, rows: list[dict], now: float, fee_pct: float,
     p = {"cash": 1000.0, "positions": {}, "trades": [], "realized": 0.0, **portfolio}
     p["positions"] = {s: dict(v) for s, v in p["positions"].items()}
     p["trades"] = list(p["trades"])
+    day = now // 86400 * 86400
+    if p.get("loss_day") != day:
+        p["daily_loss"] = sum(max(0.0, -t.get("pnl", 0)) for t in p["trades"] if t["ts"] >= day)
+        p["loss_day"] = day
+    # Metrics begin here for existing portfolios; never invent truncated history.
+    p.setdefault("metrics_since", now)
+    p.setdefault("closed_count", 0)
+    p.setdefault("wins", 0)
+    p.setdefault("fees_paid", 0.0)
+    p["observations"] = p.get("observations", 0) + 1
     fee, slip = fee_pct / 100, slippage_pct / 100
     by = {r["symbol"]: r for r in rows}
     closed = set()
     for s, pos in list(p["positions"].items()):
         r = by.get(s)
+        pos["stale"] = not bool(r)
         if not r:
             continue  # missing prices don't create a fabricated fill
         pos["mark"] = r["price"]
+        pos["mark_ts"] = now
         ratio = r["price"] / pos["entry"] - 1
         if ratio > -0.08 and ratio < 0.20 and now - pos["ts"] < 86400:
             continue
@@ -61,13 +74,18 @@ def paper_step(portfolio: dict, rows: list[dict], now: float, fee_pct: float,
         pnl = received - pos["cost"]
         p["cash"] += received
         p["realized"] += pnl
+        p["daily_loss"] += max(0.0, -pnl)
+        p["closed_count"] += 1
+        p["wins"] += int(pnl > 0)
+        p["fees_paid"] += pos["qty"] * r["price"] * (1 - slip) * fee
         p["trades"].append({"ts": now, "symbol": s, "side": "SELL", "pnl": round(pnl, 2)})
         del p["positions"][s]
         closed.add(s)
-    day = now // 86400 * 86400
-    realized_loss = sum(max(0.0, -t.get("pnl", 0)) for t in p["trades"] if t["ts"] >= day)
+    realized_loss = p["daily_loss"]
     unrealized_loss = sum(max(0.0, v["cost"] - v["qty"] * v["mark"]) for v in p["positions"].values())
-    paused = paused or realized_loss + unrealized_loss >= 200
+    p["loss_used"] = round(realized_loss + unrealized_loss, 2)
+    p["paused"] = paused or p["loss_used"] >= 200
+    paused = p["paused"]
     # 3 slots, <=100 quote currency per trade, cash-only; no new buys under kill switch.
     for r in rows:
         s = r["symbol"]
@@ -80,11 +98,18 @@ def paper_step(portfolio: dict, rows: list[dict], now: float, fee_pct: float,
         entry = r["price"] * (1 + slip)
         cost = amount * (1 + fee)
         p["cash"] -= cost
-        p["positions"][s] = {"qty": amount / entry, "entry": entry, "cost": cost, "ts": now, "mark": r["price"]}
+        p["fees_paid"] += amount * fee
+        p["positions"][s] = {"qty": amount / entry, "entry": entry, "cost": cost, "ts": now, "mark": r["price"], "mark_ts": now, "stale": False}
         p["trades"].append({"ts": now, "symbol": s, "side": "BUY", "amount": amount})
     p["trades"] = p["trades"][-200:]
     p["equity"] = round(p["cash"] + sum(v["qty"] * v["mark"] for v in p["positions"].values()), 2)
     p["return_pct"] = round((p["equity"] / 1000 - 1) * 100, 2)
+    p["stale_positions"] = [s for s, v in p["positions"].items() if v.get("stale")]
+    history = list(p.get("history", []))
+    history.append([now, p["equity"]])
+    p["history"] = history[-720:]  # last 24 hours at the normal two-minute cadence
+    p["peak_equity"] = max(p.get("peak_equity", max(1000.0, p["equity"])), p["equity"])
+    p["max_drawdown_pct"] = max(p.get("max_drawdown_pct", 0), (1 - p["equity"] / p["peak_equity"]) * 100)
     return p
 
 
@@ -115,20 +140,36 @@ class Speculation:
             rows = rank(tickers, broker.pairs, previous, now)
             if not rows:
                 raise ValueError("no valid Fusion tickers")
-            for r in rows[:10]:
-                r["eligible"] = False
-                try:
-                    liquidity = await broker.liquidity(r["symbol"])
-                    if not all(math.isfinite(v) and v >= 0 for v in liquidity.values()):
-                        raise ValueError("invalid liquidity")
-                    r.update(liquidity)
-                    r["eligible"] = (r["range_pct"] >= 8 and r["spread_pct"] <= e.settings["live"]["max_spread_pct"]
-                                     and r["depth_quote"] >= 1000 and r["min_order"] <= 100)
-                except Exception:
-                    r["note"] = "liquidity unavailable; excluded"
+            for r in rows:
+                r.update(eligible=False, note="Außerhalb der Top 10: Orderbuch nicht geprüft")
+            semaphore = asyncio.Semaphore(3)
+            async def qualify(r):
+                async with semaphore:
+                    try:
+                        liquidity = await broker.liquidity(r["symbol"])
+                        if not all(math.isfinite(liquidity[k]) and liquidity[k] >= 0
+                                   for k in ("spread_pct", "depth_quote")):
+                            raise ValueError("invalid liquidity")
+                        r.update(liquidity)
+                        reasons = []
+                        if r["range_pct"] < 8: reasons.append("24h-Spanne unter 8%")
+                        if r["spread_pct"] > e.settings["live"]["max_spread_pct"]: reasons.append("Spread zu hoch")
+                        if r["depth_quote"] < 1000: reasons.append("Orderbuchtiefe unter 1.000")
+                        if r["min_order"] > 100: reasons.append("Mindestorder über 100")
+                        r["eligible"] = not reasons
+                        r["note"] = " · ".join(reasons) if reasons else (
+                            "Referenzscan fehlt" if r["momentum_pct"] is None else
+                            "Paper-Signal" if r["breakout"] and r["momentum_pct"] >= 2 else "Wartet auf Ausbruch + Momentum")
+                    except Exception:
+                        r["note"] = "Orderbuch nicht verfügbar"
+            await asyncio.gather(*(qualify(r) for r in rows[:10]))
             paper = paper_step(state.get("paper", {}), rows, now, e.settings["paper"]["fee_pct"],
                                e.settings["paper"]["slippage_pct"], e.kill_switch)
-            e.db.set("speculation", {"ts": now, "currency": currency, "rows": rows[:30], "paper": paper, "error": None})
+            e.db.set("speculation", {"ts": now, "currency": currency, "rows": rows[:30], "paper": paper, "error": None,
+                                       "total_pairs": len(rows), "checked_pairs": min(10, len(rows)),
+                                       "eligible_pairs": sum(r["eligible"] for r in rows),
+                                       "fee_pct": e.settings["paper"]["fee_pct"],
+                                       "slippage_pct": e.settings["paper"]["slippage_pct"]})
             e.db.set("speculation_previous", {r["symbol"]: {"ts": now, "price": r["price"], "high": r["high"]} for r in rows})
         except Exception as ex:
             e.db.set("speculation", {**state, "error": str(ex)[:160]})

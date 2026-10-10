@@ -72,7 +72,7 @@ function HistoryTest({ state, res, setRes, openAgent }) {
           <button className="primary" onClick={run} disabled={busy}>{busy ? "loading history + free data…" : res ? "run again" : "run the history test"}</button>
         </div>
       </div>
-      <p className="dim small">Decides on each day's close, trades at the next day's open, pays {res?.cost_per_side_pct ?? 0.4}% per buy or sell. <b>Robust ✓</b> = beats holding Bitcoin (risk-adjusted) in both halves AND in most calendar years, AND the skill check (deflated Sharpe, corrected for testing {res?.strategies_tested ?? "many"} strategies at once) says it's at least 80% likely not luck. The Daily Brain only trusts robust ones: if the live strategy fails three nights in a row, it switches to the best robust one. Coins are today's survivors, so the past looks a bit rosier than it was. Click rows to compare curves.</p>
+      <p className="dim small">Decides on each day's close, trades at the next day's open, pays {res?.cost_per_side_pct ?? 0.4}% per buy or sell. <b>Robust ✓</b> = beats holding Bitcoin (risk-adjusted) in both halves AND in most calendar years, AND the skill check (deflated Sharpe, corrected for testing {res?.strategies_tested ?? "many"} strategies at once) says it's at least 80% likely not luck. Automatic entries require a passed backtest on real data, no older than 48 hours. Failed evidence blocks new buys immediately; exits remain active. After three failed daily tests, the brain can switch to a robust strategy. Coins are today's survivors, so the past looks a bit rosier than it was. Click rows to compare curves.</p>
       {msg && <p className={/now manages|brain off/.test(msg) ? "ok-msg" : "err-msg"}>{msg}</p>}
       {res?.simulated && <p className="err-msg">Simulated prices (simulate mode): these numbers are not real.</p>}
       {!res && <div className="empty">No history test yet. It runs tonight by itself, or press "run the history test" (takes a minute: it downloads all daily candles and the free data).</div>}
@@ -322,7 +322,7 @@ function FastLab({ state, openAgent }) {
             <button className="primary" onClick={run} disabled={busy || running}>{busy || running ? "running…" : has ? "run again" : "run the fast lab"}</button>
           </div>
         </div>
-        <p className="dim small">4-hour candles of the {res?.coins?.length ?? 40} most traded coins that Fusion also lists, up to 3 years back. Every 4 hours each rule decides on the close and trades at the next open, paying {res?.cost_per_side_pct ?? 0.5}% per buy or sell (Fusion's fee plus a wider spread for smaller coins). Breakouts with profit-taking, pump riding, dip buying, with and without a volume check, against holding Bitcoin and against the daily brain's slow rules on the same coins. Same robustness bar as the daily lab. <b>Research only:</b> nothing here touches your money yet.</p>
+        <p className="dim small">4-hour candles of the {res?.coins?.length ?? 40} most traded coins that Fusion also lists, up to 3 years back. Every 4 hours each rule decides on the close and trades at the next open, paying {res?.cost_per_side_pct ?? 0.5}% per buy or sell (Fusion's fee plus a wider spread for smaller coins). Breakouts with profit-taking, pump riding, dip buying, with and without a volume check, against holding Bitcoin and against the daily brain's slow rules on the same coins. Same robustness bar as the daily lab. <b>Backtest results:</b> virtual historical performance. The Fast Pot controls below manage real money when LIVE is enabled.</p>
         {msg && <p className={/drives the fast pot/.test(msg) ? "ok-msg" : "err-msg"}>{msg}</p>}
         {running && (
           <div className="lab-progress">
@@ -451,7 +451,7 @@ function FastPot({ state, lab, openAgent }) {
   };
   const toggle = async () => {
     if (!f.on) {
-      const warn = row && !row.robust ? "\n\nThis rule does NOT pass every check: treat it as play money." : "";
+      const warn = row && !row.robust ? "\n\nThis rule has not passed every check. Automatic buys will remain blocked." : "";
       if (!window.confirm(`Give the fast pot ${pot.toFixed(2)} ${cur} of REAL money?\n\nRule: ${f.strategy}\nIt decides every 4 hours and may buy wild coins. It never sells your coins or the Daily Brain's, and the brain leaves this money alone. Worst case: the pot goes to zero, never more.${warn}`)) return;
     }
     setBusy(true);
@@ -475,10 +475,11 @@ function FastPot({ state, lab, openAgent }) {
           <button className={f.on ? "danger" : "primary"} onClick={toggle} disabled={busy || (!f.on && slots < 1)}>{f.on ? "switch off" : "switch on with real money"}</button>
         </div>
       </div>
+      {f.entry_check && <p className={`small ${f.entry_check.ready ? "up" : "warn"}`}>{f.entry_check.ready ? "✓" : "!"} {f.entry_check.reason}</p>}
       <div className="fastpot-grid">
         <div>
           <div className="dim small">RULE</div>
-          <div><b>{f.strategy}</b> {row ? (row.robust ? <span className="up">✓ passes every check</span> : <span className="play">play money: fails a check</span>) : ""}</div>
+          <div><b>{f.strategy}</b> {row ? (row.robust ? <span className="up">✓ passes every check</span> : <span className="play">new buys blocked: fails a check</span>) : ""}</div>
           {row && <div className="dim small">in the test: {row.full?.cagr_pct}%/yr, worst drop {row.full?.max_dd_pct}%, {row.trades} trades, fees {row.fees_pct}%/yr · pick another with "use in fast pot" below</div>}
         </div>
         <div>

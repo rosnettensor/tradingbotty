@@ -1340,3 +1340,64 @@ ol.steps { margin: 6px 0 0; padding-left: 20px; color: var(--dim); display: grid
 @media (max-width: 640px) {
   :root[data-palette="paper"] nav { background: color-mix(in srgb, #f4f4f1 88%, transparent); }
 }
+
+/* Volatility research: retain the selected palette, with calmer spacing and hierarchy. */
+.volatility-desk { display: grid; gap: 16px; min-width: 0; }
+.volatility-desk .panel { margin: 0; padding: 22px; border-radius: 12px; min-width: 0; }
+.vol-hero { display: flex; justify-content: space-between; align-items: center; gap: 24px; background: linear-gradient(120deg, var(--panel), var(--bg2)); }
+.vol-eyebrow { color: var(--dim); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; }
+.vol-hero h2 { font-family: var(--display); font-size: clamp(20px, 3vw, 32px); letter-spacing: -.03em; margin: 10px 0; color: var(--hi); }
+.vol-hero h2 .badge { display: inline-block; vertical-align: middle; font: 10px var(--mono); margin-left: 16px; color: var(--cyan); }
+.vol-hero p { margin: 0; }
+.vol-feed { display: grid; justify-items: end; gap: 10px; }
+.vol-feed button { font-size: 10px; }
+.vol-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.vol-metric { display: grid; gap: 12px; }
+.vol-metric strong { font-size: clamp(20px, 2.2vw, 30px); font-weight: 500; letter-spacing: -.04em; }
+.vol-metric small { font-size: 10px; line-height: 1.7; }
+.vol-main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; }
+.volatility-desk h3 { margin: 0 0 16px; font-size: 12px; letter-spacing: .08em; }
+.vol-chart-foot { display: flex; flex-wrap: wrap; gap: 22px; border-top: 1px solid var(--line); padding-top: 16px; font-size: 10px; color: var(--dim); }
+.vol-chart-foot b { color: var(--text); }
+.vol-rules h3 { margin-top: 12px; }
+.vol-rules ol { padding: 0; list-style: none; counter-reset: rules; display: grid; gap: 14px; }
+.vol-rules li { counter-increment: rules; display: grid; grid-template-columns: 28px 1fr; gap: 2px 10px; }
+.vol-rules li:before { content: "0" counter(rules); grid-row: span 2; color: var(--cyan); }
+.vol-rules li span { font-size: 11px; color: var(--dim); }
+.vol-rules .badge { display: inline-block; font-size: 9px; white-space: normal; }
+.vol-list-head { display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+.vol-list-head h3 { margin-bottom: 4px; }
+.vol-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.vol-filters input { min-width: 0; width: 150px; background: var(--sunk); border: 1px solid var(--line); color: var(--text); font: inherit; padding: 9px 12px; border-radius: 6px; }
+.vol-filters button { font-size: 9px; }
+.vol-filters button.active { border-color: var(--cyan); color: var(--cyan); }
+.vol-scroll { overflow-x: auto; max-width: 100%; }
+.volatility-desk td { padding: 13px 10px; font-size: 11px; }
+.volatility-desk th { padding: 8px 10px; font-size: 9px; }
+.volatility-desk tbody tr:hover { background: var(--faint); }
+.vol-range { display: inline-block; min-width: 75px; padding-bottom: 5px; background: linear-gradient(var(--cyan), var(--cyan)) left bottom / var(--range) 2px no-repeat; }
+.vol-new { display: block; font-size: 8px; color: var(--dim); margin-top: 4px; }
+.vol-position { display: flex; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.vol-position div { display: grid; gap: 6px; }
+.vol-position div:last-child { text-align: right; }
+.vol-position small { font-size: 10px; }
+.vol-wait { min-height: 160px; display: flex; flex-direction: column; justify-content: center; text-align: center; gap: 10px; color: var(--text); }
+.vol-wait small { color: var(--dim); max-width: 380px; margin: 0 auto; line-height: 1.8; }
+.vol-alert { border: 1px solid var(--amber); color: var(--amber); padding: 12px 18px; border-radius: 8px; }
+.vol-footnote { line-height: 1.8; padding: 0 8px; }
+.readiness-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.readiness-strip > div { display: grid; align-content: start; gap: 7px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--faint); }
+.readiness-strip span { font-size: 9px; letter-spacing: .08em; }
+.readiness-strip strong { font-size: 12px; }
+.readiness-strip small { font-size: 10px; line-height: 1.6; color: var(--dim); }
+.volatility-desk :is(button, input):focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+@media (max-width: 1000px) { .vol-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .vol-main { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .volatility-desk .panel { padding: 16px; } .vol-hero { align-items: start; flex-direction: column; gap: 18px; } .vol-feed { justify-items: start; } .vol-hero h2 .badge { margin: 8px 0 0 12px; } .vol-kpis { gap: 8px; } .vol-metric strong { font-size: 21px; } .vol-metric .vol-eyebrow { font-size: 8px; } .readiness-strip { grid-template-columns: 1fr; } }
+
+.go-settings { border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin: 16px 0; background: var(--faint); }
+.go-settings p { line-height: 1.7; }
+@media (max-width: 640px) {
+  .lab-switch { overflow-x: auto; padding-bottom: 4px; }
+  .lab-switch .seg { flex-wrap: nowrap; flex-shrink: 0; }
+  .lab-switch .seg button { flex: 0 0 auto; white-space: nowrap; padding: 10px 12px; }
+}

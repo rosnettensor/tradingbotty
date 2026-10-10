@@ -7,7 +7,7 @@ import widgetSource from "./widget/scriptable-widget.js?raw";
 export default function Controls({ state }) {
   return (
     <div className="controls">
-      <BotSettings />
+      <BotSettings state={state} />
       <div className="col">
         <RiskLimits state={state} />
         <Moved state={state} />
@@ -37,7 +37,7 @@ function groupBy(list, key) {
   return out;
 }
 
-function BotSettings() {
+function BotSettings({ state }) {
   const [data, reload] = usePoll("controls", 0);
   const [msg, setMsg] = useState("");
   if (!data) return <section className="panel"><div className="empty">loading…</div></section>;
@@ -45,10 +45,28 @@ function BotSettings() {
     try { await api("controls", { changes: { [key]: value } }); setMsg(""); reload(); } catch (e) { setMsg(e.message); }
   };
   const groups = groupBy(data.controls, "group");
+  const wallet = state.wallet || {};
+  const currency = wallet.currency || "CHF";
+  const fresh = wallet.ts && Date.now() / 1000 - wallet.ts < 120 && !wallet.stale && !wallet.error;
+  const cap = Math.min(2000, Math.floor((wallet.total || 0) * .98));
+  const go = async () => {
+    if (!fresh || cap < 30) return;
+    if (!window.confirm(`Kontorahmen übernehmen?\n\nDaily-Budget bis ${cap} ${currency}, maximal 100 je Order, Spread maximal 1%. Bestehende Coins dürfen zur Finanzierung verkauft werden. Der Fast-Topf behält seine Reservierung.\n\nBei bereits aktivem LIVE-Handel können die neuen Limits ab der nächsten Prüfung Orders auslösen. Der gesamte eingesetzte Betrag kann verloren gehen. Kredit, Margin und Hebel bleiben ausgeschlossen.`)) return;
+    try {
+      await api("controls", { changes: { "live.max_invest": cap, "live.max_order": 100, "live.max_spread_pct": 1, "live.use_my_coins": true } });
+      setMsg("Kontorahmen gespeichert. Strategie, Fast-Topf und LIVE-Schalter im Systemcheck prüfen."); reload();
+    } catch (e) { setMsg(e.message); }
+  };
   return (
     <section className="panel settings">
       <h3>SETTINGS <span className="dim">· apply instantly · ↺ = back to config.toml</span></h3>
-      {msg && <div className="err">{msg}</div>}
+      <div className="go-settings">
+        <span className="vol-eyebrow">STARTPROFIL · CASH ONLY</span>
+        <p>Verfügbaren Kontorahmen nutzen: <b>{cap} {currency}</b> Daily-Budget (98% des letzten Kontowerts, höchstens 2.000), maximal <b>100 {currency}</b> je Order, Spread höchstens <b>1%</b>. Der Fast-Topf wird separat reserviert.</p>
+        <button disabled={!fresh || cap < 30 || state.simulate} onClick={go}>Kontorahmen übernehmen</button>
+        <p className="dim small">Benötigt einen aktuellen Kontostand. Aktiviert weder LIVE noch eine Strategie. Vorhandene Coins werden als Finanzierung freigegeben; bei bereits laufendem Handel wirken die Limits ab der nächsten Prüfung.</p>
+      </div>
+      {msg && <div role="status" className="small">{msg}</div>}
       {Object.entries(groups).map(([g, items]) => (
         <div key={g} className="group">
           <h4>{g.toUpperCase()}</h4>

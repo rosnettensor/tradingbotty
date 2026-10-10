@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from decimal import Decimal
+from decimal import Decimal, ROUND_FLOOR
 
 import httpx
 from ..risk import positive, spot_only
@@ -39,7 +39,7 @@ class FusionPendingOrder(FusionError):
 def _floor(x: float, step: float) -> float:
     if not step or step <= 0:
         return x
-    return math.floor(x / step + 1e-9) * step
+    return float((Decimal(str(x)) / Decimal(str(step))).to_integral_value(rounding=ROUND_FLOOR) * Decimal(str(step)))
 
 
 def _fmt(x: float, step: float) -> str:
@@ -65,6 +65,7 @@ class FusionBroker:
     async def connect(self) -> dict:
         body = await self._req("GET", "/v1/pairs")
         items = body if isinstance(body, list) else body.get("data", [])
+        self.pairs = {}
         for p in items:
             if str(p.get("quoteAsset", "")).upper() == self.currency:
                 self.pairs[str(p.get("baseAsset", "")).upper()] = p
@@ -171,9 +172,16 @@ class FusionBroker:
         except ValueError as ex:
             raise FusionPendingOrder(order) from ex
         fee = order.get("fee") or {}
+        try:
+            notional = positive(order["filledAmount"], "filled amount") if "filledAmount" in order else qty * price
+            fee_amount = float(fee.get("amount", 0) or 0) if isinstance(fee, dict) else 0.0
+            if not math.isfinite(fee_amount) or fee_amount < 0:
+                raise ValueError("invalid fee")
+        except (ValueError, TypeError) as ex:
+            raise FusionPendingOrder(order) from ex
         return {"order_id": oid, "status": status,
-                "execution": {"quantity": qty, "price": price, "notional": round(qty * price, 2),
-                              "fee": float(fee.get("amount", 0) or 0) if isinstance(fee, dict) else 0.0}}
+                "execution": {"quantity": qty, "price": price, "notional": notional,
+                              "fee": fee_amount}}
 
     async def buy(self, symbol: str, fiat_amount: float) -> dict:
         positive(fiat_amount, "order amount")

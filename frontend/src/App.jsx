@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api, fmt, useBot, usePoll } from "./useBot.js";
 import Cockpit from "./Cockpit.jsx";
-import Agents from "./Agents.jsx";
-import Research from "./Research.jsx";
-import Controls from "./Controls.jsx";
-import Pulse from "./Pulse.jsx";
+const Agents = lazy(() => import("./Agents.jsx"));
+const Research = lazy(() => import("./Research.jsx"));
+const Controls = lazy(() => import("./Controls.jsx"));
+const Pulse = lazy(() => import("./Pulse.jsx"));
 import ChatBar from "./ChatBar.jsx";
 import TradeCinema, { SoundToggle } from "./TradeCinema.jsx";
 import { Sparkline } from "./charts.jsx";
@@ -50,11 +50,13 @@ export default function App() {
       <TopBar state={state} connected={connected} tab={tab} setTab={setTab} logo={media?.logo} />
       <Ticker items={state.ticker || []} onPick={(s) => { setFocus(s); setTab("pulse"); }} />
       <main>
+        <Suspense fallback={<div className="empty" role="status">Arbeitsbereich wird geladen…</div>}>
         {tab === "cockpit" && <Cockpit state={state} pulse={pulse} focus={focus} setFocus={setFocus} openAgent={openAgent} />}
         {tab === "pulse" && <Pulse state={state} focus={focus} setFocus={setFocus} />}
         {tab === "agents" && <Agents state={state} avatars={media?.avatars || {}} want={agent} />}
         {tab === "research" && <Research state={state} openAgent={openAgent} />}
         {tab === "controls" && <Controls state={state} />}
+        </Suspense>
       </main>
       <ChatBar />
       <TradeCinema trades={state.trades} currency={state.wallet?.currency || "CHF"} />

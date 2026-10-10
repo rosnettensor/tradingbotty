@@ -17,6 +17,7 @@ import math
 import time
 
 from . import fastlab, research, scoreboard
+from .readiness import evidence
 
 DEFAULT = "Dip buyer: down 15%+ in 1d inside an uptrend, 2 slots, take +10% / stop -10%"  # the one robust fast rule
 MIN_SLOT = 32.0      # per position: Fusion's 25 (some coins 30) minimum, with room for a 20% drop before it can't be sold
@@ -81,6 +82,7 @@ class FastTrader:
         return {**{k: c[k] for k in ("on", "strategy", "mode", "chf", "pct", "realized", "trades", "wins", "steps",
                                      "note", "pos", "floor")},
                 "decided": c.get("ts"), "pot": self.pot_size(c), "slots": self.slots(c), "next": nxt,
+                "entry_check": evidence(self.e.db.get("fastlab"), c["strategy"]),
                 "min_slot": MIN_SLOT, "robust": c.get("robust"), "value": self.value(c=c), "stopped": c.get("stopped")}
 
     async def set(self, on: bool | None = None, strategy: str | None = None, mode: str | None = None,
@@ -211,7 +213,9 @@ class FastTrader:
             return
         now = time.time()
         bar = (now // fastlab.BAR - 1) * fastlab.BAR  # the newest closed 4-hour candle (its open time)
-        if c.get("bar") == bar or now < bar + fastlab.BAR + SETTLE:
+        newly_ready = (c.get("entry_check", {}).get("ready") is False
+                       and evidence(e.db.get("fastlab"), c["strategy"])["ready"])
+        if (c.get("bar") == bar and not newly_ready) or now < bar + fastlab.BAR + SETTLE:
             return
         e._fast_trading = True
         try:
@@ -342,6 +346,10 @@ class FastTrader:
                 c = self.cfg()
             else:
                 done.append(f"{s}: sell didn't go through (below Fusion's minimum? sell it in the app)")
+        # Evidence gates only new entries. Existing exit rules above remain active.
+        proof = evidence(e.db.get("fastlab"), name)
+        if not proof["ready"]:
+            steps.append("Neue Käufe gesperrt: " + proof["reason"])
         # then buys, best signal first, each a slot of the pot
         brain_coins = e.db.get("live_qty", {})
         pairs = getattr(e.live, "pairs", None) or {}
@@ -353,7 +361,7 @@ class FastTrader:
                          tp=getattr(strat, "tp", None), stop=getattr(strat, "stop", None))
 
         for s in [s for s in want if s not in held]:
-            if slots < 1:
+            if slots < 1 or not proof["ready"]:
                 break
             if not course["buys"]:
                 done.append(f"{s}: signal, but your course is {course['name']}")
@@ -401,5 +409,6 @@ class FastTrader:
                  note=("; ".join(trades) if trades else "no trades") + f"; holds {', '.join(c['pos']) or 'nothing'}")
         lab = {r["name"]: r for r in (e.db.get("fastlab") or {}).get("rows", [])}
         c["robust"] = bool(lab.get(name, {}).get("robust"))
+        c["entry_check"] = proof
         self.save(c)
         e._log("Fast Trader", "live" if trades else "info", f"Fast decision ({stamp}): {c['note']}.")

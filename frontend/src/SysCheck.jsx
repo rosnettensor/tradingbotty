@@ -5,15 +5,15 @@ const MARK = { ok: ["✓", "up"], warn: ["!", "warn"], fail: ["✗", "down"], in
 
 /** Every link of the real-money chain, checked live, and a small real round trip that proves it. */
 export default function SysCheck() {
-  const [d, reload] = usePoll("syscheck", 30000);
+  const [d, reload, poll] = usePoll("syscheck", 30000);
   const [open, setOpen] = useState(false);
   const [ask, setAsk] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   if (!d) return <div className="empty small">prüfe…</div>;
   const bad = d.rows.filter((r) => r.state === "fail" || r.state === "warn");
-  const head = d.overall === "ok" ? "Alles bereit: der Bot kann echtes Geld handeln"
-    : d.overall === "warn" ? `Handelsbereit, ${bad.length} Hinweis${bad.length > 1 ? "e" : ""}`
+  const head = d.overall === "ok" ? "Technische Prüfungen bestanden · auf Handelssignal warten"
+    : d.overall === "warn" ? `${bad.length} offene Hinweise · Kaufprüfungen beachten`
       : `Blockiert: ${bad.filter((r) => r.state === "fail").map((r) => r.title).join(", ")}`;
   const test = async () => {
     setBusy(true);
@@ -25,6 +25,15 @@ export default function SysCheck() {
   const t = d.test || {};
   return (
     <>
+      {poll.error && <p role="status" className="warn">Systemcheck nicht aktualisiert: {poll.error}</p>}
+      <div className="readiness-strip">
+        {Object.entries(d.entry_checks || {}).map(([key, proof]) => <div key={key}>
+          <span className="dim">{key === "fast" ? "FAST POT · 4H" : "DAILY BRAIN · 1D"}</span>
+          <strong className={proof.ready ? "up" : "warn"}>{proof.ready ? "Backtest bestanden" : "Neue Käufe gesperrt"}</strong>
+          <small title={proof.strategy}>{proof.reason}</small>
+        </div>)}
+        <div><span className="dim">VOLATILITY · 2 MIN</span><strong>Paper-Test aktiv</strong><small>Sammelt Live-Marktdaten. Führt keine echten Orders aus.</small></div>
+      </div>
       <div className="row-head syscheck-head">
         <button className={`linkish syscheck-sum st-${d.overall}`} aria-expanded={open} onClick={() => setOpen(!open)}>
           <span className={MARK[d.overall === "fail" ? "fail" : d.overall === "warn" ? "warn" : "ok"][1]}>{MARK[d.overall === "fail" ? "fail" : d.overall === "warn" ? "warn" : "ok"][0]}</span>

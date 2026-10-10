@@ -73,19 +73,39 @@ export const fmt = {
   time: (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
 };
 
-// Fetch a GET endpoint now and every `every` ms. Returns [data, reload].
+// Serial, cancellable reads. Existing consumers still use [data, reload].
 export function usePoll(path, every = 30000, deps = []) {
   const [data, setData] = useState(null);
-  const load = () => path && api(path).then(setData).catch(() => {});
+  const [status, setStatus] = useState({ loading: true, error: "", updatedAt: null });
+  const runRef = useRef(() => {});
   useEffect(() => {
     if (!path) return;
-    let alive = true;
-    const run = () => api(path).then((d) => alive && setData(d)).catch(() => {});
+    let alive = true, busy = false;
+    const controller = new AbortController();
+    const run = async () => {
+      if (busy || !alive) return;
+      busy = true;
+      setStatus(s => ({ ...s, loading: true }));
+      try {
+        const res = await fetch(`/api/${path}`, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const next = await res.json();
+        if (alive) { setData(next); setStatus({ loading: false, error: "", updatedAt: Date.now() }); }
+      } catch (err) {
+        if (alive) setStatus(s => ({ ...s, loading: false, error: err.message }));
+      } finally { busy = false; }
+    };
+    runRef.current = run;
     run();
-    const t = every ? setInterval(run, every) : null;
-    return () => { alive = false; if (t) clearInterval(t); };
-  }, [path, ...deps]);
-  return [data, load];
+    const visible = () => { if (!document.hidden) run(); };
+    const timer = every ? setInterval(visible, every) : null;
+    if (every) document.addEventListener("visibilitychange", visible);
+    return () => {
+      alive = false; controller.abort(); clearInterval(timer);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [path, every, ...deps]);
+  return [data, () => runRef.current(), status];
 }
 
 export const pctColor = (x) => (x > 0 ? "up" : x < 0 ? "down" : "dim");

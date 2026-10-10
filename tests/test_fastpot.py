@@ -69,6 +69,8 @@ def _setup(tmp_path, monkeypatch, cd):
     m = Market()
     e = _engine(tmp_path, monkeypatch, m)
     e.wallet = {"total": 250.0, "currency": "CHF"}
+    # Stub a passed lab for execution tests; evidence rejection is tested separately.
+    e.db.set("fastlab", {"ts": time.time(), "simulated": False, "rows": [{"name": PUMP, "robust": True}]})
 
     async def candles(held):
         return cd

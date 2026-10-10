@@ -111,3 +111,14 @@ Bitpanda Fusion (your account), Kraken (live prices), Binance, Coinbase and Krak
 (Fear & Greed), Binance futures (funding), Wikimedia (page views), DefiLlama (stablecoins), blockchain.com (hash rate),
 and news RSS from CoinDesk, Cointelegraph, Decrypt, The Block, Bitcoin Magazine, CryptoSlate, CryptoPotato,
 The Defiant, Yahoo Finance, CNBC and MarketWatch (editable in Controls).
+
+
+### Readiness upgrade
+
+Automatic Daily Brain and Fast Pot entries now require a passed backtest for the selected strategy with `simulated=false` and a timestamp no older than 48 hours. Bank blends require evidence for every allocated strategy. Missing evidence blocks new entries, including top-ups; ordinary exit rules remain active. The system check shows evidence separately from account connectivity. A passed backtest is not a prediction of live profitability.
+
+Daily decisions are checked every 60 seconds, but still use closed daily candles. Fast decisions use closed 4-hour candles plus the existing 120-second settlement buffer. A decision blocked by research is reconsidered when evidence becomes available, without waiting for the next candle. Labs are checked every five minutes; a failed daily lab does not prevent the fast lab from running.
+
+Controls offers a reviewed **Kontorahmen übernehmen** profile: 98% of the latest account value (up to 2,000 in account currency), 100 per order, 1% spread ceiling, and permission to fund Daily Brain buys from existing coins. The existing Fast Pot reserve is respected. This profile requires a fresh balance and explicit user action; it does not enable LIVE or a strategy. Saved server settings are not silently overwritten by deployment.
+
+The volatility radar remains an isolated paper experiment. Its dashboard includes filtering, exclusion reasons, equity history, stale position marks and cumulative metrics from the upgrade onwards. Paper daily-loss accounting survives journal truncation. Model fees and slippage are estimates, not verified live fills. Fusion booking uses reported filled amounts without cent rounding, and quantity rounding never rounds available holdings upwards.
