@@ -7,9 +7,10 @@ from __future__ import annotations
 
 CONTROLS = [
     # ---- live money: the Risk Officer enforces these on every real order
-    {"key": "live.max_invest", "label": "Most money in coins at once", "min": 2, "max": 2000, "step": 1,
-     "group": "Live money", "help": "Hard cap, in your Bitpanda currency (CHF). The bot never has more than this in coins. "
-     "Above your account total (e.g. 2000) = the whole account; the Daily Brain splits it into equal slots."},
+    {"key": "live.max_invest", "label": "Daily: maximale Kapitalzuteilung", "min": 2, "max": 2000, "step": 1,
+     "group": "Live money", "help": "Obergrenze für die Daily-Strategie in Kontowährung. Fast hat eine eigene Zuteilung; "
+     "der gemeinsame Portfolio-Kern zieht diese und belegte Fast-Positionen zuerst vom Kontowert ab. "
+     "Ein hoher Wert erzeugt kein zusätzliches Kapital und keinen Kredit."},
     {"key": "live.max_order", "label": "Biggest single order", "min": 1, "max": 100, "step": 1,
      "group": "Live money", "help": "No real buy is bigger than this, in account currency (default CHF). All traders share this limit; the absolute code ceiling is 100 in account currency."},
     {"key": "live.max_spread_pct", "label": "Skip a buy when the spread is above (%)", "min": 0.1, "max": 5, "step": 0.1,

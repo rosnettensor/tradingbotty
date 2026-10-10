@@ -32,6 +32,7 @@ def test_all_books_share_order_and_daily_loss_limits(tmp_path, monkeypatch):
     f.bal["FIAT"] = 1000
     e = _engine(tmp_path, monkeypatch, f)
     e.set_controls({"live.max_order": 100, "live.max_invest": 1000})
+    c = e.fast.cfg(); c["chf"] = 1000; e.fast.save(c)
     for book, sym in (("brain", "BTC"), ("fast", "SOL"), ("test", "BTC")):
         spent, _ = asyncio.run(e._live_buy(sym, 180, "test", book=book))
         assert spent == 100

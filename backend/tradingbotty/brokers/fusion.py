@@ -7,8 +7,8 @@ Safety rules built in:
 - The API key needs Read + Trade only. Never give it withdrawal rights.
 - Orders are checked against the pair's minimum size before they are sent.
 
-Status: EXPERIMENTAL, tested against a mock of the documented API. Run `python run.py --check-live` first,
-then do the first live trade together with a 1-2 EUR order.
+The adapter is covered by mocked API tests. Account access and real execution must
+be checked separately; supported pairs determine their own minimum order amounts.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import httpx
 from ..risk import positive, spot_only
 
 BASE = "https://api.fusion.bitpanda.com"
-DONE = {"filled", "cancelled", "canceled", "rejected", "expired", "closed"}
+DONE = {"filled", "cancelled", "canceled", "rejected", "expired", "closed", "filled-and-canceled", "filledandcanceled"}
 
 
 class FusionError(RuntimeError):
@@ -162,7 +162,7 @@ class FusionBroker:
         status = str(order.get("status", "")).lower()
         if status not in DONE or not oid:
             raise FusionPendingOrder(order)
-        if status in ("rejected", "cancelled", "canceled", "expired") and not float(order.get("filledQuantity") or 0):
+        if status in ("rejected", "cancelled", "canceled", "expired", "filled-and-canceled", "filledandcanceled") and not float(order.get("filledQuantity") or 0):
             raise FusionError(f"order {status}: {str(order)[:200]}")
         qty = float(order.get("filledQuantity") or 0)
         price = float(order.get("filledAveragePrice") or 0)

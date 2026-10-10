@@ -986,7 +986,7 @@ class Professor(Agent):
 class DailyBrain(Agent):
     id = "brain"
     name = "Daily Brain"
-    role = "Trades the real money with the strategy that passed the history test, once per daily candle"
+    role = "Daily signal module: proposes targets to the shared portfolio and execution engine"
     inputs = ["researcher", "trend", "guardian"]
     cadence = "once a day, right after 00:00 UTC"
     explain = ("Plain code, no AI. Right after each daily candle closes (00:00 UTC, 02:00 in Switzerland in summer) "
@@ -1003,7 +1003,7 @@ class DailyBrain(Agent):
         self.next_run = next_utc_midnight() + 60
         if not b.get("on"):
             self.status = "off" if b.get("strategy") else "idle"
-            self.summary = "off: nothing trades the real money" if b.get("strategy") else "pick a strategy in Research"
+            self.summary = "Daily off: Fast has its own activation" if b.get("strategy") else "pick a strategy in Research"
             self.detail = {"did": ["Not running: switch it on in the Research tab"]}
             return
         if e.mode != "live":
@@ -1040,7 +1040,7 @@ class DailyBrain(Agent):
 class FastTrader(Agent):
     id = "fast"
     name = "Fast Trader"
-    role = "Trades a small, separate pot of real money with one fast rule, every 4 hours, next to the Daily Brain"
+    role = "Four-hour signal module with a reserved allocation inside the shared portfolio"
     inputs = ["researcher", "guardian"]
     cadence = "every 4 hours, 2 minutes after each 4-hour candle closes (UTC)"
     explain = ("Plain code, no AI. It has its own pot (an amount you set, which then grows or shrinks with its own "
@@ -1071,7 +1071,7 @@ class FastTrader(Agent):
         coins = {c["symbol"]: c for c in (e.wallet or {}).get("fast_coins", [])}
         self.detail = {
             "did": st["steps"] or ["First decision after the next 4-hour candle"],
-            "facts": [["Rule", st["strategy"]], ["Passes every check", "yes" if st.get("robust") else "no: play money"],
+            "facts": [["Rule", st["strategy"]], ["Entry evidence", "passed" if st.get("entry_check", {}).get("ready") else "new buys blocked"],
                       ["Pot", f"{st['pot']:.2f} {cur}" + (" (your amount + its gains and losses)" if st["mode"] == "chf" else f" ({st['pct']:g}% of your account)")],
                       ["Coins at a time", st["slots"]], ["Gain or loss booked", f"{st['realized']:+.2f} {cur}"],
                       ["Trades closed", f"{st['trades']} ({st['wins']} won)"],
@@ -1095,7 +1095,7 @@ class RiskOfficer(Agent):
                "the higher minimums Fusion revealed in rejections), the spread in Fusion's order book, and room for "
                "the fee (at most 99.5% of the cash, Fusion adds its fee on top). If cash is short and you allowed it, "
                "it sells your other coins first, biggest first, never ones the brain is about to buy. There is no "
-               "code for margin, leverage or short selling: the account can never go below zero.")
+               "code for borrowing, margin, leverage or short selling.")
     outputs = "approved order sizes, or a clear reason why an order was not sent"
 
     async def run(self, bb: Blackboard) -> None:
@@ -1106,11 +1106,11 @@ class RiskOfficer(Agent):
         blocked = sum(1 for x in log if x["result"] != "sent")
         if e.kill_switch:
             self.status = "warn"
-        self.summary = (f"cap {lv['max_invest']:.0f} {cur}, orders ≤ {lv['max_order']:.0f}, spread ≤ {lv['max_spread_pct']}%"
+        self.summary = (f"Daily cap {lv['max_invest']:.0f} {cur}, orders ≤ {lv['max_order']:.0f}, spread ≤ {lv['max_spread_pct']}%"
                         + (" · KILL SWITCH ON" if e.kill_switch else "") + (f" · {blocked} of last {len(log)} orders stopped" if blocked else f" · last {len(log)} orders passed" if log else ""))
         self.detail = {
             "did": [f"{x['time']} {x['order']}: {x['result']}" for x in reversed(log[-6:])] or ["No real order checked yet"],
-            "facts": [["Most in coins", f"{lv['max_invest']:.0f} {cur}"], ["Biggest order", f"{lv['max_order']:.0f} {cur}"],
+            "facts": [["Daily allocation cap", f"{lv['max_invest']:.0f} {cur}"], ["Biggest order", f"{lv['max_order']:.0f} {cur}"],
                       ["Max spread", f"{lv['max_spread_pct']}%"], ["Cash usable per order", "99.5% (fee room)"],
                       ["May sell your coins for cash", "yes" if lv.get("use_my_coins") else "no"],
                       ["Kill switch", "ON" if e.kill_switch else "off"]],
@@ -1129,7 +1129,7 @@ class LiveDesk(Agent):
                "Fusion (about 0.25% fee per side), records every fill with its real fee, and remembers which coins "
                "the bot bought, so it only ever sells those (plus your own coins when cash is short and you allowed "
                "it). It reads your account every 30 seconds. Three failed orders in a row stop live trading for "
-               "safety. The key it uses can read and trade, never withdraw.")
+               "safety. Every order is journaled before submission; uncertain orders stop immediately until reconciled. Confirmed fills and positions are committed together. The key should allow read and trade, never withdraw.")
     outputs = "real orders and fills; the live wallet in the cockpit"
 
     async def run(self, bb: Blackboard) -> None:

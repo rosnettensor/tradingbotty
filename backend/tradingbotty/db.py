@@ -5,6 +5,7 @@ import json
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA = """
@@ -66,6 +67,19 @@ CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    book TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    state TEXT NOT NULL,
+    request_json TEXT NOT NULL,
+    result_json TEXT
+);
+CREATE INDEX IF NOT EXISTS orders_state ON orders(state, created_at);
+CREATE INDEX IF NOT EXISTS trades_book_coin ON trades(variant_id, symbol, id);
 """
 
 
@@ -74,15 +88,41 @@ class DB:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self._transaction_depth = 0
         with self.lock:
             self.conn.executescript(SCHEMA)
             self.conn.commit()
 
+    @contextmanager
+    def transaction(self):
+        """A synchronous, reentrant unit of work. Never await while holding this context."""
+        with self.lock:
+            outer = self._transaction_depth == 0
+            if outer:
+                self.conn.execute("BEGIN IMMEDIATE")
+            self._transaction_depth += 1
+            try:
+                yield
+            except BaseException:
+                if outer:
+                    self.conn.rollback()
+                raise
+            else:
+                if outer:
+                    try:
+                        self.conn.commit()
+                    except BaseException:
+                        self.conn.rollback()
+                        raise
+            finally:
+                self._transaction_depth -= 1
+
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self.lock:
             cur = self.conn.execute(sql, params)
-            self.conn.commit()
+            if not self._transaction_depth:
+                self.conn.commit()
             return cur
 
     def query(self, sql: str, params: tuple = ()) -> list[dict]:
@@ -92,7 +132,8 @@ class DB:
     def executemany(self, sql: str, rows: list[tuple]) -> None:
         with self.lock:
             self.conn.executemany(sql, rows)
-            self.conn.commit()
+            if not self._transaction_depth:
+                self.conn.commit()
 
     def snapshot(self, dest: Path) -> None:
         """A consistent copy of the whole database, safe while the bot runs."""

@@ -16,7 +16,7 @@ export default function Speculation() {
   const positions = Object.entries(p.positions || {});
   return <div className="volatility-desk">
     <section className="panel vol-hero">
-      <div><span className="vol-eyebrow">FUSION / MARKET INTELLIGENCE</span><h2>Volatility radar<span className="badge">PAPER ONLY</span></h2><p className="dim">Chancen beobachten. Signale prüfen. Ergebnisse messen.</p></div>
+      <div><span className="vol-eyebrow">FORSCHUNG / VIRTUELLER VORWÄRTSTEST</span><h2>Volatility radar<span className="badge">KEIN ECHTGELD</span></h2><p className="dim">Eigener Strategiekandidat mit festen Regeln. Er sendet weder echte Orders noch Kaufaufträge an Daily oder Fast.</p></div>
       <div className="vol-feed"><span className={`badge ${stale ? "warn" : "ok"}`}>{stale ? "DATEN AUSSTEHEND" : "● MARKTDATEN AKTUELL"}</span><small className="dim">{data.ts ? `Letzter Scan ${ago(data.ts)} · Takt 2 min` : "Wartet auf Fusion-Lesezugriff"}</small><button onClick={reload} disabled={poll.loading}>Ansicht aktualisieren</button></div>
     </section>
     {(data.error || poll.error) && <div role="status" className="vol-alert">Daten nicht aktuell: {data.error || poll.error}. Angezeigt wird der letzte empfangene Stand.</div>}

@@ -1,8 +1,8 @@
 # TradingBotty
 
-A playful multi-agent crypto bot with a cyber dashboard that trades real money on Bitpanda Fusion. The existing Daily Brain and fast pot trade live only when enabled. A separate volatility scanner tests new speculative signals with virtual money first.
+A crypto bot with a cyber dashboard and one shared trading core for Bitpanda Fusion. Daily and Fast are strategy modules with separate capital allocations in the same account. Agents provide data, research and monitoring. Volatility and Think Tank remain research-only.
 
-**It can lose your stake. It can never put you in debt:** it only places spot buy and sell orders, only buys with
+**It can lose your stake. The bot is cash-only:** it only places spot buy and sell orders, only buys with
 cash it has, and only sells coins it holds. There is no code for margin, leverage, shorting, futures or CFDs.
 
 ## Start it
@@ -34,6 +34,17 @@ Keys go in `.env` (created on first start from `.env.example`), never in a chat:
 4. **Orders.** The Risk Officer checks every order (kill switch, caps, Fusion's minimum, spread, cash with fee room)
    before the Live Desk sends it.
 
+## Shared trading core
+
+The architecture, migration and operational recovery procedure are documented in [ARCHITECTURE.md](ARCHITECTURE.md).
+`Portfolio` owns capital allocation and position attribution; `StrategyRegistry` owns automatic-entry evidence;
+`ExecutionService` is the only caller of broker buy/sell methods. Daily, Fast, chat, checks and emergency exits
+share its account lock and order journal. A confirmed fill, position update and Fast accounting commit together.
+An interrupted or uncertain submission freezes execution instead of blindly sending the order again.
+
+Existing positions, selected strategies, limits, live/standby mode and activation settings are retained on upgrade.
+Legacy startup routines no longer rewrite the user's limits or Fast strategy. The update adds no AI calls or AI budget.
+
 ## The team
 
 | Agent | What it does for the real trades | AI |
@@ -59,10 +70,9 @@ Press 1-5 to switch tabs.
   and evaluation/learning. Full charts, tables, the trade diary, bank controls, agent feed and reviews remain available.
 - **Agents:** the node graph and an inspector that shows what each agent just did, step by step, its key facts and
   tables, its own log, and for the AI agents their model and instructions.
-- **Research:** a Fusion volatility scanner with a forward paper depot, plus the existing labs. The daily brain lab: the history test (pick which strategy trades live), reality checks,
-  the Pattern Hunt and the free data. The fast trader lab: speculative rules on 4-hour candles of the ~40 most
-  traded coins Fusion lists (breakouts with profit-taking, pump riding, dip buying, volume checks), the same
-  robustness checks, a signal test on the next 24 hours, and each coin's link to Bitcoin over time. Research only.
+- **Research:** starts with the **Handelsplan**, showing the two live-capable strategies, their current admission
+  status and allocations, and the research-only modules. Daily and Fast settings retain their detailed labs.
+  Volatility's virtual forward experiment and Think Tank's candidates do not automatically become live strategies.
 - **Controls:** money limits, AI switches, news feeds, and the Telegram briefing.
 
 ## Volatility scanner (Research → VOLATILITY)

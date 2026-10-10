@@ -9,7 +9,6 @@ import asyncio
 import time
 
 from . import bank as bank_mod
-from .readiness import evidence
 
 TEST_COIN = "BTC"
 TEST_MIN = 26.0           # Fusion's minimum is 25 (30 for some coins): a little above, so the sell clears it too
@@ -168,9 +167,11 @@ def checks(e) -> dict:
     ch = e.phone_channels()
     rows.append(_row("phone", "ok" if ch else "info", "Handy-Push", ", ".join(ch) if ch else "kein Kanal eingerichtet"))
 
+    daily_proofs = e.strategies.checks("brain")
     entry_checks = {
-        "daily": evidence(e.db.get("research"), b.get("strategy", "")),
-        "fast": evidence(e.db.get("fastlab"), e.fast.cfg().get("strategy", "")),
+        "daily": next((p for p in daily_proofs if not p["ready"]), daily_proofs[0] if daily_proofs else
+                      {"ready": False, "reason": "Die Bank hält Cash", "strategy": "Bank", "ts": None}),
+        "fast": e.strategies.checks("fast")[0],
     }
     for key, label, enabled in (("daily", "Daily Brain", b.get("on")), ("fast", "Fast Pot", f["on"])):
         proof = entry_checks[key]

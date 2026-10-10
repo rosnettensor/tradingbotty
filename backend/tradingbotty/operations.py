@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import time
 
-from .readiness import evidence
 
 WINDOW = 12 * 3600
 
@@ -28,11 +27,12 @@ def snapshot(e, now: float | None = None) -> dict:
     wallet_fresh = bool(w.get("ts") and 0 <= now - w["ts"] <= 120 and not w.get("error") and not w.get("stale"))
     bank_used = mode != "shadow" and bool(report.get("split"))
     names = ([n for n, share in split.items() if n != "Cash" and share > 0] if bank_used else [b.get("strategy", "")])
-    daily_proofs = [evidence(e.db.get("research"), n, now) for n in names]
-    fast_proof = evidence(e.db.get("fastlab"), f["strategy"], now)
+    daily_proofs = e.strategies.checks("brain", now)
+    fast_proof = e.strategies.checks("fast", now)[0]
+    allocation = e.portfolio.allocation()
     pot = e.fast.pot_size(f) if f["on"] else 0.0
     total = float(w.get("total") or 0)
-    daily_budget = max(0.0, min(cfg["max_invest"], (total - pot) * .98))
+    daily_budget = allocation["daily"]
     reserve = e.fast.cash_reserve()
     conflicts = []
     overlap = sorted(set(e.db.get("live_qty", {})) & set(e.db.get("fast_qty", {})))
@@ -62,9 +62,9 @@ def snapshot(e, now: float | None = None) -> dict:
     if bank_used and not names: daily_reasons.append("Die Bank hält ihre Zuteilung vollständig in Cash")
     last_day = b.get("day")
     daily_next = (now // 86400 + 1) * 86400 if last_day and last_day >= now // 86400 * 86400 - 86400 else None
-    lanes = [lane("daily", "Daily Brain", b.get("on"), bool(daily_proofs) and all(p["ready"] for p in daily_proofs),
+    lanes = [lane("daily", "Daily · Tagesstrategie", b.get("on"), bool(daily_proofs) and all(p["ready"] for p in daily_proofs),
                   daily_reasons, daily_budget, b.get("note") or "Entscheidet auf geschlossenen Tageskerzen", daily_next),
-             lane("fast", "Fast-Topf", f["on"], fast_proof["ready"],
+             lane("fast", "Fast · Kurzfriststrategie", f["on"], fast_proof["ready"],
                   [] if fast_proof["ready"] else [fast_proof["reason"]], pot,
                   f.get("note") or "Entscheidet auf geschlossenen 4-Stunden-Kerzen; Ausstiege jede Minute",
                   (now // 14400 + 1) * 14400 + 120)]
@@ -77,6 +77,8 @@ def snapshot(e, now: float | None = None) -> dict:
                         "WHERE mode='live' AND variant_id!='test' AND ts>=? ORDER BY id DESC LIMIT 5", (since,))
     ai = e.db.query("SELECT COALESCE(SUM(cost_usd),0) cost FROM llm_calls WHERE ts>=?", (since,))[0]["cost"]
     return {"ts": now, "currency": cur, "execution_allowed": trading_allowed, "global_reasons": global_reasons,
+            "architecture": {"execution_engines": 1, "modules": e.strategies.catalogue(), "allocation": allocation,
+                             "journal": e.db.query("SELECT state,COUNT(*) count FROM orders GROUP BY state")},
             "wallet_fresh": wallet_fresh, "wallet_ts": w.get("ts"), "lanes": lanes, "conflicts": conflicts,
             "bank": {"mode": mode, "used": bank_used, "probe": report.get("probe"),
                      "label": {"shadow": "Nur Modell · Daily Brain handelt seine eigene Strategie", "probe": "Echtgeld-Probe · begrenzte Beimischung",

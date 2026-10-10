@@ -111,6 +111,7 @@ def test_three_failed_orders_stop_live_trading(tmp_path, monkeypatch):
         async def sell_fraction(self, symbol, fraction, owned=None):
             raise RuntimeError("503")
     f = Broken()
+    f.bal.update({"BTC": 1, "SOL": 1, "ETH": 1})
     e = _engine(tmp_path, monkeypatch, f)
     e.db.set("live_qty", {"BTC": 1.0, "SOL": 1.0, "ETH": 1.0})
     for s in ("BTC", "SOL", "ETH"):

@@ -44,11 +44,7 @@ class FastTrader:
     def pot_size(self, c: dict | None = None) -> float:
         """What the pot may trade with: the amount you set plus everything it has won or lost since (compounding),
         or your share of the whole account."""
-        c = c or self.cfg()
-        if c["mode"] == "pct":
-            total = (self.e.wallet or {}).get("total") or 0.0
-            return round(total * c["pct"] / 100, 2)
-        return round(max(0.0, c["chf"] + c["realized"]), 2)
+        return self.e.portfolio.fast_budget(c)
 
     def slots(self, c: dict | None = None) -> int:
         c = c or self.cfg()
@@ -57,11 +53,7 @@ class FastTrader:
 
     def cash_reserve(self) -> float:
         """Cash the daily brain must leave alone: the pot minus what the pot has in coins right now."""
-        c = self.cfg()
-        if not c["on"]:
-            return 0.0
-        in_coins = sum(self.e.db.get("fast_cost", {}).values())
-        return round(max(0.0, self.pot_size(c) - in_coins), 2)
+        return self.e.portfolio.fast_cash_reserve()
 
     def value(self, prices: dict | None = None, c: dict | None = None) -> float:
         """What the pot is worth right now: its cash (the pot minus what it paid for its coins) plus its coins at
@@ -130,17 +122,20 @@ class FastTrader:
 
     def booked_sell(self, sym: str, ex: dict) -> float:
         """Book a sale of a pot coin: its gain or loss goes into the pot."""
+        if "_booked_fast_pnl" in ex:
+            return ex["_booked_fast_pnl"]  # gateway already committed it under the account lock
         c = self.cfg()
         pos = c["pos"].get(sym) or {}
         sold = float(ex.get("quantity", 0) or 0)
         fraction = min(1.0, sold / pos["qty"]) if pos.get("qty") else 1.0
-        sold_cost = pos.get("cost", 0) * fraction
+        basis = ex.get("_basis")
+        sold_cost = basis["cost"] if basis else pos.get("cost", 0) * fraction
         if fraction < 1:
             c["pos"][sym] = {**pos, "qty": pos["qty"] - sold, "cost": pos["cost"] - sold_cost}
         else:
             c["pos"].pop(sym, None)
         got = float(ex.get("notional", 0) or 0) - float(ex.get("fee", 0) or 0)
-        pnl = round(got - sold_cost, 2)
+        pnl = round(got - sold_cost - (basis.get("fee", 0) if basis else 0), 2)
         c["realized"] = round(c["realized"] + pnl, 2)
         c["trades"] += 1
         c["wins"] += 1 if pnl > 0 else 0
@@ -306,6 +301,7 @@ class FastTrader:
 
     async def _decide(self, c: dict, bar: float) -> None:
         e = self.e
+        revision = e.strategies.revision("fast")
         cur = e.live.currency
         name = c["strategy"]
         strat = fastlab.by_name(name)
@@ -399,13 +395,12 @@ class FastTrader:
                   + [["info", f"Grösse: {size:.2f} {cur} = Topf {self.pot_size(c):.2f} / {slots} Platz"
                       + (f" × Kurs {course['size']:g}" if course["size"] != 1 else "")]])
             try:
-                amount, got = await e._live_buy(s, size, f"fast pot: {name}", book="fast")
+                amount, got = await e._live_buy(s, size, f"fast pot: {name}", book="fast", automatic=True,
+                                                context={"entry": cd.c[s][i], "bar": cd.days[i]}, revision=revision)
             except Exception as ex:
                 done.append(f"{s}: not bought ({str(ex)[:140]})")
                 continue
             c = self.cfg()
-            c["pos"][s] = {"entry": cd.c[s][i], "bar": cd.days[i], "ts": time.time(), "cost": amount, "qty": got}
-            self.save(c)
             e._log("Live Desk", "live", f"LIVE BUY {s}: {amount:.2f} {cur} filled (fast pot: {name}).")
             done.append(f"bought {s} for {amount:.2f} {cur}")
         c = self.cfg()

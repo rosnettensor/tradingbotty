@@ -241,13 +241,13 @@ class ChatOrders:
                 value = next((c["value"] for c in (e.wallet or {}).get("fast_coins" if o["book"] == "fast" else "coins") or []
                               if c["symbol"] == o["symbol"]), 0)
                 e.why(o["book"], o["symbol"], "SELL", [["warn", "Du hast per Chat verkauft, nicht die Regel"]])
+                pos = (e.fast.cfg().get("pos") or {}).get(o["symbol"]) if o["book"] == "fast" else None
                 ex = await e._live_sell(o["symbol"], f"{who}: sold by you (chat)", book=o["book"])
                 if not ex:
                     return {"ok": False, "answer": f"{o['symbol']} wurde nicht verkauft (Fusion hat abgelehnt oder "
                                                    "der Betrag liegt unter dem Minimum). Details im Feed."}
                 got = float(ex.get("notional", 0) or 0)
                 extra = ""
-                pos = (e.fast.cfg().get("pos") or {}).get(o["symbol"]) if o["book"] == "fast" else None
                 if not (pos or {}).get("manual"):  # the rule's coin: follow it as if you had let the rule decide
                     st = fastlab.by_name(e.fast.cfg().get("strategy") or "") if o["book"] == "fast" else None
                     e.ghosts.add(o["book"], o["symbol"], "you", "Per Chat verkauft statt die Regel entscheiden zu lassen",
@@ -261,19 +261,18 @@ class ChatOrders:
             sym = o["symbol"]
             e.why("fast", sym, "BUY", [["warn", "Du hast per Chat gekauft, nicht die Regel"],
                                        ["info", "Der Fast Pot verkauft ihn nach seiner Regel (Ziel, Stopp oder Zeit)"]])
+            # Resolve signal-currency metadata before the order; the gateway commits it with the fill.
+            entry = await self.usd_price(sym)
+            if entry is None:
+                cd = await e.fast._candles([sym])
+                entry = next((x for x in reversed(cd.c.get(sym) or []) if x), None)
+            context = {"bar": (time.time() // fastlab.BAR - 1) * fastlab.BAR, "manual": True}
+            if entry:
+                context["entry"] = entry
             try:
-                amount, got = await e._live_buy(sym, o["amount"], "fast pot: bought by you (chat)", book="fast")
+                amount, got = await e._live_buy(sym, o["amount"], "fast pot: bought by you (chat)", book="fast", context=context)
             except Exception as ex:
                 return {"ok": False, "answer": f"Nicht gekauft: {str(ex)[:160]}"}
-            entry = await self.usd_price(sym)
-            if entry is None:  # simulate, or Binance unreachable: the newest 4-hour close the rule itself would use
-                cd = await e.fast._candles([sym])
-                entry = next((x for x in reversed(cd.c.get(sym) or []) if x), None) or (amount / got if got else 1.0)
-            c = e.fast.cfg()
-            bar = (time.time() // fastlab.BAR - 1) * fastlab.BAR
-            c["pos"][sym] = {"entry": entry, "bar": bar, "ts": time.time(), "cost": amount,
-                             "qty": got, "manual": True}
-            e.fast.save(c)
             e._log("Live Desk", "live", f"LIVE BUY {sym}: {amount:.2f} {cur} filled (fast pot: bought by you in the chat).")
             return {"ok": True, "answer": f"✅ {sym} gekauft für {amount:.2f} {cur} ({got:.6g} Stück). Liegt jetzt im "
                                           "Fast Pot; seine Regel entscheidet, wann er wieder verkauft."}

@@ -16,10 +16,8 @@ deep_model = "claude-opus-5-5"
 
 [risk]
 # Hard limits enforced in plain code by the Risk Officer. The Optimizer can never change these.
-# Limits are percentages of current equity so they grow with the account (compounding).
-max_position_pct = 25.0        # no single position bigger than this share of equity
+# Enforced limits: position count below; cash-only per-order and daily loss ceilings in risk.py.
 max_open_positions = 5
-max_daily_loss_pct = 30.0      # after this loss within 24h: no new buys until the next day (sells still allowed)
 min_order_usd = 1.0            # Bitpanda's minimum is about 1 EUR
 min_cash_reserve_usd = 0.5
 # The independent gate also caps every purchase at 100 and daily gross losses at 200 in account currency (CHF by default).

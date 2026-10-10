@@ -1,4 +1,5 @@
 import Speculation from "./Speculation.jsx";
+import StrategyHub from "./StrategyHub.jsx";
 import { Fragment, useEffect, useState } from "react";
 import { LineChart } from "./charts.jsx";
 import { Tabs } from "./components.jsx";
@@ -8,12 +9,12 @@ const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)",
 const PERIODS = [["full", "all history"], ["last_2y", "2 years"], ["last_1y", "1 year"], ["last_6m", "6 months"], ["first_half", "1st half"], ["second_half", "2nd half"]];
 const dayFmt = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", year: "2-digit" });
 
-const LABS = [["speculation", "VOLATILITY · paper experiment"], ["daily", "DAILY BRAIN LAB · the real money"], ["fast", "FAST TRADER LAB · speculative, 4-hour"], ["think", "💡 THINK TANK · original ideas"]];
+const LABS = [["overview", "HANDELSPLAN"], ["daily", "DAILY · Strategie"], ["fast", "FAST · Strategie"], ["speculation", "VOLATILITY · Forschung"], ["think", "THINK TANK · Forschung"]];
 
 export default function Research({ state, openAgent }) {
   const [res, setRes] = useState(null);
   const [pat, reloadPat] = usePoll("patterns", 0);
-  const [lab, setLab] = useState(() => { try { return localStorage.getItem("tb-lab") || "daily"; } catch { return "daily"; } });
+  const [lab, setLab] = useState(() => { try { return localStorage.getItem("tb-lab") || "overview"; } catch { return "overview"; } });
   useEffect(() => {
     const onLab = e => setLab(e.detail);
     window.addEventListener("tb-research", onLab);
@@ -24,7 +25,8 @@ export default function Research({ state, openAgent }) {
   return (
     <div className="research-tab">
       <div className="lab-switch"><Tabs value={lab} options={LABS} onChange={pickLab} /></div>
-      {lab === "speculation" ? <Speculation /> : lab === "think" ? <ThinkTank openAgent={openAgent} /> : lab === "fast" ? <FastLab state={state} openAgent={openAgent} /> : (
+      {lab !== "overview" && <p className="research-context dim small"><button className="linkish" onClick={() => pickLab("overview")}>← Handelsplan</button> {lab === "daily" || lab === "fast" ? "Strategiemodul der gemeinsamen Handelsmaschine. Jede echte Order läuft durch denselben Portfolio- und Risikokern." : "Forschungsbereich. Hier entstehen keine echten Orders und keine automatische Live-Aktivierung."}</p>}
+      {lab === "overview" ? <StrategyHub pickLab={pickLab} /> : lab === "speculation" ? <Speculation /> : lab === "think" ? <ThinkTank openAgent={openAgent} /> : lab === "fast" ? <FastLab state={state} openAgent={openAgent} /> : (
         <>
           <HistoryTest state={state} res={res} setRes={(r) => { setRes(r); reloadPat(); }} openAgent={openAgent} />
           {res && <RealityChecks res={res} live={state.brain?.strategy} />}
@@ -63,8 +65,8 @@ function HistoryTest({ state, res, setRes, openAgent }) {
     try { await api("brain", { on: true, strategy: r.name }); setMsg(`"${r.name}" now manages your real money.`); } catch (e) { setMsg(e.message); }
   };
   const stopLive = async () => {
-    if (!window.confirm("Stop the Daily Brain?\n\nThen nothing trades the real money. The bot's coins stay as they are.")) return;
-    try { await api("brain", { on: false }); setMsg("Daily brain off: nothing trades the real money until you switch it on again."); } catch (e) { setMsg(e.message); }
+    if (!window.confirm("Daily-Strategie stoppen?\n\nIhre Positionen bleiben bestehen. Eine aktivierte Fast-Strategie arbeitet unabhängig weiter.")) return;
+    try { await api("brain", { on: false }); setMsg("Daily ausgeschaltet. Fast behält seine eigene Aktivierung; bestehende Daily-Positionen bleiben erhalten."); } catch (e) { setMsg(e.message); }
   };
   const toggle = (name) => setPick((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]));
   return (

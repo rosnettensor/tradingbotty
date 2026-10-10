@@ -15,14 +15,14 @@ export function TradingStatus({ data, error, state, onDetails }) {
     : !enabled.length ? "LIVE verbunden · kein Händler aktiviert" : ready ? "Echtgeld aktiv · wartet auf gültige Signale" : "Echtgeld aktiv · Kaufprüfungen offen";
   const tone = outdated || !ready ? "warn" : "up";
   return <section className="panel mission-status">
-    <div className="mission-status-head"><div><span className="vol-eyebrow">TRADINGBOTTY / OPERATION CENTER</span><h2 className={tone}>{headline}</h2></div><span className="badge">SPOT · OHNE KREDIT</span></div>
+    <div className="mission-status-head"><div><span className="vol-eyebrow">EIN PORTFOLIO · EINE HANDELSMASCHINE</span><h2 className={tone}>{headline}</h2></div><span className="badge">SPOT · OHNE KREDIT</span></div>
     <p className="dim small">{outdated ? error || "Verbindung zum Server wird hergestellt." : data.global_reasons.length ? data.global_reasons.join(" · ") : "LIVE erlaubt echte Orders. Signalbereit bedeutet: die Strategie darf prüfen – jede Order muss zusätzlich Risiko, Guthaben und Spread bestehen."}</p>
     <div className="mission-lanes">{(data?.lanes || []).map(l => <button key={l.id} className={`mission-lane ${l.status}`} onClick={() => openResearch(l.id === "daily" ? "daily" : "fast")}>
       <span><b>{l.name}</b><small>{l.id === "daily" ? "Tageskerzen" : "4h-Kerzen · Ausstiege jede Minute"}</small></span>
       <span><b className={outdated ? "dim" : l.status === "armed" ? "up" : l.enabled ? "warn" : "dim"}>{outdated ? "Status veraltet" : l.label}</b><small>{money(l.budget)} {data.currency} Budget</small></span>
       <span className="mission-lane-reason">{l.reasons[0] || (l.enabled ? "Nächster Kauf erst bei passendem Signal." : "Strategie im Research-Bereich auswählen und aktivieren.")}</span>
     </button>)}</div>
-    <div className="mission-context"><span><b>Bank:</b> {data?.bank.label || "wird geprüft"}{data?.bank.mode !== "shadow" && !data?.bank.effective ? " · momentan nicht ausführend" : ""}</span><span className="dim">Radar & Schatten: virtuell</span><button className="linkish" onClick={onDetails}>Betrieb & Prüfungen →</button></div>
+    <div className="mission-context"><button className="linkish" onClick={() => openResearch("overview")}>Strategien & Handelsplan →</button><span className="dim">Volatility & Think Tank: Forschung</span><button className="linkish" onClick={onDetails}>Betrieb & Prüfungen →</button></div>
     {!!data?.conflicts.length && <details className="mission-conflicts"><summary>{data.conflicts.length} Hinweis{data.conflicts.length > 1 ? "e" : ""} zu Budget oder Daten</summary><ul>{data.conflicts.map(c => <li key={c}>{c}</li>)}</ul></details>}
   </section>;
 }
