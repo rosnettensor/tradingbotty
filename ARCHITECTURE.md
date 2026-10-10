@@ -5,7 +5,7 @@
 Daily and Fast are strategy modules with different horizons, not independent account managers.
 They retain separate position attribution and the operator's capital allocations. The common
 portfolio and execution services decide how those proposals can affect the same exchange account.
-Volatility and Think Tank stay research-only. More agents or more live strategies are not, by
+Volatility is an explicitly opted-in, tightly bounded experimental signal module. Think Tank stays research-only. More agents or more live strategies are not, by
 themselves, evidence of a better trading system.
 
 This is an incremental consolidation of the existing application. It avoids an unnecessary
@@ -16,6 +16,7 @@ It does not claim to be the most profitable or universally optimal architecture.
 flowchart TD
     D[Daily signals] --> P[Portfolio allocation]
     F[Fast signals] --> P
+    V[Volatility pilot signals] --> P
     P --> G[Shared admission and risk checks]
     M[Manual orders and checks] --> G
     G --> E[Execution service and order journal]
@@ -35,7 +36,8 @@ flowchart TD
 | `risk` | Cash-only purchase limits, total open positions, loss and instrument checks |
 | Daily / Fast | Signal generation and exit decisions at their respective horizons |
 | Agents | Data, research, monitoring, bounded existing advice; no additional execution engine |
-| Volatility / Think Tank | Isolated experiments and candidates; no live order route or automatic live promotion |
+| Volatility | Fixed-size experimental spot pilot; explicit operator opt-in; shared gateway and ledger |
+| Think Tank | Research candidates; no live order route or automatic live promotion |
 | Operations API | The same evidence and allocations presented in Cockpit and Handelsplan |
 
 The separation of signals, portfolio construction, risk and execution follows an established
@@ -52,8 +54,8 @@ strategies to spend the same capital or repeatedly reverse each other's position
   `live.max_invest`. This setting is the Daily cap, not an additional total-account limit. Manual
   Daily orders keep their configured cap and also respect reserved Fast cash and shared risk limits.
 - Every buy, including manual and system-check buys, shares the cash-only gate. Fast manual orders
-  also respect Fast's allocation. Daily and Fast do not open overlapping ownership of one coin.
-- Automatic buys require enabled strategies and current, non-simulated passing evidence. All
+  also respect Fast's allocation. Daily, Fast and Volatility do not open overlapping ownership of one coin.
+- Automatic Daily/Fast buys require enabled strategies and current, non-simulated passing evidence. All
   positive contributors to an active Bank allocation must pass. Evidence, activation and strategy
   revisions are rechecked after network waits. Changed risk/allocation settings invalidate an
   in-flight purchase decision before submission.
@@ -64,7 +66,30 @@ strategies to spend the same capital or repeatedly reverse each other's position
 - Selling existing personal coins to fund Daily purchases still requires the existing
   `use_my_coins` setting. Such sales use the same lock and journal and exclude bot-owned coins.
 
-No additional AI calls, recurring jobs or AI budget increases are introduced by this update.
+### Volatility live pilot
+
+- Deploys **disabled**. The authenticated operator must enter `VOLATILITY LIVE` in Research → Volatility →
+  Echtgeld-Pilot aktivieren. Global live permission is also required. Deployment and paper results never opt in.
+- Fixed initial budget 50 and maximum order notional 30 in account quote currency, plus order fees.
+  One open position, at most two BUY submissions per UTC day (including rejections). No automatic scaling.
+  Cumulative gross realized losses of 10 permanently stop new pilot buys; gains do not reset this counter.
+  This is a purchase stop, not a guaranteed maximum loss. Losses can exceed stop levels during gaps/outages.
+- The pilot has no robust backtest certification. Its explicit experimental mandate is separate from Daily/Fast
+  evidence. Every buy still passes stance, Guardian, spot-only, fresh liquidity, common account risk and cash gates.
+- Two fresh scans after activation supply the baseline and signal. Entry needs range ≥8%, scan momentum ≥2%,
+  a breakout above the previous observed high, depth ≥1,000 within 1%, and spread within the operator limit.
+  Quote and book are fetched again inside the execution lock; reversal, stale data or oversized minimum skips entry.
+- `volatility_qty/volatility_cost` are canonical ownership keys. Confirmed fills use the existing atomic ledger;
+  paper positions never migrate. Position age is replayed from real fills; fees keep full ledger precision.
+- Shared allocation reserves idle pilot cash, preserves committed capital after a purchase pause, and excludes
+  pilot holdings from personal-coin funding. It never sells personal coins to fund its own orders.
+- A minute watchdog checks exits at −8%, +20%, or 24h, using fresh prices. Partial exits retain remaining cost
+  and entry age. Entry pause and stale scanner data do not disable exits; global standby/kill/uncertainty do.
+- Activation/counters survive restart. A currency mismatch blocks orders rather than converting cost bases.
+  Confirmed trades appear in Cockpit, positions, journal, notifications and the scoreboard under Volatility.
+
+The existing two-minute scanner is reused; a minute exit watchdog is added. No extra AI model or AI budget
+is introduced. Existing trade-notification/coaching behavior still applies when the pilot produces trades.
 
 ## Submission, failure and restart
 

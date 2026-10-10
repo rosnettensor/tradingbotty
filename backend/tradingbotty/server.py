@@ -401,6 +401,19 @@ def speculation_get():
     return engine.speculation.status()
 
 
+class VolatilityIn(BaseModel):
+    enabled: bool
+    confirmation: str = ""
+
+
+@app.post("/api/speculation/live")
+async def speculation_live(body: VolatilityIn):
+    try:
+        return engine.volatility.configure(body.enabled, body.confirmation)
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+
+
 @app.get("/api/research")
 async def research_get():
     return engine.db.get("research", {}) or {}

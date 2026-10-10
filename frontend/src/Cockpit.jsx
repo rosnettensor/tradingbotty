@@ -24,7 +24,7 @@ function coreData(state, w, energy) {
   const ch = tick.map((t) => t.change).filter((x) => x != null);
   const market = ch.length ? ch.reduce((a, b) => a + b, 0) / ch.length : 0;
   const breadth = ch.length ? ch.filter((x) => x > 0).length / ch.length : null;
-  const held = (w?.coins || []).filter((c) => c.value > 0.5);
+  const held = [...(w?.coins || []), ...(w?.volatility_coins || [])].filter((c) => c.value > 0.5);
   const spikes = held.map((c) => {
     const pct = c.cost ? (c.value / c.cost - 1) * 100 : 0;
     return { symbol: c.symbol, kind: "held", pct, len: Math.min(1.6, 0.35 + Math.abs(pct) / 12), text: `${c.symbol} ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%` };
@@ -103,7 +103,7 @@ export default function Cockpit({ connected, state, pulse, focus, setFocus, open
           <section className="panel"><News news={state.news || []} setFocus={setFocus} /></section>
         </>}
         {section === "operation" && <>
-          <section className="panel"><h3>WAS BEDEUTET ECHTGELD?</h3><p className="small">Der LIVE-Schalter oben erlaubt echte Orders. Daily Brain und Fast-Topf werden separat eingeschaltet. Die Bank ist nur die Verteilung innerhalb des Daily-Budgets: <b>Probe ist bereits Echtgeld</b>, mit kleinem Kandidaten-Anteil. Bank-Mix verteilt das Budget auf geprüfte Strategien. Schatten und Volatility bleiben virtuell.</p><p className="dim small">Ein Testkauf ist eine optionale technische Diagnose mit Gebühren – keine Voraussetzung für normalen Handel. Forschung läuft im Hintergrund; ein gültiger Backtest und ein Handelssignal müssen trotzdem vorliegen.</p></section>
+          <section className="panel"><h3>WAS BEDEUTET ECHTGELD?</h3><p className="small">Der LIVE-Schalter oben erlaubt echte Orders. Daily, Fast und der begrenzte Volatility-Pilot werden separat freigegeben. Die Bank ist nur die Verteilung innerhalb des Daily-Budgets: <b>Probe ist bereits Echtgeld</b>, mit kleinem Kandidaten-Anteil. Bank-Mix verteilt das Budget auf geprüfte Strategien. Schatten und die separate Paper-Referenz bleiben virtuell; der Volatility-Pilot kann nach Freigabe echte Orders senden.</p><p className="dim small">Ein Testkauf ist eine optionale technische Diagnose mit Gebühren – keine Voraussetzung für normalen Handel. Daily/Fast benötigen aktuelle Laborprüfungen; Volatility ist ein ausdrücklich freigegebener Praxistest mit festen Kleinbeträgen. Alle benötigen gültige Signale und bestandene Orderprüfungen.</p></section>
           <BrainBar state={state} openAgent={openAgent} /><FastPotCard state={state} openAgent={openAgent} />
           <section className="panel"><BankPanel operations={ops} /></section>
           <section className="panel"><SysCheck compact /></section>
@@ -470,7 +470,7 @@ function DiaryCard({ e, cur, setFocus }) {
       <button className="diary-head" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className={`side-badge ${e.side === "BUY" ? "buy" : "sell"}`}>{e.side}</span>
         <b className="diary-sym">{e.symbol}</b>
-        <span className="dim small" title={e.book === "fast" ? "fast pot" : e.book === "test" ? "Systemcheck-Testtrade" : "Daily Brain"}>{e.book === "fast" ? "⚡" : e.book === "test" ? "🧪" : "🧠"}</span>
+        <span className="dim small" title={e.book === "volatility" ? "Volatility-Pilot" : e.book === "fast" ? "fast pot" : e.book === "test" ? "Systemcheck-Testtrade" : "Daily Brain"}>{e.book === "volatility" ? "◎" : e.book === "fast" ? "⚡" : e.book === "test" ? "🧪" : "🧠"}</span>
         <span className="small diary-amt">{Number(e.amount || 0).toFixed(2)}</span>
         <span className="dim small diary-gist">{gist(e.reason)}</span>
         {e.closed

@@ -70,10 +70,10 @@ def checks(e) -> dict:
 
     # money it can use
     fiat = float(w.get("fiat") or 0)
-    reserve = e.fast.cash_reserve()
+    reserve = e.portfolio.cash_reserve()
     free = max(0.0, fiat - reserve)
     st = "ok" if free >= TEST_MIN else "warn"
-    rows.append(_row("cash", st, "Bargeld für Käufe", f"{fiat:.2f} {cur} Cash, davon {reserve:.2f} für den Fast Pot reserviert"
+    rows.append(_row("cash", st, "Bargeld für Käufe", f"{fiat:.2f} {cur} Cash, davon {reserve:.2f} für Fast und Volatility reserviert"
                      + ("" if st == "ok" else f": unter dem Fusion-Minimum von 25 {cur}")
                      + (" · der Daily Brain darf deine Coins verkaufen, wenn Cash fehlt" if e.settings["live"]["use_my_coins"] else ""),
                      None if st == "ok" else "Geld einzahlen oder in Controls erlauben, dass der Bot deine Coins nutzt"))
@@ -178,6 +178,10 @@ def checks(e) -> dict:
         rows.append(_row(key + "_evidence", "ok" if proof["ready"] else "warn" if enabled else "info",
                          label + " · Kaufprüfung", proof["reason"],
                          None if proof["ready"] else "Research: Labor mit Marktdaten ausführen und robuste Strategie wählen"))
+    pilot = e.volatility.status()
+    rows.append(_row("volatility", "warn" if pilot["enabled"] and pilot["reasons"] else "info",
+                     "Volatility · begrenzter Echtgeld-Pilot",
+                     "; ".join(pilot["reasons"]) or "Freigegeben; jede Order braucht Signal- und Risikoprüfung"))
     if e.db.get("unresolved_order"):
         rows.append(_row("unresolved", "fail", "Ungeklärte Order", "Eine Order hat noch keinen sicher verbuchten Abschluss",
                          "Order und Kontobestand in Fusion abgleichen; keinen weiteren Kauf starten"))

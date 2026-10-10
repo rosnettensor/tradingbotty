@@ -1682,3 +1682,14 @@ html[data-motion="reduced"] .ticker-track { transform: none !important; }
 }
 
 @media (min-width: 1001px) { .agent-workspace .nodes-view { height: calc(100dvh - 295px); min-height: 560px; } }
+
+/* Bounded pilot: retain the observatory's panels, accents and mobile density. */
+.vol-pilot > small { display: block; margin-top: 14px; }
+.vol-pilot .vol-kpis { margin: 18px 0; }
+.vol-pilot .vol-metric { box-shadow: none; background: rgba(0,0,0,.12); padding: 16px; }
+.vol-activation { border-top: 1px solid var(--line, #28333c); padding-top: 16px; }
+.vol-activation label { display: block; margin-bottom: 10px; font-size: 12px; }
+.vol-activation > div { display: flex; gap: 10px; flex-wrap: wrap; }
+.vol-activation input { min-width: 180px; flex: 1; padding: 10px; }
+.vol-reference > summary { cursor: pointer; padding: 20px 4px; font-size: 12px; color: var(--muted, #8d9eab); }
+.vol-reference[open] > .vol-kpis { margin-top: 8px; }

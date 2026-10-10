@@ -15,6 +15,7 @@ from collections import deque
 
 from . import altdata, controls, fastlab, market, patterns, research, thinktank, risk
 from .speculation import Speculation
+from .volatility import VolatilityTrader
 from .chatorders import ChatOrders
 from .stance import Stance, swiss
 from . import scoreboard
@@ -97,6 +98,7 @@ class Engine:
         self.strategies = StrategyRegistry(self)
         self.execution = ExecutionService(self)
         self._order_lock = self.execution.lock
+        self.volatility = VolatilityTrader(self)
         self.speculation = Speculation(self)
         self.shocks: dict[str, dict] = {}          # Fusion Scout's crash alerts
         self.trend: dict = {}                      # Trend Watch's preview of tonight's decision
@@ -560,14 +562,14 @@ class Engine:
             self._log("Guardian", "warn", f"{g[s]['reason'].upper()} news about {s}: no buys of {s} for 3 days. "
                       f"\"{g[s]['titles'][0][:90]}\"")
         if self.mode == "live" and self.live:
-            books = [b for b, on in (("brain", self.brain_on()), ("fast", self.fast.on())) if on]
+            books = [b for b, on in (("brain", self.brain_on()), ("fast", self.fast.on()), ("volatility", True)) if on]
             for s, entry in g.items():
                 news = [x for x in entry["sources"] if x != "The Professor"]
                 held = [b for b in books if s in self.db.get(self._book_keys(b)[0], {})]
                 if (held and s not in ("BTC", "ETH") and entry.get("reason") in self.GUARD_EVENTS
                         and len(news) >= 2 and not entry.get("sold")):
                     for b in held:
-                        value = next((c.get("value", 0) for c in (self.wallet or {}).get("coins" if b == "brain" else "fast_coins") or []
+                        value = next((c.get("value", 0) for c in (self.wallet or {}).get({"brain": "coins", "fast": "fast_coins", "volatility": "volatility_coins"}[b]) or []
                                       if c["symbol"] == s), 0)
                         self.why(b, s, "SELL", [["no", f"Guardian: {entry['reason']}-News von {', '.join(news)}"],
                                                 ["info", f"\"{entry['titles'][0][:120]}\""]])
@@ -769,7 +771,7 @@ class Engine:
         counts = {(r["variant_id"], r["side"]): r["n"] for r in self.db.query(
             "SELECT variant_id, side, COUNT(*) n FROM trades WHERE mode='live' AND ts>=? GROUP BY variant_id, side", (since,))}
         closed = [d for d in self.db.get("diary") or [] if d.get("closed") and d["ts"] >= since]
-        for book, vid, label in (("brain", BRAIN_ID, "🧠 Daily Brain"), ("fast", "fast", "⚡ Fast-Topf")):
+        for book, vid, label in (("brain", BRAIN_ID, "🧠 Daily Brain"), ("fast", "fast", "⚡ Fast-Topf"), ("volatility", "volatility", "◎ Volatility-Pilot")):
             buys, sells = counts.get((vid, "BUY"), 0), counts.get((vid, "SELL"), 0)
             mine = [d for d in closed if d["book"] == book]
             won = sum(1 for d in mine if d["pnl"] > 0)
@@ -858,16 +860,18 @@ class Engine:
         entry closes the position with its result after fees."""
         entry = self._diary_entry(sym, side, ex, notional, reason, book, basis)  # before the insert: it reads the buys
         self._add_why(entry, checks)
+        pnl = (notional - float(ex.get("fee", 0) or 0) - basis["cost"]
+               - basis.get("fee", self.portfolio.fee_basis(book, sym, basis.get("qty", 0)))) if entry.get("closed") else None
         self.db.execute(
             "INSERT INTO trades(ts,variant_id,mode,symbol,side,qty,price,notional,fee,pnl,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (time.time(), BRAIN_ID if book == "brain" else book, "live", sym, side, float(ex.get("quantity", 0) or 0), float(ex.get("price", 0) or 0),
-             notional, float(ex.get("fee", 0) or 0), entry.get("pnl") if entry.get("closed") else None, reason))
+             notional, float(ex.get("fee", 0) or 0), pnl, reason))
         self.bus.publish("trade", {"mode": "live", "symbol": sym, "side": side, "notional": round(notional, 2),
                                    "reason": reason, "ts": time.time(), "book": book,
                                    "pnl": entry.get("pnl") if entry.get("closed") else None})
         self._diary_add(entry)
         if self.settings["phone"].get("trades"):
-            who = "⚡ Fast pot" if book == "fast" else "🧠 Daily Brain"
+            who = {"fast": "⚡ Fast pot", "volatility": "◎ Volatility-Pilot", "test": "Systemcheck"}.get(book, "🧠 Daily Brain")
             cur = self.live.currency if self.live else ""
             self._notify_later(f"{who}\n{reason}\n\nprice {float(ex.get('price', 0) or 0):g} · fee {float(ex.get('fee', 0) or 0):.2f} {cur}",
                                title=f"{'🟢 BUY' if side == 'BUY' else '🔴 SELL'} {sym} · {notional:.2f} {cur}",
@@ -1359,7 +1363,7 @@ class Engine:
         a slice of the mix): only the part above the share, biggest first, each sell at least Fusion's minimum.
         Without it a fully invested brain could never start a new coin, and would sell your coins instead."""
         bal = await self.live.balances()
-        room = max(0.0, bal.get("FIAT", 0.0) - self.fast.cash_reserve()) * 0.995
+        room = max(0.0, bal.get("FIAT", 0.0) - self.portfolio.cash_reserve()) * 0.995
         short = want - room
         if short < 1:
             return []
@@ -1415,6 +1419,13 @@ class Engine:
             self.fusion_prices = prices
         qty, cost = self.db.get("live_qty", {}), self.db.get("live_cost", {})
         fqty, fcost = self.db.get("fast_qty", {}), self.db.get("fast_cost", {})
+        vqty, vcost = self.db.get("volatility_qty", {}), self.db.get("volatility_cost", {})
+        volatility_coins = []
+        for sym, q in vqty.items():
+            q = min(q, max(0.0, bal.get(sym, 0.0) - qty.get(sym, 0.0) - fqty.get(sym, 0.0)))
+            px = prices.get(sym, 0.0)
+            volatility_coins.append({"symbol": sym, "qty": q, "cost": round(vcost.get(sym, 0), 2), "price": px,
+                                     "value": round(q * px, 2), "pnl": round(q * px - vcost.get(sym, 0), 2) if px else None})
         fast_coins = []
         for sym, q in fqty.items():
             q = min(q, max(0.0, bal.get(sym, 0.0) - qty.get(sym, 0.0)))
@@ -1430,7 +1441,7 @@ class Engine:
         cur = b.currency
         yours = {}
         for k, v in bal.items():
-            left = (v or 0) - qty.get(k, 0.0) - fqty.get(k, 0.0)  # your part: whatever the bot didn't buy
+            left = (v or 0) - qty.get(k, 0.0) - fqty.get(k, 0.0) - vqty.get(k, 0.0)  # your part: whatever the bot didn't buy
             if k not in ("FIAT", cur) and left > 1e-12:
                 yours[k] = left
         own = [{"symbol": k, "qty": round(v, 8), "price": prices.get(k), "value": round(v * prices.get(k, 0), 2),
@@ -1438,6 +1449,7 @@ class Engine:
         own.sort(key=lambda c: -c["value"])
         bot_value = sum(c["value"] for c in coins)
         fast_value = sum(c["value"] for c in fast_coins)
+        volatility_value = sum(c["value"] for c in volatility_coins)
         yours_value = sum(c["value"] for c in own)
         fiat = bal.get("FIAT", 0.0)
         self.wallet = {
@@ -1446,7 +1458,8 @@ class Engine:
             "bot_pnl": round(bot_value - sum(cost.get(c["symbol"], 0) for c in coins if c["price"]), 2),
             "yours": {c["symbol"]: c["qty"] for c in own}, "own_coins": own, "yours_value": round(yours_value, 2),
             "fast_coins": fast_coins, "fast_value": round(fast_value, 2),
-            "total": round(fiat + bot_value + fast_value + yours_value, 2), "use_my_coins": self.settings["live"]["use_my_coins"],
+            "volatility_coins": volatility_coins, "volatility_value": round(volatility_value, 2),
+            "total": round(fiat + bot_value + fast_value + volatility_value + yours_value, 2), "use_my_coins": self.settings["live"]["use_my_coins"],
             "max_invest": self.settings["live"]["max_invest"], "ts": time.time(),
         }
         total = self.wallet["total"]
@@ -1458,12 +1471,12 @@ class Engine:
             a["value"] = round(a["value"] + c["value"], 2)
             a["bot"] = True
             a["pnl"] = c["pnl"]
-        for c in fast_coins:
+        for c in [*fast_coins, *volatility_coins]:
             a = allc.setdefault(c["symbol"], {"symbol": c["symbol"], "qty": 0.0, "price": c["price"], "value": 0.0,
                                               "tradable": True})
             a["qty"] = round(a["qty"] + c["qty"], 8)
             a["value"] = round(a["value"] + c["value"], 2)
-            a["fast"] = True
+            a["volatility" if c in volatility_coins else "fast"] = True
         self.wallet["all_coins"] = sorted(allc.values(), key=lambda c: -c["value"])
         self.wallet["coins_value"] = round(total - fiat, 2)
         held = {k: float(v or 0) for k, v in bal.items() if k not in ("FIAT", cur) and (v or 0) > 1e-12}
@@ -1475,7 +1488,7 @@ class Engine:
         in cash and coins that the bot's own recorded orders don't explain is a deposit or withdrawal (coins sent in
         or out count too; a coin you buy by hand in the app nets out, cash out and coin in). It moves the starting
         point of the bot's own gain and of "since start", so neither jumps."""
-        if self.__dict__.get("_brain_busy") or self.__dict__.get("_fast_trading"):
+        if self.__dict__.get("_brain_busy") or self.__dict__.get("_fast_trading") or self.execution.lock.locked():
             return  # orders in flight: compare after they are booked
         prev = self.db.get("flow_state")
         self.db.set("flow_state", {"ts": read_at, "fiat": fiat, "qty": held})
@@ -1595,6 +1608,7 @@ class Engine:
             self._every(lambda: 60, self.brain_tick),
             self._every(lambda: 60, self.fast.tick),
             self._every(lambda: 60, self.fast.watch),
+            self._every(lambda: 60, self.volatility.watch),
             self._every(lambda: 60, self.stance.tick),
             self._every(lambda: 300, self.ghosts.tick),
             self._every(lambda: 60, self.guard_tick),
@@ -1647,7 +1661,7 @@ class Engine:
         live = {s: p for s, p in (self.fusion_prices or {}).items() if p}
         live.update({q.symbol: q.price for q in self.prices.quotes.values() if q.price and q.symbol not in live})
         snap = await asyncio.to_thread(market.snapshot, cd, live)
-        snap["held"] = {"brain": sorted(self.db.get("live_qty", {})), "fast": sorted(self.db.get("fast_qty", {}))}
+        snap["held"] = {"brain": sorted(self.db.get("live_qty", {})), "fast": sorted(self.db.get("fast_qty", {})), "volatility": sorted(self.db.get("volatility_qty", {}))}
         snap["guard"] = sorted(self.guard())
         snap["owners"] = self.brain().get("owners") or {}
         return snap
@@ -1712,7 +1726,7 @@ class Engine:
         }
 
     def recent_trades(self, limit: int = 50) -> list[dict]:
-        return self.db.query("SELECT ts,mode,symbol,side,notional,price,fee,pnl,reason FROM trades WHERE mode='live' "
+        return self.db.query("SELECT ts,mode,symbol,side,notional,price,fee,pnl,reason,variant_id AS book FROM trades WHERE mode='live' "
                              "ORDER BY id DESC LIMIT ?", (limit,))
 
     # ------------------------------------------------------------------ "ask the bot"

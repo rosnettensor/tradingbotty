@@ -24,10 +24,10 @@ export function DecisionConsole({ mission, ops, now, onDetails, openAgent }) {
     <p className="decision-reason" key={mission.detail}>{mission.detail}</p>
     {!!mission.running.length && <div className="activity-chips">{mission.running.slice(0, 4).map(n => <button key={n.id} onClick={() => openAgent(n.id)}><i />{n.name} ↗</button>)}</div>}
     <div className="decision-schedules">{(ops?.lanes || []).map(l => <button key={l.id} onClick={() => openResearch(l.id)} className="decision-schedule">
-      <span><b>{l.id === "daily" ? "Daily" : "Fast"}</b><small>{l.enabled ? "Nächste Signalprüfung" : "Strategie ausgeschaltet"}</small></span>
+      <span><b>{l.id === "daily" ? "Daily" : l.id === "speculation" ? "Volatility" : "Fast"}</b><small>{l.enabled ? "Nächste Signalprüfung" : "Strategie ausgeschaltet"}</small></span>
       <strong>{!mission.fresh ? "—" : !l.enabled ? "AUS" : countdown(l.next_at, now)}</strong>
-      <span className="schedule-track"><i style={{ width: `${!mission.fresh || !l.enabled || !l.next_at ? 0 : Math.max(0, Math.min(100, 100 * (1 - (l.next_at - now) / (l.id === "daily" ? 86400 : 14400))))}%` }} /></span>
-      <small className="schedule-note">{mission.fresh ? l.reasons?.[0] || "Kerzenschluss + Prüfung; kein versprochener Kaufzeitpunkt." : "Warte auf aktuellen Serverstatus."}</small>
+      <span className="schedule-track"><i style={{ width: `${!mission.fresh || !l.enabled || !l.next_at ? 0 : Math.max(0, Math.min(100, 100 * (1 - (l.next_at - now) / (l.id === "daily" ? 86400 : l.id === "speculation" ? 120 : 14400))))}%` }} /></span>
+      <small className="schedule-note">{mission.fresh ? l.reasons?.[0] || "Signalprüfung; kein versprochener Kaufzeitpunkt." : "Warte auf aktuellen Serverstatus."}</small>
     </button>)}</div>
     <div className="decision-bottom"><span><i className={mission.fresh && ops?.wallet_fresh ? "up" : "warn"}>●</i> Konto {ops?.wallet_ts ? clock(ops.wallet_ts) : "noch nicht gelesen"}</span><button className="linkish" onClick={onDetails}>Prüfungen öffnen ↗</button></div>
   </section>;
@@ -47,7 +47,7 @@ export function OrderJourney({ ops, error, now }) {
     {!row ? <div className="journey-empty"><div className="empty-orbits" aria-hidden><i /><i /><b>◎</b></div><p>Noch keine Order-Spur vorhanden.<small>Die Aufzeichnung beginnt mit dem gemeinsamen Handelskern. Ältere Trades bleiben unten im Verlauf sichtbar.</small></p></div> : <>
       <div className="journey-selector" role="group" aria-label="Börsenauftrag auswählen">{rows.map(r => <button key={r.id} aria-pressed={row.id === r.id} className={row.id === r.id ? "active" : ""} onClick={() => select(r.id)}><span className={r.side === "BUY" ? "up" : "down"}>{r.side === "BUY" ? "↗" : "↘"}</span><b>{r.symbol}</b><small>{clock(r.created_at)}</small></button>)}</div>
       <div className="journey-detail" key={row.id}>
-        <div className="journey-title"><div><span className="vol-eyebrow">{({ brain: "Daily", fast: "Fast", test: "Technischer Test", funding: "Cash-Beschaffung" })[row.book] || row.book}</span><h2>{row.side} <span>{row.symbol}</span></h2></div><span className={`order-state ${filled ? "up" : "warn"}`}>{stateLabel}</span></div>
+        <div className="journey-title"><div><span className="vol-eyebrow">{({ brain: "Daily", fast: "Fast", volatility: "Volatility-Pilot", test: "Technischer Test", funding: "Cash-Beschaffung" })[row.book] || row.book}</span><h2>{row.side} <span>{row.symbol}</span></h2></div><span className={`order-state ${filled ? "up" : "warn"}`}>{stateLabel}</span></div>
         <ol className="journey-steps">
           <li className="done"><i>01</i><div><b>Entscheidungsgrund</b><p>{row.reason}</p></div></li>
           <li className="done"><i>02</i><div><b>Übermittlung begonnen</b><p>{date(row.created_at)}{Number.isFinite(row.requested_amount) ? ` · angefragt ${money(row.requested_amount)} ${ops.currency}` : ""}</p></div></li>

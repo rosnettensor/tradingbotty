@@ -23,7 +23,7 @@ STANCES = {
                "what": "Neue Käufe halb so gross, und Gewinne werden gesichert: liegt ein Coin +10% im Plus, "
                        "verkauft der Bot ihn, wenn er auf +2% zurückfällt."},
     "pause": {"name": "⏸ Pause", "size": 0.0, "buys": False, "lock": False,
-              "what": "Keine neuen Käufe von Daily Brain und Fast Pot. Was sie halten, läuft nach ihren Regeln weiter."},
+              "what": "Keine neuen Käufe von Daily, Fast und Volatility. Was sie halten, läuft nach ihren Regeln weiter."},
 }
 LOCK_AT, LOCK_FLOOR = 1.10, 1.02
 
@@ -140,7 +140,7 @@ class Stance:
         w = e.wallet or {}
         peaks = dict(s.get("peaks") or {})
         sells = []
-        for book, rows in (("brain", w.get("coins") or []), ("fast", w.get("fast_coins") or [])):
+        for book, rows in (("brain", w.get("coins") or []), ("fast", w.get("fast_coins") or []), ("volatility", w.get("volatility_coins") or [])):
             for c in rows:
                 if not c.get("price") or not c.get("cost") or not c.get("value"):
                     continue
@@ -156,8 +156,8 @@ class Stance:
         e._fast_trading = True  # the fast pot's own decision waits
         try:
             for book, sym, peak, r in sells:
-                who = "fast pot" if book == "fast" else "daily brain"
-                value = next((c["value"] for c in (w.get("fast_coins") if book == "fast" else w.get("coins")) or []
+                who = {"fast": "fast pot", "volatility": "volatility"}.get(book, "daily brain")
+                value = next((c["value"] for c in (w.get({"fast": "fast_coins", "brain": "coins", "volatility": "volatility_coins"}[book])) or []
                               if c["symbol"] == sym), 0)
                 e.why(book, sym, "SELL", [["warn", f"Bunkern: war +{(peak - 1) * 100:.0f}% im Plus, fiel auf "
                                                    f"+{(r - 1) * 100:.1f}%: Gewinn gesichert"]])

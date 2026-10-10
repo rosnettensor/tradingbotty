@@ -25,9 +25,10 @@ def ready_engine(tmp_path, monkeypatch):
 def test_global_live_strategy_switch_and_evidence_are_separate(tmp_path, monkeypatch):
     e, _ = ready_engine(tmp_path, monkeypatch)
     d = snapshot(e)
-    assert d["execution_allowed"] and all(l["status"] == "armed" for l in d["lanes"])
+    assert d["execution_allowed"] and all(l["status"] == "armed" for l in d["lanes"] if l["id"] != "speculation")
+    assert d["lanes"][2]["status"] == "off"
     e.db.set("mode", "paper")
-    assert all(l["status"] == "standby" for l in snapshot(e)["lanes"])
+    assert all(l["status"] == "standby" for l in snapshot(e)["lanes"] if l["id"] != "speculation")
     e.db.set("mode", "live"); e.db.set("fastlab", {})
     assert snapshot(e)["lanes"][1]["status"] == "blocked"
     e.db.set("brain", {"on": False, "strategy": STRAT})

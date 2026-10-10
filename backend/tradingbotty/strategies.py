@@ -1,7 +1,7 @@
 """Strategy catalogue and deployment checks shared by execution and the dashboard.
 
 Research creates evidence. It cannot create a new live execution path or promote
-a module on its own. Daily and Fast are deployed signal families in one engine.
+a module on its own. Daily and Fast are deployed signal families; Volatility has an explicit experimental mandate.
 """
 from __future__ import annotations
 
@@ -41,22 +41,27 @@ class StrategyRegistry:
             report = bank.get("report") or {}
             cfg = {"on": b.get("on"), "strategy": b.get("strategy"), "bank": e.bank.mode(),
                    "split": report.get("probe_split" if e.bank.mode() == "probe" else "split")}
+        elif book == "volatility":
+            cfg = e.volatility.cfg()
         else:
             raise ValueError("research modules cannot submit live orders")
         return hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()[:20]
 
     def admit(self, book, symbol, revision=None):
         e = self.e
-        if book not in ("brain", "fast"):
+        if book not in ("brain", "fast", "volatility"):
             raise ValueError("research modules cannot submit live orders")
         if revision is not None and revision != self.revision(book):
             raise ValueError("strategy settings changed; waiting for a new decision")
-        enabled = e.brain_on() if book == "brain" else e.fast.on()
-        if not enabled:
-            raise ValueError("strategy is disabled")
-        proofs = self.checks(book)
-        if not proofs or not all(p["ready"] for p in proofs):
-            raise ValueError("strategy evidence: " + next((p["reason"] for p in proofs if not p["ready"]), "Cash allocation"))
+        if book == "volatility":
+            e.volatility.admit(symbol)  # explicit experimental mandate, never fabricated backtest evidence
+        else:
+            enabled = e.brain_on() if book == "brain" else e.fast.on()
+            if not enabled:
+                raise ValueError("strategy is disabled")
+            proofs = self.checks(book)
+            if not proofs or not all(p["ready"] for p in proofs):
+                raise ValueError("strategy evidence: " + next((p["reason"] for p in proofs if not p["ready"]), "Cash allocation"))
         if not e.stance.buys_allowed():
             raise ValueError("new purchases paused by your course")
         if symbol in e.stance.locked():
@@ -71,8 +76,8 @@ class StrategyRegistry:
              "live_capable": True, "enabled": e.brain_on(), "description": "Tagesstrategie; Bank verteilt bei Bedarf deren Budget."},
             {"id": "fast", "book": "fast", "name": "Fast", "role": "strategy", "cadence": "4 Stunden",
              "live_capable": True, "enabled": e.fast.on(), "description": "Kurzfristige Strategie; Ausstiege werden jede Minute geprüft."},
-            {"id": "speculation", "name": "Volatility", "role": "research", "cadence": "2 Minuten",
-             "live_capable": False, "enabled": False, "description": "Eigene Regel im virtuellen Vorwärtstest. Keine Orders an Daily oder Fast."},
+            {"id": "speculation", "book": "volatility", "name": "Volatility · Pilot", "role": "experimental", "cadence": "2 Minuten",
+             "live_capable": True, "enabled": e.volatility.cfg()["enabled"], "description": "Begrenzter Echtgeld-Pilot nach manueller Freigabe. Maximal eine Position; noch kein Profitabilitätsnachweis."},
             {"id": "think", "name": "Think Tank", "role": "research", "live_capable": False, "enabled": False,
              "description": "Entwickelt Strategiekandidaten. Kandidaten brauchen weitere Laborprüfungen und eine bewusste Aktivierung."},
         ]

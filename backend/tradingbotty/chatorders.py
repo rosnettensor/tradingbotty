@@ -63,7 +63,7 @@ class ChatOrders:
         e = self.e
         pairs = getattr(e.live or e._viewer, "pairs", None) or {}
         known = set(getattr(e, "fusion_coins", None) or ()) | set(e.prices.quotes)
-        return set(pairs) | known | set(e.db.get("fast_qty", {})) | set(e.db.get("live_qty", {}))
+        return set(pairs) | known | set(e.db.get("fast_qty", {})) | set(e.db.get("live_qty", {})) | set(e.db.get("volatility_qty", {}))
 
     async def usd_price(self, sym: str) -> float | None:
         """The coin's price on Binance in USDT: the fast pot's rule reads Binance 4-hour candles, so a manual buy's
@@ -108,7 +108,7 @@ class ChatOrders:
         sym = p["coins"][0]
 
         if p["side"] == "SELL":
-            books = [b for b in ("fast", "brain") if sym in (fast_qty if b == "fast" else brain_qty)]
+            books = [b for b in ("fast", "brain", "volatility") if sym in e.db.get(e._book_keys(b)[0], {})]
             if p["book"]:
                 books = [b for b in books if b == p["book"]]
             if not books:
@@ -119,9 +119,9 @@ class ChatOrders:
                 return no(f"{sym} liegt im Fast Pot und beim Daily Brain. Sag \"verkaufe {sym} im Fast Pot\" "
                           f"oder \"verkaufe {sym} vom Brain\".")
             book = books[0]
-            qty = (fast_qty if book == "fast" else brain_qty)[sym]
+            qty = e.db.get(e._book_keys(book)[0], {})[sym]
             cost = e.db.get(e._book_keys(book)[1], {}).get(sym, 0.0)
-            who = "Fast Pot" if book == "fast" else "Daily Brain"
+            who = {"fast": "Fast Pot", "volatility": "Volatility-Pilot"}.get(book, "Daily Brain")
             notes = []
             if book == "brain":
                 notes.append("Der Daily Brain kauft ihn frühestens nach der nächsten Tageskerze wieder, und nur, "
@@ -237,8 +237,8 @@ class ChatOrders:
                 res = await e.fast.close_all()
                 return {"ok": True, "answer": "Fast Pot: " + ("; ".join(res["done"]) or "nichts verkauft") + "."}
             if o["side"] == "SELL":
-                who = "fast pot" if o["book"] == "fast" else "daily brain"
-                value = next((c["value"] for c in (e.wallet or {}).get("fast_coins" if o["book"] == "fast" else "coins") or []
+                who = {"fast": "fast pot", "volatility": "volatility"}.get(o["book"], "daily brain")
+                value = next((c["value"] for c in (e.wallet or {}).get({"fast": "fast_coins", "brain": "coins", "volatility": "volatility_coins"}[o["book"]]) or []
                               if c["symbol"] == o["symbol"]), 0)
                 e.why(o["book"], o["symbol"], "SELL", [["warn", "Du hast per Chat verkauft, nicht die Regel"]])
                 pos = (e.fast.cfg().get("pos") or {}).get(o["symbol"]) if o["book"] == "fast" else None

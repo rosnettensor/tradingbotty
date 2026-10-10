@@ -17,12 +17,12 @@ export function TradingStatus({ data, error, state, onDetails }) {
   return <section className="panel mission-status">
     <div className="mission-status-head"><div><span className="vol-eyebrow">EIN PORTFOLIO · EINE HANDELSMASCHINE</span><h2 className={tone}>{headline}</h2></div><span className="badge">SPOT · OHNE KREDIT</span></div>
     <p className="dim small">{outdated ? error || "Verbindung zum Server wird hergestellt." : data.global_reasons.length ? data.global_reasons.join(" · ") : "LIVE erlaubt echte Orders. Signalbereit bedeutet: die Strategie darf prüfen – jede Order muss zusätzlich Risiko, Guthaben und Spread bestehen."}</p>
-    <div className="mission-lanes">{(data?.lanes || []).map(l => <button key={l.id} className={`mission-lane ${l.status}`} onClick={() => openResearch(l.id === "daily" ? "daily" : "fast")}>
-      <span><b>{l.name}</b><small>{l.id === "daily" ? "Tageskerzen" : "4h-Kerzen · Ausstiege jede Minute"}</small></span>
+    <div className="mission-lanes">{(data?.lanes || []).map(l => <button key={l.id} className={`mission-lane ${l.status}`} onClick={() => openResearch(l.id)}>
+      <span><b>{l.name}</b><small>{l.id === "daily" ? "Tageskerzen" : l.id === "speculation" ? "2min-Scans · begrenzter Echtgeld-Pilot" : "4h-Kerzen · Ausstiege jede Minute"}</small></span>
       <span><b className={outdated ? "dim" : l.status === "armed" ? "up" : l.enabled ? "warn" : "dim"}>{outdated ? "Status veraltet" : l.label}</b><small>{money(l.budget)} {data.currency} Budget</small></span>
       <span className="mission-lane-reason">{l.reasons[0] || (l.enabled ? "Nächster Kauf erst bei passendem Signal." : "Strategie im Research-Bereich auswählen und aktivieren.")}</span>
     </button>)}</div>
-    <div className="mission-context"><button className="linkish" onClick={() => openResearch("overview")}>Strategien & Handelsplan →</button><span className="dim">Volatility & Think Tank: Forschung</span><button className="linkish" onClick={onDetails}>Betrieb & Prüfungen →</button></div>
+    <div className="mission-context"><button className="linkish" onClick={() => openResearch("overview")}>Strategien & Handelsplan →</button><span className="dim">Volatility: begrenzter Pilot · Think Tank: Forschung</span><button className="linkish" onClick={onDetails}>Betrieb & Prüfungen →</button></div>
     {!!data?.conflicts.length && <details className="mission-conflicts"><summary>{data.conflicts.length} Hinweis{data.conflicts.length > 1 ? "e" : ""} zu Budget oder Daten</summary><ul>{data.conflicts.map(c => <li key={c}>{c}</li>)}</ul></details>}
   </section>;
 }
@@ -33,7 +33,7 @@ export function AccountStrip({ state, data }) {
     <Metric label="Kontowert" value={`${money(w.total)} ${cur}`} sub={w.ts ? `Fusion ${ago(w.ts)}${data?.wallet_fresh ? "" : " · Stand prüfen"}` : "Konto wird verbunden"} />
     <Metric label="Verfügbares Bargeld" value={`${money(w.fiat)} ${cur}`} sub="Noch nicht investiert · Reservierungen beachten" />
     <Metric label="Mehrwert des Bots" value={`${money(w.bot_edge)} ${cur}`} tone={pctColor(w.bot_edge)} sub="Seit Start gegenüber unverändertem Bestand" />
-    <Metric label="Offene Bot-Positionen" value={`${(w.coins || []).length + (w.fast_coins || []).length}`} sub="Daily Brain und Fast · eigene Altbestände separat" />
+    <Metric label="Offene Bot-Positionen" value={`${(w.coins || []).length + (w.fast_coins || []).length + (w.volatility_coins || []).length}`} sub="Daily, Fast und Volatility · eigene Altbestände separat" />
   </div>;
 }
 function Metric({ label, value, sub, tone = "" }) {
@@ -55,7 +55,7 @@ export function Observation({ data, error }) {
 
 export function PositionsBrief({ state, onMore, setFocus }) {
   const w = state.wallet || {};
-  const rows = [...(w.coins || []).map(c => ({ ...c, owner: "Daily" })), ...(w.fast_coins || []).map(c => ({ ...c, owner: "Fast" }))];
+  const rows = [...(w.coins || []).map(c => ({ ...c, owner: "Daily" })), ...(w.fast_coins || []).map(c => ({ ...c, owner: "Fast" })), ...(w.volatility_coins || []).map(c => ({ ...c, owner: "Volatility" }))];
   return <section className="panel mission-positions"><div className="row-head"><h3>ECHTE BOT-POSITIONEN</h3><button className="linkish" onClick={onMore}>Alle Details →</button></div>
     {!rows.length ? <p className="mission-empty">Noch keine Bot-Positionen.<small>Vorhandene eigene Coins findest du unter „Positionen & Verlauf“.</small></p> : rows.slice(0, 5).map(c => <button className="mission-position" key={`${c.owner}-${c.symbol}`} onClick={() => { setFocus(c.symbol); onMore(); }}><span><b>{c.symbol}</b><small>{c.owner}</small></span><span><b>{money(c.value)} {w.currency}</b><small className={pctColor(c.pnl)}>{money(c.pnl)} Buchgewinn/-verlust</small></span></button>)}
   </section>;

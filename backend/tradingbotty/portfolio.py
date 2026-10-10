@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 
 BOOKS = {"brain": ("live_qty", "live_cost"), "fast": ("fast_qty", "fast_cost"),
-         "test": ("test_qty", "test_cost")}
+         "test": ("test_qty", "test_cost"), "volatility": ("volatility_qty", "volatility_cost")}
 
 
 class Portfolio:
@@ -34,7 +34,7 @@ class Portfolio:
         return qty, costs
 
     def other_owner(self, book, symbol):
-        return next((b for b in ("brain", "fast") if b != book and
+        return next((b for b in ("brain", "fast", "volatility") if b != book and
                      self.e.db.get(self.keys(b)[0], {}).get(symbol, 0) > 0), None)
 
     def fast_budget(self, config=None):
@@ -48,15 +48,26 @@ class Portfolio:
     def fast_cash_reserve(self):
         return round(max(0, self.fast_budget() - self.invested("fast")), 2) if self.e.fast.on() else 0.0
 
+    def volatility_cash_reserve(self):
+        return max(0.0, self.e.volatility.budget() - self.invested("volatility")) if self.e.volatility.cfg()["enabled"] else 0.0
+
+    def cash_reserve(self, book="brain"):
+        return ((self.fast_cash_reserve() if book != "fast" else 0.0) +
+                (self.volatility_cash_reserve() if book != "volatility" else 0.0))
+
     def allocation(self):
         e = self.e
         total = max(0.0, float((e.wallet or {}).get("total") or 0))
         # Disabled strategies can still own positions: their capital is not free a second time.
         held = self.invested("fast")
         requested = self.fast_budget() if e.fast.on() else 0.0
-        reserved = max(requested, held)
+        pilot_held = self.invested("volatility")
+        pilot = e.volatility.budget() if e.volatility.cfg()["enabled"] else 0.0
+        reserved = max(requested, held) + max(pilot, pilot_held)
         daily = max(0.0, min(e.settings["live"]["max_invest"], (total - reserved) * .98))
         return {"total": total, "daily": round(daily, 2), "fast": requested,
+                "volatility": pilot, "volatility_committed": pilot_held,
+                "volatility_cash_reserve": self.volatility_cash_reserve(),
                 "fast_committed": round(held, 2), "fast_cash_reserve": self.fast_cash_reserve(),
                 "unallocated": round(max(0.0, total - daily - reserved), 2),
                 "overallocated": reserved > total, "policy": "partitioned", "currency": e.settings["live"]["currency"]}

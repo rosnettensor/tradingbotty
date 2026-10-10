@@ -9,7 +9,7 @@ const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)",
 const PERIODS = [["full", "all history"], ["last_2y", "2 years"], ["last_1y", "1 year"], ["last_6m", "6 months"], ["first_half", "1st half"], ["second_half", "2nd half"]];
 const dayFmt = (ts) => new Date(ts * 1000).toLocaleDateString([], { month: "short", year: "2-digit" });
 
-const LABS = [["overview", "HANDELSPLAN"], ["daily", "DAILY · Strategie"], ["fast", "FAST · Strategie"], ["speculation", "VOLATILITY · Forschung"], ["think", "THINK TANK · Forschung"]];
+const LABS = [["overview", "HANDELSPLAN"], ["daily", "DAILY · Strategie"], ["fast", "FAST · Strategie"], ["speculation", "VOLATILITY · Pilot"], ["think", "THINK TANK · Forschung"]];
 
 export default function Research({ state, openAgent }) {
   const [res, setRes] = useState(null);
@@ -25,7 +25,7 @@ export default function Research({ state, openAgent }) {
   return (
     <div className="research-tab">
       <div className="lab-switch"><Tabs value={lab} options={LABS} onChange={pickLab} /></div>
-      {lab !== "overview" && <p className="research-context dim small"><button className="linkish" onClick={() => pickLab("overview")}>← Handelsplan</button> {lab === "daily" || lab === "fast" ? "Strategiemodul der gemeinsamen Handelsmaschine. Jede echte Order läuft durch denselben Portfolio- und Risikokern." : "Forschungsbereich. Hier entstehen keine echten Orders und keine automatische Live-Aktivierung."}</p>}
+      {lab !== "overview" && <p className="research-context dim small"><button className="linkish" onClick={() => pickLab("overview")}>← Handelsplan</button> {lab === "daily" || lab === "fast" || lab === "speculation" ? "Strategiemodul der gemeinsamen Handelsmaschine. Jede echte Order läuft durch denselben Portfolio- und Risikokern." : "Forschungsbereich. Hier entstehen keine echten Orders und keine automatische Live-Aktivierung."}</p>}
       {lab === "overview" ? <StrategyHub pickLab={pickLab} /> : lab === "speculation" ? <Speculation /> : lab === "think" ? <ThinkTank openAgent={openAgent} /> : lab === "fast" ? <FastLab state={state} openAgent={openAgent} /> : (
         <>
           <HistoryTest state={state} res={res} setRes={(r) => { setRes(r); reloadPat(); }} openAgent={openAgent} />

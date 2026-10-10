@@ -321,7 +321,8 @@ def board(e) -> dict:
         return sum(costs[a] for a in names) * fx, names
 
     for book, icon, name, holds in (("brain", "🧠", "Daily Brain", w.get("coins") or []),
-                                    ("fast", "⚡", "Fast Pot", w.get("fast_coins") or [])):
+                                    ("fast", "⚡", "Fast Pot", w.get("fast_coins") or []),
+                                    ("volatility", "◎", "Volatility-Pilot", w.get("volatility_coins") or [])):
         cl = [d for d in closed if d["book"] == book and not _by_chat(d)]
         realized = sum(d["pnl"] for d in cl)
         open_pnl = sum(c["pnl"] for c in holds if c.get("pnl") is not None)

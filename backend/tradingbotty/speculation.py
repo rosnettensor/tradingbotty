@@ -1,4 +1,4 @@
-"""Fusion volatility watchlist and an isolated forward paper experiment.
+"""Fusion volatility scanner: shared observations, separate live pilot and paper reference.
 
 No execution adapter is passed to the paper portfolio. Range is not realized
 volatility; momentum is between observed scans, not a claimed 24-hour return.
@@ -34,6 +34,7 @@ def rank(tickers: list[dict], pairs: dict, previous: dict, now: float) -> list[d
                          "range_pct": round((high - low) / price * 100, 2),
                          "momentum_pct": round(momentum, 2) if momentum is not None else None,
                          "breakout": breakout, "volume_reported": volume,
+                         "reference_ts": old.get("ts"), "reference_price": old.get("price"), "reference_high": old.get("high"),
                          "min_order": float(pair.get("minOrderAmount") or 0),
                          "newly_seen": bool(previous and not old)})
         except (ValueError, TypeError, KeyError, ZeroDivisionError):
@@ -119,9 +120,11 @@ class Speculation:
 
     def status(self):
         state = self.e.db.get("speculation", {})
-        return {"mode": "paper", "currency": self.e.settings["live"]["currency"],
+        return {"currency": self.e.settings["live"]["currency"],
                 "rows": [], "paper": {}, **state,
-                "stale": time.time() - state.get("ts", 0) > 600}
+                "stale": time.time() - state.get("ts", 0) > 180,
+                "live": self.e.volatility.status(),
+                "mode": "live-pilot" if self.e.volatility.cfg()["enabled"] else "pilot-off"}
 
     async def scan(self):
         e = self.e
@@ -159,7 +162,7 @@ class Speculation:
                         r["eligible"] = not reasons
                         r["note"] = " · ".join(reasons) if reasons else (
                             "Referenzscan fehlt" if r["momentum_pct"] is None else
-                            "Paper-Signal" if r["breakout"] and r["momentum_pct"] >= 2 else "Wartet auf Ausbruch + Momentum")
+                            "Ausbruch + Momentum" if r["breakout"] and r["momentum_pct"] >= 2 else "Wartet auf Ausbruch + Momentum")
                     except Exception:
                         r["note"] = "Orderbuch nicht verfügbar"
             await asyncio.gather(*(qualify(r) for r in rows[:10]))
@@ -171,5 +174,6 @@ class Speculation:
                                        "fee_pct": e.settings["paper"]["fee_pct"],
                                        "slippage_pct": e.settings["paper"]["slippage_pct"]})
             e.db.set("speculation_previous", {r["symbol"]: {"ts": now, "price": r["price"], "high": r["high"]} for r in rows})
+            await e.volatility.enter()
         except Exception as ex:
             e.db.set("speculation", {**state, "error": str(ex)[:160]})

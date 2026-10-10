@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ago, usePoll } from "./useBot.js";
+import { ago, api, usePoll } from "./useBot.js";
 import { LineChart } from "./charts.jsx";
 
 const fmt = (n, digits = 2) => Number.isFinite(n) ? n.toLocaleString("de-CH", { maximumFractionDigits: digits }) : "—";
@@ -16,10 +16,16 @@ export default function Speculation() {
   const positions = Object.entries(p.positions || {});
   return <div className="volatility-desk">
     <section className="panel vol-hero">
-      <div><span className="vol-eyebrow">FORSCHUNG / VIRTUELLER VORWÄRTSTEST</span><h2>Volatility radar<span className="badge">KEIN ECHTGELD</span></h2><p className="dim">Eigener Strategiekandidat mit festen Regeln. Er sendet weder echte Orders noch Kaufaufträge an Daily oder Fast.</p></div>
+      <div><span className="vol-eyebrow">STRATEGIE / BEGRENZTER ECHTGELD-PILOT</span><h2>Volatility radar<span className={`badge ${data.live?.enabled ? "warn" : ""}`}>{poll.error ? "STATUS PRÜFEN" : data.live?.enabled ? "PILOT FREIGEGEBEN" : "PILOT AUS"}</span></h2><p className="dim">Eigene Ausbruchstrategie im gemeinsamen Handelskern. Kleine echte Einsätze nach deiner Freigabe; noch kein Nachweis profitabler Live-Ausführung.</p></div>
       <div className="vol-feed"><span className={`badge ${stale ? "warn" : "ok"}`}>{stale ? "DATEN AUSSTEHEND" : "● MARKTDATEN AKTUELL"}</span><small className="dim">{data.ts ? `Letzter Scan ${ago(data.ts)} · Takt 2 min` : "Wartet auf Fusion-Lesezugriff"}</small><button onClick={reload} disabled={poll.loading}>Ansicht aktualisieren</button></div>
     </section>
     {(data.error || poll.error) && <div role="status" className="vol-alert">Daten nicht aktuell: {data.error || poll.error}. Angezeigt wird der letzte empfangene Stand.</div>}
+    <LivePilot live={data.live} cur={cur} reload={reload} unavailable={!!poll.error} />
+    <section className="panel vol-watchlist"><div className="vol-list-head"><div><h3>MARKT-RADAR</h3><small className="dim">Top 30 nach 24h-Spanne · Spanne ist keine Rendite</small></div><div className="vol-filters"><input aria-label="Coin suchen" placeholder="Coin suchen…" value={query} onChange={e => setQuery(e.target.value)} /><button aria-pressed={qualified} className={qualified ? "active" : ""} onClick={() => setQualified(!qualified)}>Nur Filter bestanden</button></div></div>
+      <div className="vol-scroll"><table><thead><tr><th>Coin</th><th>24h-Spanne</th><th>Scan-Momentum</th><th>Spread</th><th>Tiefe · {cur}</th><th>Prüfergebnis</th></tr></thead><tbody>{rows.map(r => <tr key={r.symbol}><td><b>{r.symbol}</b>{r.newly_seen && <small className="vol-new">NEU ERFASST</small>}</td><td><span className="vol-range" style={{ "--range": `${Math.min(100, r.range_pct)}%` }}>{fmt(r.range_pct)}%</span></td><td className={color(r.momentum_pct)}>{r.momentum_pct == null ? "—" : `${r.momentum_pct > 0 ? "+" : ""}${fmt(r.momentum_pct)}%`}</td><td>{r.spread_pct == null ? "—" : `${fmt(r.spread_pct, 3)}%`}</td><td>{fmt(r.depth_quote, 0)}</td><td className={stale ? "warn" : r.eligible ? "up" : "dim"}>{stale ? "Veralteter Stand" : r.note || "Nicht geprüft"}</td></tr>)}</tbody></table></div>
+      {!rows.length && <div className="empty">{data.rows?.length ? "Keine Coins für diesen Filter." : "Noch keine Marktdaten. Fusion-Verbindung im Systemcheck prüfen."}</div>}
+    </section>
+    <details className="vol-reference"><summary>Virtuelle Referenz · separate Paper-Daten, keine echten Orders</summary>
     <div className="vol-kpis">
       <Metric label="Virtuelles Portfolio" value={`${fmt(p.equity)} ${cur}`} detail={`${fmt(p.return_pct)}% seit Start · Startkapital 1.000`} tone={color(p.return_pct)} />
       <Metric label="Marktuniversum" value={fmt(data.total_pairs, 0)} detail={`${data.checked_pairs || 0} Orderbücher geprüft · ${data.eligible_pairs || 0} Filter bestanden`} />
@@ -32,17 +38,57 @@ export default function Speculation() {
         <div className="vol-chart-foot"><span>Realisiert <b className={color(p.realized)}>{fmt(p.realized)} {cur}</b></span><span>Max. Rückgang¹ <b>{fmt(p.max_drawdown_pct)}%</b></span><span>Scans¹ <b>{fmt(p.observations, 0)}</b></span></div>
         {!!p.stale_positions?.length && <p className="warn small">Letzte bekannte Kurse für {p.stale_positions.join(", ")}: Portfoliowert enthält veraltete Bewertungen.</p>}
       </section>
-      <section className="panel vol-rules"><span className="vol-eyebrow">ENTRY CHECKLIST</span><h3>Ein Signal muss bestehen.</h3><ol><li><b>Bewegung</b><span>24h-Spanne ≥8%, Scan-Momentum ≥2%</span></li><li><b>Ausbruch</b><span>Über dem zuvor beobachteten 24h-Hoch</span></li><li><b>Handelbarkeit</b><span>Spread im Limit, ≥1.000 {cur} Tiefe innerhalb 1%</span></li></ol><p className="small dim">Paper-Ausstieg bei −8%, +20% oder nach 24h zum nächsten beobachteten Kurs. Kurslücken können den Stopp überschreiten.</p><span className={`badge ${p.paused ? "warn" : ""}`}>{p.paused ? "PAPER-KÄUFE PAUSIERT" : "KEINE AUTOMATISCHE LIVE-FREIGABE"}</span></section>
+      <section className="panel vol-rules"><span className="vol-eyebrow">ENTRY CHECKLIST</span><h3>Ein Signal muss bestehen.</h3><ol><li><b>Bewegung</b><span>24h-Spanne ≥8%, Scan-Momentum ≥2%</span></li><li><b>Ausbruch</b><span>Über dem zuvor beobachteten 24h-Hoch</span></li><li><b>Handelbarkeit</b><span>Spread im Limit, ≥1.000 {cur} Tiefe innerhalb 1%</span></li></ol><p className="small dim">Paper-Ausstieg bei −8%, +20% oder nach 24h zum nächsten beobachteten Kurs. Kurslücken können den Stopp überschreiten.</p><span className={`badge ${p.paused ? "warn" : ""}`}>{p.paused ? "PAPER-KÄUFE PAUSIERT" : "SEPARATE VIRTUELLE REFERENZ"}</span></section>
     </div>
-    <section className="panel vol-watchlist"><div className="vol-list-head"><div><h3>MARKT-RADAR</h3><small className="dim">Top 30 nach 24h-Spanne · Spanne ist keine Rendite</small></div><div className="vol-filters"><input aria-label="Coin suchen" placeholder="Coin suchen…" value={query} onChange={e => setQuery(e.target.value)} /><button aria-pressed={qualified} className={qualified ? "active" : ""} onClick={() => setQualified(!qualified)}>Nur Filter bestanden</button></div></div>
-      <div className="vol-scroll"><table><thead><tr><th>Coin</th><th>24h-Spanne</th><th>Scan-Momentum</th><th>Spread</th><th>Tiefe · {cur}</th><th>Prüfergebnis</th></tr></thead><tbody>{rows.map(r => <tr key={r.symbol}><td><b>{r.symbol}</b>{r.newly_seen && <small className="vol-new">NEU ERFASST</small>}</td><td><span className="vol-range" style={{ "--range": `${Math.min(100, r.range_pct)}%` }}>{fmt(r.range_pct)}%</span></td><td className={color(r.momentum_pct)}>{r.momentum_pct == null ? "—" : `${r.momentum_pct > 0 ? "+" : ""}${fmt(r.momentum_pct)}%`}</td><td>{r.spread_pct == null ? "—" : `${fmt(r.spread_pct, 3)}%`}</td><td>{fmt(r.depth_quote, 0)}</td><td className={stale ? "warn" : r.eligible ? "up" : "dim"}>{stale ? "Veralteter Stand" : r.note || "Nicht geprüft"}</td></tr>)}</tbody></table></div>
-      {!rows.length && <div className="empty">{data.rows?.length ? "Keine Coins für diesen Filter." : "Noch keine Marktdaten. Fusion-Verbindung im Systemcheck prüfen."}</div>}
-    </section>
     <div className="vol-main"><section className="panel"><h3>VIRTUELLE POSITIONEN <span className="dim">{positions.length} / 3</span></h3>{!positions.length && <div className="vol-wait">Noch kein bestätigter Einstieg.<small>Der erste Scan setzt die Referenz. Ein späterer Scan muss alle Regeln erfüllen.</small></div>}{positions.map(([s, v]) => <div className="vol-position" key={s}><div><b>{s}</b><small className="dim">Einstieg {fmt(v.entry, 6)}</small></div><div><b className={color(v.qty * v.mark - v.cost)}>{fmt(v.qty * v.mark - v.cost)} {cur}</b><small className={v.stale ? "warn" : "dim"}>{v.stale ? "Kurs veraltet" : `${fmt(v.qty * v.mark)} ${cur} Marktwert`}</small></div></div>)}</section>
     <section className="panel"><h3>PAPER-JOURNAL <span className="dim">Letzte 20 Orders</span></h3><div className="vol-scroll"><table><thead><tr><th>Zeit</th><th>Coin</th><th>Aktion</th><th>{cur}</th></tr></thead><tbody>{(p.trades || []).slice(-20).reverse().map((t, i) => <tr key={`${t.ts}-${i}`}><td>{new Date(t.ts * 1000).toLocaleString("de-CH", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</td><td>{t.symbol}</td><td>{t.side === "BUY" ? "KAUF" : "VERKAUF"}</td><td className={t.side === "SELL" ? color(t.pnl) : ""}>{fmt(t.side === "BUY" ? t.amount : t.pnl)} <small className="dim">{t.side === "BUY" ? "Einsatz" : "P/L"}</small></td></tr>)}</tbody></table></div>{!p.trades?.length && <div className="empty">Neue Paper-Orders erscheinen hier.</div>}</section></div>
     <p className="dim small vol-footnote">Forward-Test mit virtuellen Mitteln, kein Nachweis profitabler Live-Ausführung. Gebührenmodell je Seite: {fmt(data.fee_pct)}%, Slippage: {fmt(data.slippage_pct)}%; der tatsächliche Spread wird als Filter geprüft, nicht zusätzlich als Ausführungskosten abgerechnet. ¹ Kennzahlen seit {p.metrics_since ? new Date(p.metrics_since * 1000).toLocaleString("de-CH") : "Beginn der Messung"}; ältere Trades fließen weiterhin in Cash und realisierte P/L ein.</p>
+    </details>
   </div>;
 }
 function Metric({ label, value, detail, tone = "" }) {
   return <section className="panel vol-metric"><span className="vol-eyebrow">{label}</span><strong className={tone}>{value}</strong><small className="dim">{detail}</small></section>;
+}
+
+function LivePilot({ live: l, cur, reload, unavailable }) {
+  const [confirmation, setConfirmation] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const configure = async enabled => {
+    setBusy(true); setError("");
+    try { await api("speculation/live", { enabled, confirmation }); setConfirmation(""); await reload(); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+  if (!l) return <section className="panel"><p className="warn">Pilot-Status fehlt. Server-Update und Verbindung prüfen.</p></section>;
+  return <>
+    <section className="panel vol-pilot">
+      <div className="row-head"><div><span className="vol-eyebrow">ECHTES KAPITAL / KLEINER START</span><h3>Volatility live pilot</h3></div><span className={`badge ${l.enabled ? "warn" : ""}`}>{unavailable ? "STATUS VERALTET" : l.enabled ? "ECHTGELD FREIGEGEBEN" : "KAUFPILOT AUS"}</span></div>
+      <div className="vol-kpis">
+        <Metric label="Pilot-Budget" value={`${fmt(l.budget)} ${cur}`} detail="Start 50 · Verluste reduzieren es · keine automatische Erhöhung" />
+        <Metric label="Je Kauf höchstens" value={`${fmt(l.max_order)} ${cur}`} detail="Plus Handelsgebühr · 1 Position · nur vorhandenes Guthaben" />
+        <Metric label="Kaufaufträge heute" value={`${l.orders_today} / ${l.daily_orders}`} detail="UTC-Tag · Übermittlungen zählen auch bei Ablehnung" />
+        <Metric label="Realisiert nach Gebühren" value={`${fmt(l.realized)} ${cur}`} tone={color(l.realized)} detail={`${fmt(l.loss)} / ${fmt(l.loss_stop)} ${cur} kumulierte Verluste bis zum Kaufstopp`} />
+      </div>
+      <p role="status" className={l.reasons?.length ? "warn small" : "up small"}>{l.reasons?.length ? l.reasons.join(" · ") : "Pilot signalbereit. Jeder Kauf muss aktuelle Signal-, Risiko-, Spread- und Guthabenprüfungen bestehen."}</p>
+      {l.enabled && l.note && <p className="dim small">Letzte Prüfung: {l.note}</p>}
+      <p className="dim small">Ausbruch über das zuvor beobachtete Hoch + mindestens 2% Scan-Momentum. Nach Freigabe sind zwei neue Scans nötig, typischerweise 2–4 Minuten; ein Kauf ist nicht garantiert. Passt die Börsen-Mindestorder nicht in 30 {cur}, wird der Coin übersprungen.</p>
+      <p className="small">Ausstieg wird jede Minute bei −8%, +20% oder nach 24h geprüft. Kurslücken, Gebühren oder Ausfälle können den Verlust vergrößern. Die 10-{cur}-Grenze stoppt weitere Käufe und ist kein garantierter maximaler Verlust. Globaler Standby oder Not-Aus stoppt auch Verkäufe.</p>
+      {l.enabled ? <button disabled={busy} onClick={() => configure(false)}>{busy ? "Wird gespeichert…" : "Neue Volatility-Käufe pausieren"}</button> : <form className="vol-activation" onSubmit={e => { e.preventDefault(); if (confirmation === "VOLATILITY LIVE" && !unavailable && !busy) configure(true); }}>
+        <label htmlFor="vol-confirm">Echte automatische Orders freigeben: <b>VOLATILITY LIVE</b> eingeben</label>
+        <div><input id="vol-confirm" autoComplete="off" spellCheck={false} value={confirmation} onChange={e => setConfirmation(e.target.value)} placeholder="VOLATILITY LIVE" disabled={busy} /><button disabled={busy || unavailable || confirmation !== "VOLATILITY LIVE"} type="submit">{busy ? "Wird gespeichert…" : "Echtgeld-Pilot aktivieren"}</button></div>
+      </form>}
+      <small className="dim">Kaufpause erhält offene Positionen und ihre Ausstiegsregeln. Neustart oder erneute Freigabe setzt Verlust- und Tageszähler nicht zurück. Keine Übernahme virtueller Positionen.</small>
+      {error && <p role="alert" className="warn">{error}</p>}
+    </section>
+    <div className="vol-main">
+      <section className="panel"><h3>ECHTE PILOT-POSITIONEN <span className="dim">{l.positions.length} / 1</span></h3>
+        {!l.positions.length && <div className="vol-wait">Noch keine offene Echtgeld-Position.<small>Hier erscheinen ausschließlich bestätigte Börsenausführungen.</small></div>}
+        {l.positions.map(p => <div className="vol-position" key={p.symbol}><div><b>{p.symbol}</b><small className="dim">{fmt(p.qty, 8)} Stück</small></div><div><b>{fmt(p.cost)} {cur}</b><small className="dim">Gebuchter Kaufbetrag, ohne Gebühren</small></div></div>)}
+        {!!l.positions.length && <p className="dim small">Ausstiegsprüfung: {l.exit_check?.ts ? ago(l.exit_check.ts) : "ausstehend"}. Einzelne Position bei Bedarf im Chat verkaufen und dort bestätigen.</p>}
+        {l.exit_check?.error && <p className="warn small">{l.exit_check.error}</p>}
+      </section>
+      <section className="panel"><h3>ECHTGELD-JOURNAL</h3><div className="vol-scroll"><table><thead><tr><th>Zeit</th><th>Coin</th><th>Aktion</th><th>Betrag · {cur}</th><th>P/L</th></tr></thead><tbody>{l.trades.map((t, i) => <tr key={`${t.ts}-${i}`}><td>{ago(t.ts)}</td><td>{t.symbol}</td><td>{t.side === "BUY" ? "KAUF" : "VERKAUF"}</td><td>{fmt(t.notional)}</td><td className={color(t.pnl)}>{t.pnl == null ? "—" : fmt(t.pnl)}</td></tr>)}</tbody></table></div>{!l.trades.length && <div className="empty">Noch keine bestätigten Echtgeld-Orders.</div>}</section>
+    </div>
+  </>;
 }

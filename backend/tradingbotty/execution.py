@@ -90,18 +90,24 @@ class ExecutionService:
             try:
                 self.permission()
                 self.e.portfolio.keys(book)
-                if automatic:
+                if automatic or book == "volatility":
                     self.e.strategies.admit(book, sym, revision)
             except ValueError as error:
                 self.e._risk_note(f"BUY {sym}", [["admission", "stop", str(error)]], f"not sent: {error}")
                 raise
             return await self._buy_locked(sym, want, reason, book, automatic=automatic, context=context, revision=revision)
 
-    async def sell(self, symbol, reason, book="brain", fraction=1.0):
+    async def sell(self, symbol, reason, book="brain", fraction=1.0, *, expected_entry_ts=None):
         async with self.lock:
             try:
                 self.permission()
                 self.e.portfolio.keys(book)
+                if book == "volatility" and self.e.volatility.cfg()["currency"] != self.e.live.currency:
+                    raise ValueError("Pilot-Kontowährung stimmt nicht überein")
+                if expected_entry_ts is not None:
+                    buys = self.e._open_buys(book, symbol)
+                    if not buys or buys[0]["ts"] != expected_entry_ts:
+                        raise ValueError("position changed since the exit decision")
                 if not math.isfinite(fraction) or not 0 < fraction <= 1:
                     raise ValueError("sell fraction must be within (0,1]")
             except ValueError as error:
@@ -190,14 +196,14 @@ class ExecutionService:
         cfg = e.settings["live"]
         def policy_version():
             return json.dumps({"live": e.settings["live"], "risk": e.settings["risk"],
-                               "fast": e.strategies.revision("fast")}, sort_keys=True)
+                               "fast": e.strategies.revision("fast"), "volatility": e.strategies.revision("volatility")}, sort_keys=True)
         policy = policy_version()
 
         def recheck():
             self.permission()
             if policy != policy_version():
                 raise ValueError("risk or allocation settings changed; recalculate the order")
-            if automatic:
+            if automatic or book == "volatility":
                 e.strategies.admit(book, sym, revision)
 
         risk.positive(want, "order amount")
@@ -214,7 +220,7 @@ class ExecutionService:
             raise stop("kill switch is on")
         if e.db.get("unresolved_order"):
             raise stop("unresolved Fusion order: reconcile it before resuming")
-        if book in ("brain", "fast") and e.portfolio.other_owner(book, sym):
+        if book in ("brain", "fast", "volatility") and e.portfolio.other_owner(book, sym):
             raise stop("the other strategy already owns this coin; no overlapping books")
         checks.append(["kill switch", "ok", "off"])
         try:
@@ -224,6 +230,10 @@ class ExecutionService:
         if book == "fast":
             amount = min(want, max(0.0, e.portfolio.fast_budget() - e.portfolio.invested("fast")))
             checks.append(["fast pot", "ok", f"{want:.2f} {cur} from the fast pot (its own limit, set in the Fast Trader Lab)"])
+        elif book == "volatility":
+            from .volatility import ORDER
+            amount = min(want, ORDER, e.volatility.budget() - e.portfolio.invested(book))
+            checks.append(["volatility pilot", "ok", "fixed capital, one slot, no automatic scaling"])
         elif book == "test":
             amount = want
             checks.append(["system check", "ok", f"{want:.2f} {cur} test round trip, sold again right away"])
@@ -280,10 +290,10 @@ class ExecutionService:
                     raise stop(f"spread {spread:.2f}% is above your {cfg['max_spread_pct']}% limit")
                 checks.append(["spread", "ok", f"{spread:.2f}% ≤ {cfg['max_spread_pct']}%"])
         bal = await e.live.balances()
-        reserve = e.portfolio.fast_cash_reserve() if book != "fast" else 0.0  # the fast pot's cash stays for the fast pot
+        reserve = e.portfolio.cash_reserve(book)
         room = max(0.0, bal.get("FIAT", 0.0) - reserve) * 0.995  # Fusion adds its fee on top: all your cash is "too big"
         if reserve:
-            checks.append(["fast pot cash", "kept", f"{reserve:.2f} {cur} stays free for the fast pot"])
+            checks.append(["strategy cash", "kept", f"{reserve:.2f} {cur} stays reserved for other strategies"])
         if amount > room:
             if cfg.get("use_my_coins") and book == "brain":
                 recheck()
@@ -298,6 +308,8 @@ class ExecutionService:
         checks.append(["cash incl. fee room", "ok", f"{amount:.2f} ≤ 99.5% of {bal.get('FIAT', 0.0):.2f} {cur}"])
         if e.kill_switch:
             raise stop("kill switch is on")
+        if book == "volatility":
+            await e.volatility.check_market(sym)
         # Controls, evidence and activation may have changed during network checks.
         recheck()
         oid = self._begin(book, sym, "BUY", {"amount": amount, "reason": reason, "automatic": automatic})

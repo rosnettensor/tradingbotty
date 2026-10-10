@@ -93,6 +93,12 @@ def snapshot(e, now: float | None = None) -> dict:
                   [] if fast_proof["ready"] else [fast_proof["reason"]], pot,
                   f.get("note") or "Entscheidet auf geschlossenen 4-Stunden-Kerzen; Ausstiege jede Minute",
                   (now // 14400 + 1) * 14400 + 120)]
+    pilot = e.volatility.status()
+    lanes.append(lane("speculation", "Volatility · Echtgeld-Pilot", pilot["enabled"], not pilot["reasons"],
+                      pilot["reasons"], pilot["budget"], pilot["note"] or "Begrenzter Praxistest; noch kein Profitabilitätsnachweis",
+                      (e.db.get("speculation", {}).get("ts") or now) + 120))
+    if allocation["overallocated"]:
+        conflicts.append("Strategie-Budgets und gebundenes Kapital übersteigen den Kontowert; freie Mittel prüfen.")
     started = float(e.db.get("observation_started_v1") or e.started)
     since = max(started, now - WINDOW)
     stats = e.db.query("SELECT COUNT(*) orders, COALESCE(SUM(CASE WHEN side='SELL' THEN 1 ELSE 0 END),0) sells, "
@@ -110,7 +116,7 @@ def snapshot(e, now: float | None = None) -> dict:
                      "label": {"shadow": "Nur Modell · Daily Brain handelt seine eigene Strategie", "probe": "Echtgeld-Probe · begrenzte Beimischung",
                                "live": "Echtgeld-Mix · Bank verteilt das Daily-Budget"}[mode],
                      "effective": trading_allowed and bool(b.get("on")) and bank_used},
-            "paper": {"label": "Volatility, Schatten und Geister-Trades sind virtuell"},
+            "paper": {"label": "Paper-Referenz, Schatten und Geister-Trades sind virtuell; Volatility-Pilot benötigt eigene Echtgeld-Freigabe"},
             "window": {"since": since, "started": started, "target_end": started + WINDOW,
                        "complete": now >= started + WINDOW, "hours": round((now - since) / 3600, 2),
                        "orders": stats["orders"], "sells": stats["sells"], "realized": round(stats["realized"], 2),

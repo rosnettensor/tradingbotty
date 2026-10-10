@@ -159,7 +159,7 @@ def test_fees_are_proportional_on_partial_sells(tmp_path, monkeypatch):
     asyncio.run(e._live_sell("BTC", "rest"))
     assert e.diary()[0]["pnl"] == -.6
     assert e.diary()[0]["entry_ts"] is not None
-    assert sum(t["pnl"] or 0 for t in e.db.query("SELECT pnl FROM trades")) == -1
+    assert sum(t["pnl"] or 0 for t in e.db.query("SELECT pnl FROM trades")) == pytest.approx(-1)
 
 
 def test_legacy_fee_charge_is_not_charged_again_after_upgrade(tmp_path, monkeypatch):

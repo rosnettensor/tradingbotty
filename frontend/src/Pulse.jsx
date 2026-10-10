@@ -40,6 +40,7 @@ export default function Pulse({ state, focus, setFocus }) {
     const t = {};
     for (const s of d?.held?.brain || []) t[s] = [...(t[s] || []), (d.owners || {})[s] && (d.owners || {})[s] === state.brain?.probe ? "probe" : "brain"];
     for (const s of d?.held?.fast || []) t[s] = [...(t[s] || []), "fast"];
+    for (const s of d?.held?.volatility || []) t[s] = [...(t[s] || []), "volatility"];
     for (const s of d?.guard || []) t[s] = [...(t[s] || []), "guard"];
     return t;
   }, [d, state.brain?.probe]);
@@ -63,7 +64,7 @@ export default function Pulse({ state, focus, setFocus }) {
       <section className="panel pulse-map">
         <h3>MARKT-KARTE <span className="dim">· Farbe = Bewegung {PERIODS.find(([k]) => k === per)?.[1]} · tippen für Details</span></h3>
         <HeatGrid rows={rows} per={per} sel={sel?.symbol} onPick={setFocus} tags={tags} />
-        <div className="pulse-legend dim small"><span>🧠 Daily Brain</span><span>🧪 Probe</span><span>⚡ Fast Pot</span><span>⛔ Guardian sperrt</span></div>
+        <div className="pulse-legend dim small"><span>🧠 Daily Brain</span><span>🧪 Probe</span><span>⚡ Fast Pot</span><span>◎ Volatility</span><span>⛔ Guardian sperrt</span></div>
       </section>
 
       <section className="panel pulse-detail">{sel && <CoinDetail r={sel} state={state} tags={tags[sel.symbol] || []} />}</section>
@@ -112,7 +113,7 @@ function Gauge({ label, n, of, hint }) {
 }
 
 function Badges({ tags }) {
-  const icon = { brain: "🧠", probe: "🧪", fast: "⚡", guard: "⛔" };
+  const icon = { brain: "🧠", probe: "🧪", fast: "⚡", volatility: "◎", guard: "⛔" };
   return tags.length ? <span className="pulse-badges">{tags.map((t) => <i key={t} title={t}>{icon[t]}</i>)}</span> : null;
 }
 

@@ -155,7 +155,7 @@ export default function TradeCinema({ trades, currency = "CHF" }) {
         <i /><i /><i /><i />
       </div>
       <div className="tc-card">
-        <div className="tc-kicker">{cur.demo ? "DEMO · nothing traded" : cur.book === "fast" ? "⚡ FAST POT · REAL TRADE" : "DAILY BRAIN · REAL TRADE"}</div>
+        <div className="tc-kicker">{cur.demo ? "DEMO · nothing traded" : cur.book === "volatility" ? "◎ VOLATILITY · REAL TRADE" : cur.book === "fast" ? "⚡ FAST POT · REAL TRADE" : "DAILY BRAIN · REAL TRADE"}</div>
         <div className="tc-side">{buy ? "BUY" : "SELL"}</div>
         <div className="tc-sym">{cur.symbol}</div>
         <div className="tc-amt">{amount} <small>{currency}</small></div>
