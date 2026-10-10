@@ -4,7 +4,7 @@ import { api, usePoll } from "./useBot.js";
 const MARK = { ok: ["✓", "up"], warn: ["!", "warn"], fail: ["✗", "down"], info: ["·", "dim"] };
 
 /** Every link of the real-money chain, checked live, and a small real round trip that proves it. */
-export default function SysCheck() {
+export default function SysCheck({ compact = false }) {
   const [d, reload, poll] = usePoll("syscheck", 30000);
   const [open, setOpen] = useState(false);
   const [ask, setAsk] = useState(false);
@@ -26,31 +26,31 @@ export default function SysCheck() {
   return (
     <>
       {poll.error && <p role="status" className="warn">Systemcheck nicht aktualisiert: {poll.error}</p>}
-      <div className="readiness-strip">
+      {!compact && <div className="readiness-strip">
         {Object.entries(d.entry_checks || {}).map(([key, proof]) => <div key={key}>
           <span className="dim">{key === "fast" ? "FAST POT · 4H" : "DAILY BRAIN · 1D"}</span>
           <strong className={proof.ready ? "up" : "warn"}>{proof.ready ? "Backtest bestanden" : "Neue Käufe gesperrt"}</strong>
           <small title={proof.strategy}>{proof.reason}</small>
         </div>)}
         <div><span className="dim">VOLATILITY · 2 MIN</span><strong>Paper-Test aktiv</strong><small>Sammelt Live-Marktdaten. Führt keine echten Orders aus.</small></div>
-      </div>
+      </div>}
       <div className="row-head syscheck-head">
         <button className={`linkish syscheck-sum st-${d.overall}`} aria-expanded={open} onClick={() => setOpen(!open)}>
           <span className={MARK[d.overall === "fail" ? "fail" : d.overall === "warn" ? "warn" : "ok"][1]}>{MARK[d.overall === "fail" ? "fail" : d.overall === "warn" ? "warn" : "ok"][0]}</span>
           <b>SYSTEMCHECK</b> <span>{head}</span> <span className="dim">{open ? "▴" : "▾"}</span>
         </button>
-        <div className="syscheck-test">
+        {(!compact || open) && <div className="syscheck-test">
           {t.ts && <span className={`small ${t.ok ? "up" : "down"}`} title={t.summary}>Testtrade {t.ok ? "✓" : "✗"}</span>}
           {!ask ? (
             <button disabled={busy || !d.trade_ready} onClick={() => setAsk(true)}
-              title={d.trade_ready ? "" : "Erst die rot markierten Punkte lösen"}>Testtrade</button>
+              title={d.trade_ready ? "" : "Erst die rot markierten Punkte lösen"}>Optionaler Testkauf (Echtgeld)</button>
           ) : (
             <>
               <button className="primary" disabled={busy} onClick={test}>{busy ? "läuft…" : `Ja: ${d.test_amount} ${d.currency} BTC kaufen und sofort verkaufen`}</button>
               <button disabled={busy} onClick={() => setAsk(false)}>Nein</button>
             </>
           )}
-        </div>
+        </div>}
       </div>
       {(ask || msg) && <p className="small dim syscheck-note">{msg || `Echter Beweis für die ganze Kette: Risk Officer, Fusion, Buchung, Tagebuch. Kostet nur Gebühren und Spread (etwa 0.15 bis 0.30 ${d.currency}) und zählt nicht für die Strategien.`}</p>}
       {(open || d.overall === "fail") && (

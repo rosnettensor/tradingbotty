@@ -32,14 +32,14 @@ def test_all_books_share_order_and_daily_loss_limits(tmp_path, monkeypatch):
     f.bal["FIAT"] = 1000
     e = _engine(tmp_path, monkeypatch, f)
     e.set_controls({"live.max_order": 100, "live.max_invest": 1000})
-    for book in ("brain", "fast", "test"):
-        spent, _ = asyncio.run(e._live_buy("BTC", 180, "test", book=book))
+    for book, sym in (("brain", "BTC"), ("fast", "SOL"), ("test", "BTC")):
+        spent, _ = asyncio.run(e._live_buy(sym, 180, "test", book=book))
         assert spent == 100
     e.db.execute("INSERT INTO trades(ts,variant_id,mode,symbol,side,qty,price,notional,fee,pnl) "
                  "VALUES(?,?,?,?,?,?,?,?,?,?)", (time.time(), "fast", "live", "SOL", "SELL", 1, 1, 1, 0, -200))
     for book in ("brain", "fast", "test"):
         with pytest.raises(ValueError, match="daily loss"):
-            asyncio.run(e._live_buy("SOL", 10, "test", book=book))
+            asyncio.run(e._live_buy("SOL" if book == "fast" else "BTC", 10, "test", book=book))
     # A purchase stop must still permit liquidation of owned assets.
     assert asyncio.run(e._live_sell("BTC", "exit", book="brain"))["quantity"] == 10
 

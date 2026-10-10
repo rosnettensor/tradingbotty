@@ -5,7 +5,7 @@ const STAGE = {
   incumbent: ["IM AMT", "gov"], passed: ["BESTANDEN", "you"], shadow: ["IM SCHATTEN", "parl"],
   failed: ["DURCHGEFALLEN", "court"], lab: ["WARTET AUFS LABOR", "serv"],
 };
-const MODE = { shadow: ["SCHATTEN: zeigt nur", "parl"], probe: ["PROBE: kleiner echter Anteil", "you"], live: ["LIVE: verteilt echtes Geld", "court"] };
+const MODE = { shadow: ["SCHATTEN: zeigt nur", "parl"], probe: ["ECHTGELD-PROBE: kleiner Anteil", "you"], live: ["ECHTGELD-MIX: Budget verteilen", "court"] };
 const COLORS = ["var(--cyan)", "var(--magenta)", "var(--green)", "var(--amber)", "#9b8cff", "#ff8a5c", "#5cc8ff"];
 const pct = (x, d = 1) => (x == null ? "–" : `${x >= 0 ? "+" : ""}${Number(x).toFixed(d)}%`);
 const day = (ts) => new Date(ts * 1000).toLocaleDateString([], { day: "2-digit", month: "2-digit" });
@@ -25,7 +25,7 @@ function SplitBar({ split, color }) {
 }
 
 /** Bauplan 2, phase 2: parliament proposes, the examiner checks, the bank splits the daily brain's money. */
-export default function BankPanel() {
+export default function BankPanel({ operations }) {
   const [d, reload] = usePoll("bank", 120000);
   const [word, setWord] = useState("");
   const [msg, setMsg] = useState("");
@@ -33,6 +33,7 @@ export default function BankPanel() {
   const [ask, setAsk] = useState(null);
   if (!d) return <div className="empty small">loading…</div>;
   const rep = d.report;
+  const executes = !!operations?.bank?.effective && Date.now() / 1000 - operations.ts < 90;
   const rows = rep?.rows || [];
   const color = (name) => COLORS[Math.max(0, rows.findIndex((r) => r.name === name)) % COLORS.length];
   const act = async (fn) => {
@@ -45,17 +46,21 @@ export default function BankPanel() {
         <h3>🏦 BANK & PRÜFER <span className="dim">· wer schlägt vor, wer prüft, wer bekommt das Geld des Daily Brain</span></h3>
         <span className={`role-chip ${MODE[d.mode]?.[1] || "parl"}`}>{MODE[d.mode]?.[0] || "SCHATTEN"}</span>
       </div>
-      <div className="powers-line small">
+      <p className="small">{executes ? "Die Bank steuert echte Zuteilungen innerhalb des Daily-Budgets. Jeder Kauf benötigt ein gültiges Signal und bestandene Prüfungen." : "Diese Bank-Verteilung ist momentan nicht ausführend. Im Schattenmodus kann der Daily Brain trotzdem seine eigene Strategie handeln. Für die Bank-Verteilung braucht es LIVE, Daily Brain und eine aktive Verteilung."}</p>
+      <details className="mission-note"><summary>So prüft die Bank Strategien</summary><div className="powers-line small">
         <span><b className="parl-t">Parlament</b> schlägt vor (History Lab, Think Tank)</span>
         <span>→ <b className="court-t">Prüfer</b>: robust, doppelte Gebühren, {d.shadow_days} Tage Schatten</span>
         <span>→ <b className="you-t">Bank</b>: Thompson Sampling, max {Math.round(d.max_share * 100)}% pro Strategie</span>
         <span>→ <b className="gov-t">Daily Brain</b> kauft</span>
         <span>→ <b>Punktestand</b> misst</span>
       </div>
+      </details>
       {!rep ? (
         <div className="empty small">Die Bank rechnet nach dem nächsten Lauf des History Labs (einmal am Tag), oder jetzt: <button disabled={busy} onClick={() => act(() => api("bank/refresh", {}))}>Runde jetzt</button></div>
       ) : (
         <>
+          <div className="bank-active-split"><small className="dim">{executes ? "AKTUELLE ZIELVERTEILUNG · ECHTGELD" : "MODELL-VERTEILUNG · KEINE EIGENSTÄNDIGE ORDER"}</small><SplitBar split={d.mode === "probe" ? rep.probe_split : rep.split} color={color} /></div>
+          <details className="mission-note"><summary>Strategien und Vergleichsmodelle anzeigen</summary>
           <div className="bank-top">
             <div>
               <div className="dim small">ECHTES GELD{d.live ? "" : " (wenn live)"}: nur Geprüfte und Cash</div>
@@ -88,21 +93,22 @@ export default function BankPanel() {
                       <td><span className={`role-chip ${cls}`}>{label}</span><div className="dim small">{r.why}</div></td>
                       <td className="num">{r.test?.cagr_pct != null ? `${pct(r.test.cagr_pct, 0)}/J` : "–"}<div className="dim small">tiefster Fall {r.test?.max_dd_pct ?? "–"}% · {r.years} J. besser als BTC{r.robust ? " · robust ✓" : ""}</div></td>
                       <td className="num"><span className={pctColor(r.shadow_pct)}>{pct(r.shadow_pct, 2)}</span><div className="dim small">{r.days} Tage · BTC {pct(r.btc_pct)}</div></td>
-                      <td className="num"><b>{d.mode === "probe" ? r.probe_pct : r.share_pct}%</b> echt<div className="dim small">gewinnt {r.win_pct}% der Ziehungen · erwartet {pct(r.belief_pct_yr, 0)}/J</div></td>
+                      <td className="num"><b>{d.mode === "probe" ? r.probe_pct : r.share_pct}%</b> {executes ? "Ziel" : "Modell"}<div className="dim small">gewinnt {r.win_pct}% der Ziehungen · erwartet {pct(r.belief_pct_yr, 0)}/J</div></td>
                     </tr>
                   );
                 })}
-                <tr><td colSpan={4} className="dim small">Cash gewinnt {rep.cash_win_pct}% der Ziehungen</td><td className="num"><b>{(((d.mode === "probe" ? rep.probe_split : rep.split)?.Cash || 0) * 100).toFixed(1)}%</b> echt</td></tr>
+                <tr><td colSpan={4} className="dim small">Cash gewinnt {rep.cash_win_pct}% der Ziehungen</td><td className="num"><b>{(((d.mode === "probe" ? rep.probe_split : rep.split)?.Cash || 0) * 100).toFixed(1)}%</b> {executes ? "Ziel" : "Modell"}</td></tr>
               </tbody>
             </table>
           </div>
-          <div className="bank-actions">
+          </details>
+          <details className="mission-note"><summary>Bank-Verteilung ändern</summary><div className="bank-actions">
             <button disabled={busy} onClick={() => act(() => api("bank/refresh", {}))}>Runde jetzt</button>
             <div className="seg" role="group" aria-label="Was die Bank darf">
               {["shadow", "probe", "live"].map((m) => (
                 <button key={m} className={d.mode === m ? "active" : ""} disabled={busy}
                   onClick={() => (m === "shadow" ? act(() => api("bank", { mode: "shadow" })) : setAsk(m === d.mode ? null : m))}>
-                  {{ shadow: "Schatten", probe: "Probe", live: "Live" }[m]}
+                  {{ shadow: "Nur beobachten", probe: "Echtgeld-Probe", live: "Echtgeld-Mix" }[m]}
                 </button>
               ))}
             </div>
@@ -126,7 +132,7 @@ export default function BankPanel() {
                   : "Probe geht erst, wenn ein Kandidat das History Lab besteht (robust und mit doppelten Gebühren im Plus). Gerade besteht keiner. Daily Brain und Fast Pot handeln trotzdem nach ihren Regeln.")
                   : rep.eligible?.length > 1 ? "Mehrere Strategien sind geprüft: live würde die Bank das Geld wie oben verteilen."
                     : "Noch hat keine neue Strategie den Prüfer bestanden: live würde nur die Strategie im Amt Geld bekommen (plus Cash, falls Cash oft gewinnt).")}</span>
-          </div>
+          </div></details>
         </>
       )}
     </>

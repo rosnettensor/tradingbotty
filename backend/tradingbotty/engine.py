@@ -98,6 +98,8 @@ class Engine:
         self.risk_log: deque = deque(self.db.get("risk_log", []), maxlen=40)
         self._last_said: dict[str, float] = {}
         self.started = time.time()
+        if not self.db.get("observation_started_v1"):
+            self.db.set("observation_started_v1", self.started)
         self.fast = FastPot(self)                  # the fast pot: small, separate real money, every 4 hours
         self.orders = ChatOrders(self)             # orders typed in the chat bar, sent only after you confirm
         self.stance = Stance(self)                 # your course for a while: Mutig, Bunkern, Pause or Normal
@@ -1170,6 +1172,9 @@ class Engine:
             raise stop("kill switch is on")
         if self.db.get("unresolved_order"):
             raise stop("unresolved Fusion order: reconcile it before resuming")
+        other = "fast_qty" if book == "brain" else "live_qty" if book == "fast" else None
+        if other and self.db.get(other, {}).get(sym, 0) > 0:
+            raise stop("the other strategy already owns this coin; no overlapping books")
         checks.append(["kill switch", "ok", "off"])
         try:
             risk.spot_only((getattr(self.live, "pairs", {}) or {}).get(sym, {}))
@@ -1487,7 +1492,7 @@ class Engine:
                  "probe": (self.bank.cfg().get("report") or {}).get("probe") if self.bank.mode() == "probe" else None}
             self.db.set("brain", b)
         except Exception as ex:
-            self._log("Daily Brain", "error", f"Daily decision failed: {str(ex) or type(ex).__name__}. Retrying in 5 minutes.")
+            self._log("Daily Brain", "error", f"Daily decision failed: {str(ex) or type(ex).__name__}. Retrying at the next minute check.")
         finally:
             self._brain_busy = False
             self._brain_target = {}

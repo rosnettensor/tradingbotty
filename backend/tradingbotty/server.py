@@ -127,6 +127,12 @@ def get_widget_key():
     return {"key": widget_key() if settings.password else ""}
 
 
+@app.get("/api/operations")
+def get_operations():
+    from .operations import snapshot
+    return snapshot(engine)
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}

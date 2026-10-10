@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TradingStatus, AccountStrip, Observation, PositionsBrief, SignalBrief } from "./TradingOverview.jsx";
 import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
 import BankPanel from "./BankPanel.jsx";
@@ -56,181 +57,61 @@ function coreData(state, w, energy) {
   };
 }
 
-function usePhone() {
-  const q = "(max-width: 640px)";
-  const [phone, setPhone] = useState(() => window.matchMedia?.(q).matches ?? false);
-  useEffect(() => {
-    const m = window.matchMedia?.(q);
-    if (!m) return undefined;
-    const on = () => setPhone(m.matches);
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
-  }, []);
-  return phone;
-}
+const WORKSPACES = [["overview", "Übersicht"], ["positions", "Positionen & Verlauf"], ["signals", "Markt & Signale"], ["operation", "Betrieb & Diagnose"], ["insights", "Auswertung & Lernen"]];
 
-export default function Cockpit(props) {
-  return usePhone() ? <PhoneCockpit {...props} /> : <DeskCockpit {...props} />;
-}
-
-function DeskCockpit({ state, pulse, focus, setFocus, openAgent }) {
+export default function Cockpit({ state, pulse, focus, setFocus, openAgent }) {
+  const [section, setSection] = useState("overview");
+  const [ops, , poll] = usePoll("operations", 15000);
   const w = state.wallet && !state.wallet.error ? state.wallet : null;
   const rows = state.trend?.rows || [];
-  const near = rows.filter((r) => ["would buy", "breakout, no slot", "near breakout"].includes(r.state)).length;
-  const energy = Math.min(1, 0.15 + near / 6 + Object.keys(state.guard || {}).length / 4);
-  const symbol = focus && rows.some((r) => r.symbol === focus) ? focus : rows[0]?.symbol || "BTC";
-
-  return (
-    <div className="cockpit3">
-      {state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />}
-      <BrainBar state={state} openAgent={openAgent} />
-      <FastPotCard state={state} openAgent={openAgent} />
-      <section className="panel syscheck"><SysCheck /></section>
-      <StatStrip state={state} openAgent={openAgent} />
-
-      <section className="panel core">
-        <Sphere data={coreData(state, w, energy)} pulse={pulse} label={w ? (
-          <div className="core-label">
-            <div className="dim">YOUR ACCOUNT · {state.mode === "live" ? "LIVE" : "STANDBY"}</div>
-            <div className="equity">{w.total.toFixed(2)} {w.currency}</div>
-            <div className={pctColor(w.change_pct)}>{fmt.pct(w.change_pct)} since start</div>
-          </div>
-        ) : <div className="core-label"><div className="dim">NO ACCOUNT CONNECTED</div></div>} />
-        <Professor p={state.professor || {}} on={state.ai} openAgent={openAgent} />
-      </section>
-
-      <section className="panel watch">
-        <TrendWatch t={state.trend} brain={state.brain} guard={state.guard || {}} symbol={symbol} setFocus={setFocus} openAgent={openAgent} />
-      </section>
-
-      <section className="panel guardpanel">
-        <Guardian guard={state.guard || {}} shocks={state.shocks || {}} openAgent={openAgent} />
-      </section>
-
-      <section className="panel focus">
-        <FocusDaily symbol={symbol} state={state} />
-      </section>
-
-      <section className="panel equity-panel">
-        {w ? <>
-          <h3>YOUR ACCOUNT ({w.currency}) <span className="dim">· real money · dashed line = where it started</span></h3>
-          <LineChart series={[{ id: "a", color: "var(--magenta)", bold: true, points: [...(w.history || []).map((h) => [h[0], h[1]]), [Date.now() / 1000, w.total]] }]}
-            baseline={w.start_total} height={200} />
-        </> : <div className="empty">your account chart appears once the Fusion key works</div>}
-      </section>
-
-      <section className="panel positions">
-        <LiveTrades trades={state.trades || []} cur={w?.currency || "CHF"} setFocus={setFocus} />
-      </section>
-
-      <section className="panel log">
-        <Feed log={state.log || []} />
-      </section>
-
-      <section className="panel newsfeed">
-        <News news={state.news || []} setFocus={setFocus} />
-      </section>
-
-      <section className="panel diary">
-        <TradeDiary state={state} setFocus={setFocus} />
-      </section>
-
-      <section className="panel scoreboard">
-        <Scoreboard state={state} />
-      </section>
-
-      <section className="panel strategist">
-        <StrategistPanel />
-      </section>
-
-      <section className="panel bankpanel">
-        <BankPanel />
-      </section>
-    </div>
-  );
-}
-
-/** Phone: the live core fills the screen, everything else sits on cards you swipe through. */
-function PhoneCockpit({ state, pulse, focus, setFocus, openAgent }) {
-  const w = state.wallet && !state.wallet.error ? state.wallet : null;
-  const rows = state.trend?.rows || [];
-  const near = rows.filter((r) => ["would buy", "breakout, no slot", "near breakout"].includes(r.state)).length;
-  const energy = Math.min(1, 0.15 + near / 6 + Object.keys(state.guard || {}).length / 4);
-  const symbol = focus && rows.some((r) => r.symbol === focus) ? focus : rows[0]?.symbol || "BTC";
-  const data = coreData(state, w, energy);
+  const near = rows.filter(r => ["would buy", "breakout, no slot", "near breakout"].includes(r.state)).length;
+  const energy = Math.min(1, .15 + near / 6 + Object.keys(state.guard || {}).length / 4);
+  const symbol = focus && rows.some(r => r.symbol === focus) ? focus : rows[0]?.symbol || "BTC";
   const cur = w?.currency || "CHF";
-  const live = state.mode === "live";
-  const edge = w?.bot_edge;
-  const pages = [
-    ["Konto", state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />],
-    ["Check", <section className="panel syscheck"><SysCheck /></section>],
-    ["Brain", <><BrainBar state={state} openAgent={openAgent} /><section className="panel"><Professor p={state.professor || {}} on={state.ai} openAgent={openAgent} /></section></>],
-    ["⚡ Fast", <FastPotCard state={state} openAgent={openAgent} />],
-    ["Watchlist", <section className="panel watch"><TrendWatch t={state.trend} brain={state.brain} guard={state.guard || {}} symbol={symbol} setFocus={setFocus} openAgent={openAgent} /></section>],
-    ["Chart", <><section className="panel focus"><FocusDaily symbol={symbol} state={state} /></section>
-      {w && <section className="panel"><h3>YOUR ACCOUNT ({cur})</h3>
-        <LineChart series={[{ id: "a", color: "var(--magenta)", bold: true, points: [...(w.history || []).map((h) => [h[0], h[1]]), [Date.now() / 1000, w.total]] }]} baseline={w.start_total} height={180} /></section>}</>],
-    ["Guardian", <section className="panel guardpanel"><Guardian guard={state.guard || {}} shocks={state.shocks || {}} openAgent={openAgent} /></section>],
-    ["Trades", <section className="panel positions"><LiveTrades trades={state.trades || []} cur={cur} setFocus={setFocus} /></section>],
-    ["Tagebuch", <section className="panel diary"><TradeDiary state={state} setFocus={setFocus} /></section>],
-    ["Punkte", <section className="panel scoreboard"><Scoreboard state={state} /></section>],
-    ["Stratege", <section className="panel strategist"><StrategistPanel /></section>],
-    ["Bank", <section className="panel bankpanel"><BankPanel /></section>],
-    ["Feed", <><section className="panel log"><Feed log={state.log || []} /></section><StatStrip state={state} openAgent={openAgent} /></>],
-    ["News", <section className="panel newsfeed"><News news={state.news || []} setFocus={setFocus} /></section>],
-  ];
-  const [page, setPage] = useState(() => { try { return Math.min(pages.length - 1, Number(localStorage.getItem("tb-mpage")) || 0); } catch { return 0; } });
-  const track = useRef(null);
-  const tabs = useRef(null);
-  const [h, setH] = useState(null);
-  const go = (i) => track.current?.children[i]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "start" });
-  useEffect(() => {  // start on the card you looked at last
-    const el = track.current?.children[page];
-    if (el) track.current.scrollLeft = el.offsetLeft;
-  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {  // the strip is as tall as the card you're on, not the tallest one
-    const el = track.current?.children[page];
-    if (!el) return undefined;
-    const fit = () => setH(el.scrollHeight);
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(el);
-    try { localStorage.setItem("tb-mpage", String(page)); } catch { /* private window */ }
-    tabs.current?.children[page]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
-    return () => ro.disconnect();
-  }, [page]);
-  const onScroll = () => {
-    const t = track.current;
-    if (!t) return;
-    const i = Math.round(t.scrollLeft / t.clientWidth);
-    if (i !== page) setPage(i);
-  };
-  return (
-    <div className="mcockpit">
-      <section className={`mhero ${live ? "is-live" : ""}`}>
-        <Sphere data={data} pulse={pulse} label={
-          <div className="core-label mlabel">
-            <div className="dim">{live ? "● LIVE" : "STANDBY"} · YOUR ACCOUNT</div>
-            <div className="equity">{w ? <><Ticking value={w.total} /> <small>{cur}</small></> : "–"}</div>
-            {edge != null && <div className={pctColor(edge)}>bot {edge >= 0 ? "+" : ""}{edge.toFixed(2)} {cur} · {fmt.pct(w.change_pct)} since start</div>}
-          </div>} />
+  return <div className="mission-cockpit">
+    <TradingStatus data={ops} error={poll.error} state={state} onDetails={() => setSection("operation")} />
+    <AccountStrip state={state} data={ops} />
+    <nav className="mission-nav" aria-label="Cockpit-Bereiche">{WORKSPACES.map(([key, label]) => <button key={key} aria-pressed={section === key} className={section === key ? "active" : ""} onClick={() => setSection(key)}>{label}</button>)}</nav>
+    <div className={`mission-grid ${section !== "overview" ? "mission-detail" : ""}`}>
+      <section className="panel core mission-core">
+        <Sphere data={coreData(state, w, energy)} pulse={pulse} label={w ? <div className="core-label"><div className="dim">KONTO · {state.mode === "live" ? "LIVE VERBUNDEN" : "STANDBY"}</div><div className="equity"><Ticking value={w.total} /> <small>{cur}</small></div><div className={pctColor(w.bot_edge)}>{w.bot_edge == null ? "Mehrwert wird erfasst" : `Bot ${w.bot_edge >= 0 ? "+" : ""}${w.bot_edge.toFixed(2)} ${cur}`}</div></div> : <div className="core-label"><div className="dim">KONTO WIRD VERBUNDEN</div></div>} />
+        <div className="mission-core-footer"><MoodChip regime={state.regime} onOpen={() => openAgent("regime")} compact /><StanceChip stance={state.stance} compact /></div>
       </section>
-      <MoodChip regime={state.regime} onOpen={() => openAgent("regime")} compact />
-      <StanceChip stance={state.stance} compact />
-      <div className="mhud">
-        {[...data.hud.left, ...data.hud.right].map(([k, v, tone]) => (
-          <div key={k}><span>{k}</span><b className={tone}>{v}</b></div>
-        ))}
-      </div>
-      <div className="mtabs" ref={tabs}>
-        {pages.map(([name], i) => <button key={name} className={i === page ? "active" : ""} onClick={() => go(i)}>{name}</button>)}
-      </div>
-      <div className="mtrack" ref={track} onScroll={onScroll} style={h ? { height: h } : undefined}>
-        {pages.map(([name, el]) => <div className="mpage" key={name}>{el}</div>)}
-      </div>
-      <div className="mdots">{pages.map(([name], i) => <i key={name} className={i === page ? "on" : ""} />)}</div>
+      {section === "overview" && <div className="mission-aside">
+        <Observation data={ops} error={poll.error} />
+        <PositionsBrief state={state} setFocus={setFocus} onMore={() => setSection("positions")} />
+        <SignalBrief state={state} setFocus={setFocus} onMore={() => setSection("signals")} />
+      </div>}
+      {section !== "overview" && <div className="mission-workspace" key={section}>
+        {section === "positions" && <>
+          {state.wallet ? <LiveWallet state={state} setFocus={setFocus} /> : <NoWallet />}
+          <section className="panel"><FocusDaily symbol={symbol} state={state} /></section>
+          <section className="panel"><LiveTrades trades={state.trades || []} cur={cur} setFocus={setFocus} /></section>
+          <section className="panel"><TradeDiary state={state} setFocus={setFocus} /></section>
+        </>}
+        {section === "signals" && <>
+          <section className="panel"><TrendWatch t={state.trend} brain={state.brain} guard={state.guard || {}} symbol={symbol} setFocus={setFocus} openAgent={openAgent} /></section>
+          <section className="panel"><Guardian guard={state.guard || {}} shocks={state.shocks || {}} openAgent={openAgent} /></section>
+          <section className="panel"><News news={state.news || []} setFocus={setFocus} /></section>
+        </>}
+        {section === "operation" && <>
+          <section className="panel"><h3>WAS BEDEUTET ECHTGELD?</h3><p className="small">Der LIVE-Schalter oben erlaubt echte Orders. Daily Brain und Fast-Topf werden separat eingeschaltet. Die Bank ist nur die Verteilung innerhalb des Daily-Budgets: <b>Probe ist bereits Echtgeld</b>, mit kleinem Kandidaten-Anteil. Bank-Mix verteilt das Budget auf geprüfte Strategien. Schatten und Volatility bleiben virtuell.</p><p className="dim small">Ein Testkauf ist eine optionale technische Diagnose mit Gebühren – keine Voraussetzung für normalen Handel. Forschung läuft im Hintergrund; ein gültiger Backtest und ein Handelssignal müssen trotzdem vorliegen.</p></section>
+          <BrainBar state={state} openAgent={openAgent} /><FastPotCard state={state} openAgent={openAgent} />
+          <section className="panel"><BankPanel operations={ops} /></section>
+          <section className="panel"><SysCheck compact /></section>
+          <section className="panel"><Feed log={state.log || []} /></section>
+        </>}
+        {section === "insights" && <>
+          <Observation data={ops} error={poll.error} />
+          {w && <section className="panel"><h3>KONTOVERLAUF · {cur}</h3><LineChart series={[{ id: "account", color: "var(--magenta)", points: w.history || [] }]} baseline={w.start_total} height={180} /></section>}
+          <section className="panel"><Professor p={state.professor || {}} on={state.ai} openAgent={openAgent} /></section>
+          <section className="panel"><Scoreboard state={state} /></section>
+          <section className="panel"><StrategistPanel /></section>
+          <StatStrip state={state} openAgent={openAgent} />
+        </>}
+      </div>}
     </div>
-  );
+  </div>;
 }
 
 function NoWallet() {

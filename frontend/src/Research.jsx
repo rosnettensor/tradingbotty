@@ -14,6 +14,11 @@ export default function Research({ state, openAgent }) {
   const [res, setRes] = useState(null);
   const [pat, reloadPat] = usePoll("patterns", 0);
   const [lab, setLab] = useState(() => { try { return localStorage.getItem("tb-lab") || "daily"; } catch { return "daily"; } });
+  useEffect(() => {
+    const onLab = e => setLab(e.detail);
+    window.addEventListener("tb-research", onLab);
+    return () => window.removeEventListener("tb-research", onLab);
+  }, []);
   const pickLab = (k) => { setLab(k); try { localStorage.setItem("tb-lab", k); } catch { /* private window */ } };
   useEffect(() => { api("research").then((r) => r && r.rows && setRes(r)).catch(() => {}); }, [state.research?.ts]);
   return (

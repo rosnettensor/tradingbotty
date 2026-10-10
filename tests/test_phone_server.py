@@ -87,6 +87,7 @@ def test_password_gate():
         return out[0]
 
     assert call("/api/state")["status"] == 401
+    assert call("/api/operations")["status"] == 401
     assert call("/api/health")["status"] == 200
     assert call("/apple-touch-icon.png")["status"] == 200   # the home-screen icon loads without the password
     bad = base64.b64encode(b"bot:falsch")

@@ -52,11 +52,11 @@ Keys go in `.env` (created on first start from `.env.example`), never in a chat:
 
 ## The dashboard
 
-Press 1-4 to switch tabs.
+Press 1-5 to switch tabs.
 
-- **Cockpit:** your account, the bot's own gain or loss (coin price swings excluded), the Daily Brain and tonight's
-  likely trades, the watchlist with each coin's distance to its buy and sell line, Guardian blocks, the Professor's
-  review, a daily chart per coin with the brain's lines and real trades, real trades, the agent feed and rated news.
+- **Cockpit:** the existing animated sphere, an explicit execution/readiness status, four account metrics and a
+  12-hour observation. Five sections organize the overview, positions/history, market/signals, operation/diagnostics
+  and evaluation/learning. Full charts, tables, the trade diary, bank controls, agent feed and reviews remain available.
 - **Agents:** the node graph and an inspector that shows what each agent just did, step by step, its key facts and
   tables, its own log, and for the AI agents their model and instructions.
 - **Research:** a Fusion volatility scanner with a forward paper depot, plus the existing labs. The daily brain lab: the history test (pick which strategy trades live), reality checks,
@@ -122,3 +122,26 @@ Daily decisions are checked every 60 seconds, but still use closed daily candles
 Controls offers a reviewed **Kontorahmen übernehmen** profile: 98% of the latest account value (up to 2,000 in account currency), 100 per order, 1% spread ceiling, and permission to fund Daily Brain buys from existing coins. The existing Fast Pot reserve is respected. This profile requires a fresh balance and explicit user action; it does not enable LIVE or a strategy. Saved server settings are not silently overwritten by deployment.
 
 The volatility radar remains an isolated paper experiment. Its dashboard includes filtering, exclusion reasons, equity history, stale position marks and cumulative metrics from the upgrade onwards. Paper daily-loss accounting survives journal truncation. Model fees and slippage are estimates, not verified live fills. Fusion booking uses reported filled amounts without cent rounding, and quantity rounding never rounds available holdings upwards.
+
+### Cockpit clarity upgrade
+
+`GET /api/operations` is read-only and uses the dashboard password gate. It separates global execution permission
+from each trader's activation, reference-data checks and budget. Signal-ready means entry checks may run; an order
+still needs a strategy signal, fresh prices, available balance and all per-order risk checks. Budget conflicts and
+stale account data are surfaced rather than silently changing saved settings.
+
+**Bank Probe already uses real money**, for a limited candidate allocation, when global LIVE and Daily Brain are
+enabled. Bank Live uses the bank's full target mix. Bank Shadow only observes its own allocation; Daily Brain may
+still execute its selected strategy. The volatility radar, shadow books and ghost trades stay virtual. Deploying
+this release does not activate trading, change bank mode, increase AI budgets or remove evidence requirements.
+
+The first 12-hour observation starts when this release first opens the database and survives restarts. Afterwards
+it becomes a rolling 12-hour window. It counts recorded live strategy orders, excluding technical test orders and
+simulations; booked realized P/L, trade fees and AI costs in USD are displayed separately. Open gains/losses remain
+in the account/position view. It is an operational observation, not proof of profitability or continuous human monitoring.
+
+Daily and Fast purchases now reject coins owned by the other book under the shared order lock. Existing overlapping
+holdings are reported, not automatically liquidated. Fast exits refresh quotes when the dashboard account snapshot
+is stale; an unavailable fresh quote cannot turn an obsolete balance into a floor liquidation. The original sphere
+renderer and agent visuals remain unchanged. Technical test buys and bank mode changes are under diagnostic/details
+sections and retain their explicit confirmations.

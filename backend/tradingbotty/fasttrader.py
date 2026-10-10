@@ -95,6 +95,9 @@ class FastTrader:
             c["bar"] = None  # decide again at once with the new rule
         if mode in ("chf", "pct"):
             c["mode"] = mode
+        for label, value in (("amount", chf), ("share", pct), ("floor", floor)):
+            if value is not None and not math.isfinite(float(value)):
+                raise ValueError(f"{label} must be finite")
         if chf is not None:
             c["chf"] = max(0.0, float(chf))
         if pct is not None:
@@ -174,7 +177,9 @@ class FastTrader:
             return
         strat = fastlab.by_name(c["strategy"])
         tp, stop = getattr(strat, "tp", None), getattr(strat, "stop", None)
-        prices = e.__dict__.get("fusion_prices") or {}
+        w = e.wallet or {}
+        fresh = w.get("ts") and 0 <= time.time() - w["ts"] < 90 and not w.get("error") and not w.get("stale")
+        prices = (e.__dict__.get("fusion_prices") or {}) if fresh else await e.live.prices()
         qty, cost = e.db.get("fast_qty", {}), e.db.get("fast_cost", {})
         hits = []
         for s, q in qty.items():
@@ -239,12 +244,13 @@ class FastTrader:
         held = e.db.get("fast_qty", {})
         prices = None
         w = e.wallet or {}
-        fresh = w.get("fast_coins") and time.time() - (w.get("ts") or 0) < 120  # the account read every 30 s will do
+        fresh = (w.get("fast_coins") and 0 <= time.time() - (w.get("ts") or 0) < 120
+                 and not w.get("error") and not w.get("stale"))  # the account read every 30 s will do
         if held and not fresh and hasattr(e.live, "prices"):
             try:
                 prices = await e.live.prices()
             except Exception:
-                prices = None  # can't read live prices: the last account read decides
+                return False  # missing prices cannot turn an old snapshot into a liquidation signal
         worth = self.value(prices, c)
         if worth >= floor:
             return False
