@@ -133,6 +133,15 @@ def get_operations():
     return snapshot(engine)
 
 
+@app.get("/api/account/history")
+def account_history_get(period: str = "1d"):
+    from .account_history import snapshot
+    try:
+        return snapshot(engine, period)
+    except ValueError as ex:
+        raise HTTPException(400, str(ex))
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}

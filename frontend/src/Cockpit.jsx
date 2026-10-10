@@ -3,6 +3,7 @@ import { TradingStatus, AccountStrip, Observation, PositionsBrief, SignalBrief }
 import { CoreTelemetry, DecisionConsole, OrderJourney } from "./MissionControl.jsx";
 import { missionState } from "./missionState.js";
 import { useNow, useMotion } from "./motion.js";
+import PortfolioDashboard from "./PortfolioDashboard.jsx";
 import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
 import BankPanel from "./BankPanel.jsx";
@@ -74,9 +75,9 @@ export default function Cockpit({ connected, state, pulse, focus, setFocus, open
   const symbol = focus && rows.some(r => r.symbol === focus) ? focus : rows[0]?.symbol || "BTC";
   const cur = w?.currency || "CHF";
   return <div className={`mission-cockpit phase-${mission.phase}`}>
-    <TradingStatus data={ops} error={poll.error} state={state} onDetails={() => setSection("operation")} />
-    <AccountStrip state={state} data={ops} />
     <nav className="mission-nav" aria-label="Cockpit-Bereiche">{WORKSPACES.map(([key, label]) => <button key={key} aria-pressed={section === key} className={section === key ? "active" : ""} onClick={() => setSection(key)}>{label}</button>)}</nav>
+    {section === "overview" ? <PortfolioDashboard /> : <AccountStrip state={state} data={ops} />}
+    <TradingStatus data={ops} error={poll.error} state={state} onDetails={() => setSection("operation")} />
     <div className={`mission-grid ${section !== "overview" ? "mission-detail" : ""}`}>
       <section className="panel core mission-core">
         <CoreTelemetry mission={mission} ops={ops} now={now} />
@@ -111,7 +112,6 @@ export default function Cockpit({ connected, state, pulse, focus, setFocus, open
         </>}
         {section === "insights" && <>
           <Observation data={ops} error={poll.error} />
-          {w && <section className="panel"><h3>KONTOVERLAUF · {cur}</h3><LineChart series={[{ id: "account", color: "var(--magenta)", points: w.history || [] }]} baseline={w.start_total} height={180} /></section>}
           <section className="panel"><Professor p={state.professor || {}} on={state.ai} openAgent={openAgent} /></section>
           <section className="panel"><Scoreboard state={state} /></section>
           <section className="panel"><StrategistPanel /></section>

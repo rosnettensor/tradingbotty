@@ -9,6 +9,19 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS account_samples (
+    ts REAL NOT NULL,
+    currency TEXT NOT NULL,
+    total REAL NOT NULL,
+    cash REAL,
+    edge REAL,
+    flow_total REAL,
+    brain_pnl REAL,
+    fast_pnl REAL,
+    volatility_pnl REAL,
+    source TEXT NOT NULL,
+    PRIMARY KEY (currency, ts)
+);
 CREATE TABLE IF NOT EXISTS variants (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

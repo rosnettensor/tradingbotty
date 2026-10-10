@@ -147,3 +147,32 @@ Actual private Render settings and exchange balances require a server-side check
 twelve hours of observation cannot establish future profitability. Legacy research and strategy
 orchestration still live in the existing process; this release centralizes the consequential execution
 and portfolio rules without claiming that every historical module has been rewritten.
+
+## Portfolio observatory
+
+Cockpit now opens with the account chart; the original Sphere remains below it. The new
+`GET /api/account/history?period=1d|1w|1m|3m|6m|1y|all` endpoint is authenticated and read-only.
+There are no broker calls or trading-setting changes from chart interactions.
+
+- `account_samples` persists one complete account observation every five minutes. Its history
+  survives deployment and is not truncated to the legacy 4,000-point window.
+- Existing `wallet_hist` is imported once as account values and existing hold-comparison values
+  in the configured quote currency. Missing historic per-book P/L and flow data remain NULL.
+- Fresh observations include cash, cumulative detected/entered cash flows, and per-book realized
+  plus marked open P/L after acquisition fees. Flows have an independent cumulative counter,
+  unaffected by truncation of the old 50-event display list. Comparisons use a shared first
+  observed baseline; they are changes in quote currency, not annualized returns or TWR.
+- Captures during orders, slow reads, missing prices, inconsistent book quantities, simulation
+  mode or changed quote currency are skipped. The dashboard exposes the last stored measurement
+  and stale/error state. It never fills a gap with a made-up price.
+- SQLite aggregates bounded OHLC responses (about 400 bars) even for long histories. Account
+  candles describe sampled account balances, not exchange candles or intra-sample price extremes.
+  Periods are rolling 24 hours, 7/30/90/180/365 days and the full retained archive.
+- The native SVG interface supports account/cash/hold-model curves, flow-adjusted account and
+  bot comparisons, line/candles, confirmed trade markers, keyboard crosshair, drag/navigator zoom,
+  modal fullscreen, mobile layout, and reduced-motion preferences. Real trading controls remain
+  outside the fullscreen chart.
+
+Historical marks missing before this release cannot be reconstructed from trades alone. Short
+tracking history remains short even when a user selects three months or a year. Auto-detected
+cash flows retain the existing detector's thresholds and may not identify every external event.

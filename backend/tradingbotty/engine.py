@@ -13,7 +13,7 @@ import re
 import time
 from collections import deque
 
-from . import altdata, controls, fastlab, market, patterns, research, thinktank, risk
+from . import account_history, altdata, controls, fastlab, market, patterns, research, thinktank, risk
 from .speculation import Speculation
 from .volatility import VolatilityTrader
 from .chatorders import ChatOrders
@@ -154,6 +154,7 @@ class Engine:
             self.db.set("tt_seeded", time.time())
         self._load_promoted()
         self.execution.recover()
+        account_history.bootstrap(self)
 
 
     def _retire_paper(self) -> None:
@@ -1404,6 +1405,7 @@ class Engine:
             self._viewer = b
         try:
             read_at = time.time()
+            chart_revision = account_history.revision(self) if not self.execution.lock.locked() else None
             bal = await b.balances()
             prices = await b.prices() if hasattr(b, "prices") else {}
         except Exception as ex:
@@ -1482,6 +1484,7 @@ class Engine:
         held = {k: float(v or 0) for k, v in bal.items() if k not in ("FIAT", cur) and (v or 0) > 1e-12}
         self._spot_flows(fiat, held, prices, total, read_at, cur)
         self.wallet.update(self._track_account(total, fiat, held, prices))
+        account_history.record(self, read_at, bal, prices, chart_revision)
 
     def _spot_flows(self, fiat: float, held: dict, prices: dict, total: float, read_at: float, cur: str) -> None:
         """Money you pay in or take out is not the bot's gain or loss. Between two reads of the account, every change
@@ -1511,6 +1514,8 @@ class Engine:
 
     def book_flow(self, amount: float, how: str) -> dict:
         """A deposit (+) or withdrawal (-): shift the starting points so it never counts as the bot's gain or loss."""
+        with self.db.transaction():
+            self.db.set("chart_flow_total", float(self.db.get("chart_flow_total", 0)) + amount)
         hs = self.db.get("hold_start")
         if hs:
             hs["fiat"] = hs["fiat"] + amount
