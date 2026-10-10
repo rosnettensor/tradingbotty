@@ -4,6 +4,7 @@ import { CoreTelemetry, DecisionConsole, OrderJourney } from "./MissionControl.j
 import { missionState } from "./missionState.js";
 import { useNow, useMotion } from "./motion.js";
 import PortfolioDashboard from "./PortfolioDashboard.jsx";
+import SignalRibbon from "./SignalRibbon.jsx";
 import MoodChip from "./MoodChip.jsx";
 import Sphere from "./Sphere.jsx";
 import BankPanel from "./BankPanel.jsx";
@@ -119,6 +120,7 @@ export default function Cockpit({ connected, state, pulse, focus, setFocus, open
         </>}
       </div>}
     </div>
+    <SignalRibbon state={state} mission={mission} now={now} onOpen={(next, coin) => { setSection(next); if (coin) setFocus(coin); }} />
   </div>;
 }
 

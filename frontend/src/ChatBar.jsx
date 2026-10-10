@@ -34,7 +34,7 @@ export default function ChatBar() {
   useEffect(() => {
     const onKey = (e) => {
       if (open && e.key === "Escape") { e.preventDefault(); setOpen(false); return; }
-      if (open || e.key !== " " || e.repeat || e.ctrlKey || e.metaKey || e.altKey || typing(e.target)) return;
+      if (open || e.key !== " " || e.repeat || e.ctrlKey || e.metaKey || e.altKey || typing(e.target) || e.target.closest?.("button, a, summary, [role=button], [role=slider], dialog")) return;
       e.preventDefault();
       setOpen(true);
     };

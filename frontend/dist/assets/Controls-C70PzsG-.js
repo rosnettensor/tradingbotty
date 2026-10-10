@@ -1,4 +1,4 @@
-import{$ as e,K as t,U as n,Y as r,Z as i,i as a,n as o,o as s,r as c,t as l}from"./index-BEYixzlo.js";var u=e(i(),1),d=`// TradingBotty home-screen widget for the free iPhone app "Scriptable".
+import{$ as e,K as t,U as n,Y as r,Z as i,i as a,n as o,o as s,r as c,t as l}from"./index-DVhuHn8y.js";var u=e(i(),1),d=`// TradingBotty home-screen widget for the free iPhone app "Scriptable".
 // Read-only: it shows your numbers and can never trade. Tap it to open the dashboard.
 // The Controls tab fills in your server address and widget key; the key only opens these numbers.
 const DASH = "__URL__";
